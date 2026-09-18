@@ -1,0 +1,86 @@
+import type { Finding, Prospect } from "./review-brief";
+
+const ALIGN_FINDINGS: Finding[] = [
+  { id: "resolves", result: "HTTP 200", status: "VERIFIED", source: "HTTP GET homepage" },
+  { id: "https", result: "HTTPS", status: "VERIFIED", source: "final URL scheme" },
+  { id: "http_status", result: "200", status: "VERIFIED", source: "HTTP response" },
+  { id: "title", result: "Align Foundation Repair | Your Foundation Is Our Family Business", status: "VERIFIED", source: "HTML <title>" },
+  { id: "h1", result: "DFW Foundation Repair Services", status: "VERIFIED", source: "HTML H1" },
+  { id: "click_to_call", result: "tel: link found (tel:214.710.2555)", status: "VERIFIED", source: "HTML <a href=tel:>" },
+  { id: "phone_visible", result: "No phone-like text on homepage", status: "VERIFIED", source: "regex on homepage text" },
+  { id: "contact_form", result: "No form detected on homepage", status: "OBSERVED", source: "HTML <form>/input" },
+  { id: "contact_form_inner", result: "Form detected on an inner checked page", status: "VERIFIED", source: "HTML <form>" },
+  { id: "booking", result: "No known booking provider identified", status: "UNKNOWN", source: "script/href vendor strings" },
+  { id: "primary_cta", result: "No common quote/estimate CTA text in first content", status: "OBSERVED", source: "regex on homepage text" },
+  { id: "service_pages", result: "No service-path links on homepage", status: "OBSERVED", source: "internal href path keywords" },
+  { id: "testimonials", result: "Review/testimonial language on homepage", status: "OBSERVED", source: "regex on homepage text" },
+  { id: "financing", result: "Financing language on homepage", status: "OBSERVED", source: "regex on homepage text" },
+  { id: "gtag", result: "Google tag/gtag detected on checked page", status: "VERIFIED", source: "HTML/script inspection" },
+  { id: "gtm", result: "Google Tag Manager detected on checked page", status: "VERIFIED", source: "HTML/script inspection" },
+  { id: "meta_pixel", result: "Meta Pixel snippet detected on checked page", status: "VERIFIED", source: "HTML/script inspection" },
+  { id: "ads_conversion_tag", result: "No Google Ads conversion tag signal on checked page", status: "VERIFIED", source: "HTML/script inspection" },
+  { id: "pagespeed_mobile", result: "PageSpeed quota exceeded", status: "ERROR", source: "Google PageSpeed Insights" },
+];
+
+export const SEED: Prospect[] = [
+  {
+    id: 1, name: "Firefighter Roofing", vertical: "Roofing", city: "North Richland Hills",
+    website: "https://firefighterroofing.com/", review_count: 400, google_rating: "4.9",
+    phone: "(817) 479-8999", job_value_est: 16000, score: 72, fit: "strong", fit_plain: "Good fit",
+    stage: "Ready for Review", stage_plain: "Waiting for you to review", research_status: "blocked",
+    years_in_business: 10, locations_count: 1,
+    findings: [{ id: "resolves", result: "Request blocked by site", status: "UNKNOWN", source: "HTTP GET homepage" }],
+  },
+  {
+    id: 2, name: "Align Foundation Repair", vertical: "Foundation repair", city: "Dallas-Fort Worth",
+    website: "https://alignfoundationrepair.com/", review_count: 80, google_rating: "UNKNOWN",
+    phone: "UNKNOWN", job_value_est: 12000, score: 68, fit: "strong", fit_plain: "Good fit",
+    stage: "Qualified", stage_plain: "Research done — your move", research_status: "complete",
+    findings: ALIGN_FINDINGS,
+  },
+  {
+    id: 3, name: "SOS Foundation Repair", vertical: "Foundation repair", city: "Dallas-Fort Worth",
+    website: "https://www.sosfoundationrepair.com/", review_count: 60, google_rating: "UNKNOWN",
+    phone: "(469) 528-7452", job_value_est: 11000, score: 60, fit: "possible", fit_plain: "Possible, not a sure thing",
+    stage: "Researching", stage_plain: "We’re looking them up", research_status: "failed",
+    findings: [{ id: "resolves", result: "timeout", status: "ERROR", source: "HTTP GET homepage" }],
+  },
+  {
+    id: 4, name: "DEMO · Northstar Operations", vertical: "B2B consulting", city: "Austin",
+    website: "https://example.com/demo-northstar", review_count: 18, google_rating: "UNKNOWN",
+    phone: "UNKNOWN", job_value_est: 0, score: 71, fit: "strong", fit_plain: "Good fit",
+    stage: "Approved for Outreach", stage_plain: "Ready for you to send a note",
+    research_status: "complete", is_demo: true, company_kind: "b2b",
+    locations_count: 1,
+    contacts: [{ name: "Sara Chen", title: "Managing Partner", email: "", email_status: "none", profile_url: "https://www.linkedin.com/in/example-sara", source: "DEMO fixture (published-person pattern)", last_verified: "2026-09-17" }],
+    facts: [
+      { key: "case_studies", value: "Case-study / client-story language on a page we opened", source: "DEMO fixture", checked_at: "2026-09-17", confidence: "low", status: "OBSERVED" },
+      { key: "enterprise_language", value: "Enterprise / B2B wording on a page we opened", source: "DEMO fixture", checked_at: "2026-09-17", confidence: "low", status: "OBSERVED" },
+    ],
+    findings: [],
+  },
+  {
+    id: 5, name: "DEMO · Ledgerflow", vertical: "SaaS / software", city: "Remote",
+    website: "https://example.com/demo-ledgerflow", review_count: 9, google_rating: "UNKNOWN",
+    phone: "UNKNOWN", job_value_est: 0, score: 68, fit: "strong", fit_plain: "Good fit",
+    stage: "Approved for Outreach", stage_plain: "Ready for you to send a note",
+    research_status: "complete", is_demo: true, company_kind: "saas",
+    contacts: [{ name: "Ava Patel", title: "CEO", email: "", email_status: "none", profile_url: "", source: "DEMO fixture", last_verified: "2026-09-17" }],
+    facts: [
+      { key: "enterprise_language", value: "Enterprise / B2B wording on a page we opened", source: "DEMO fixture", checked_at: "2026-09-17", confidence: "low", status: "OBSERVED" },
+      { key: "hiring", value: "Hiring / careers wording on a page we opened", source: "DEMO fixture", checked_at: "2026-09-17", confidence: "low", status: "OBSERVED" },
+    ],
+    findings: [],
+  },
+  {
+    id: 6, name: "DEMO · Lumen Aesthetics", vertical: "Med spa / cosmetic", city: "Fort Worth",
+    website: "https://example.com/demo-lumen", review_count: 40, google_rating: "4.7",
+    phone: "UNKNOWN", job_value_est: 0, score: 67, fit: "strong", fit_plain: "Good fit",
+    stage: "Qualified", stage_plain: "Research done — your move",
+    research_status: "complete", is_demo: true, company_kind: "medical", locations_count: 2,
+    findings: [
+      { id: "primary_cta", result: "No common quote/estimate CTA text in first content", status: "OBSERVED", source: "DEMO fixture" },
+      { id: "contact_form", result: "Form or form fields detected on homepage", status: "VERIFIED", source: "DEMO fixture" },
+    ],
+  },
+];

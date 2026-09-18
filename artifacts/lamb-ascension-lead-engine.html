@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lamb Ascension — Lead Engine</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #141821;
+    --panel2: #1b2130;
+    --line: #2a3244;
+    --gold: #c9a24a;
+    --gold2: #e8d7a2;
+    --text: #eef1f6;
+    --muted: #9aa3b5;
+    --good: #3dba7a;
+    --mid: #e0a lap;
+    --bad: #d35a5a;
+    --high: #3dba7a;
+    --med: #d4a017;
+    --low: #c45c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Inter, ui-sans-serif, system-ui, Segoe UI, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--line);
+    background: #0e1118;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  .brand { display: flex; gap: 12px; align-items: center; }
+  .mark {
+    width: 34px; height: 34px;
+    border: 1px solid var(--gold);
+    display: grid; place-items: center;
+    color: var(--gold);
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  .brand h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .brand span { color: var(--muted); font-size: 12px; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav button, .btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  nav button.active, .btn.gold {
+    background: var(--gold);
+    color: #111;
+    border-color: var(--gold);
+    font-weight: 600;
+  }
+  .btn.ghost { color: var(--gold2); border-color: #4a3f22; }
+  main { padding: 20px; max-width: 1280px; margin: 0 auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .kpi {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 14px;
+    border-radius: 10px;
+  }
+  .kpi b { display: block; font-size: 22px; color: var(--gold2); }
+  .kpi small { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select, textarea {
+    width: 100%;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font: inherit;
+  }
+  textarea { min-height: 90px; resize: vertical; }
+  .list { display: flex; flex-direction: column; gap: 10px; }
+  .prospect {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+  }
+  .prospect:hover { border-color: var(--gold); }
+  .row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .pill {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 99px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .pill.high { color: var(--high); border-color: #245c3d; }
+  .pill.med { color: var(--med); border-color: #5c4a12; }
+  .pill.low { color: var(--low); border-color: #5c2a2a; }
+  .muted { color: var(--muted); font-size: 13px; }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  h3 { margin: 16px 0 8px; font-size: 14px; color: var(--gold2); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .hidden { display: none; }
+  .notice {
+    background: #1c1830;
+    border: 1px solid #3d3558;
+    color: #cfc6e8;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="mark">LA</div>
+    <div>
+      <h1>Lamb Ascension Lead Engine</h1>
+      <span>Find → Score → Approve → Contact · $2.5k–$10k retainers</span>
+    </div>
+  </div>
+  <nav>
+    <button class="active" data-view="dash">Dashboard</button>
+    <button data-view="find">Find / Add</button>
+    <button data-view="pipe">Pipeline</button>
+    <button data-view="detail">Prospect</button>
+    <button data-view="icp">ICP & Offer</button>
+  </nav>
+</header>
+<main>
+  <section id="dash">
+    <div class="notice">V1 is a working desk for you — not a scraper. Add real companies you find, score them, generate an opener, and only send what you approve. Demo rows are labeled DEMO.</div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2>Ready for review</h2>
+      <div class="list" id="readyList"></div>
+    </div>
+  </section>
+
+  <section id="find" class="hidden">
+    <div class="grid">
+      <div class="card">
+        <h2>Add a prospect</h2>
+        <label>Company</label><input id="fName" placeholder="Summit Roofing Co." />
+        <label>Vertical</label>
+        <select id="fVert">
+          <option>Roofing</option><option>HVAC</option><option>Foundation repair</option>
+          <option>Plumbing / sewer</option><option>Remodeling / GC</option>
+          <option>Solar</option><option>Med spa</option><option>Cosmetic dentist</option>
+          <option>Personal injury law</option><option>High-ticket B2B</option>
+        </select>
+        <label>City / Market</label><input id="fCity" placeholder="Dallas, TX" />
+        <label>Website</label><input id="fWeb" placeholder="https://" />
+        <label>Owner / decision maker</label><input id="fDm" placeholder="If known" />
+        <label>Email (only if you sourced it legitimately)</label><input id="fEmail" />
+        <label>Google rating / # reviews</label><input id="fRev" placeholder="4.8 / 210" />
+        <label>Est. job value $</label><input id="fJob" type="number" value="12000" />
+        <label>Visible Google Ads?</label>
+        <select id="fGads"><option value="weak">Weak / none</option><option value="some">Some</option><option value="strong">Strong</option></select>
+        <label>Visible Meta presence?</label>
+        <select id="fMeta"><option value="weak">Weak / none</option><option value="some">Some</option><option value="strong">Strong</option></select>
+        <label>Website conversion issues (one per line)</label>
+        <textarea id="fIssues" placeholder="No click-to-call above fold&#10;Form only in footer&#10;No offer / next step"></textarea>
+        <div class="actions">
+          <button class="btn gold" onclick="addProspect()">Score & add</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Who to hunt</h2>
+        <p class="muted">Target companies where one new customer is worth thousands. Ad spend stays on their card. Your fee is the system.</p>
+        <table>
+          <tr><th>Vertical</th><th>Why they can pay $2.5k–$10k</th></tr>
+          <tr><td>Roofing / foundation</td><td>$10k–$30k jobs</td></tr>
+          <tr><td>HVAC / sewer / remodel</td><td>High ticket + repeat / emergency</td></tr>
+          <tr><td>Solar</td><td>Large contract value</td></tr>
+          <tr><td>Med spa / implants</td><td>High LTV, booked calendar</td></tr>
+          <tr><td>PI law</td><td>One case can fund a year of ads</td></tr>
+        </table>
+        <h3>Minimum bar</h3>
+        <p class="muted">Real company site · reviews that prove demand · owner who answers · likely $20k+/mo revenue · ads or site that leak money. Skip restaurants, salons, and shops that can’t fund spend + fee.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="pipe" class="hidden">
+    <div class="card">
+      <div class="row">
+        <h2>Pipeline</h2>
+        <button class="btn ghost" onclick="exportCsv()">Export CSV</button>
+      </div>
+      <table id="pipeTable"></table>
+    </div>
+  </section>
+
+  <section id="detail" class="hidden">
+    <div id="detailBox" class="card"><p class="muted">Select a prospect from Dashboard or Pipeline.</p></div>
+  </section>
+
+  <section id="icp" class="hidden">
+    <div class="card">
+      <h2>Offer & pricing (use on calls)</h2>
+      <p><b>Do not sell “I manage ads.”</b> Sell a paid acquisition system.</p>
+      <p>Lamb Ascension builds and manages your paid customer-acquisition system across Google and Meta — campaigns, creative direction, landing pages, tracking, lead qualification, and weekly optimization. Ad spend is yours. The fee is the system.</p>
+      <h3>Packages</h3>
+      <table>
+        <tr><th>Tier</th><th>Fee</th><th>Includes</th></tr>
+        <tr><td>Acquire</td><td>$2,500–$3,500/mo</td><td>Google + Meta management, weekly reporting</td></tr>
+        <tr><td>Convert</td><td>$4,000–$6,000/mo</td><td>Ads + landing pages + tracking / CRM hygiene</td></tr>
+        <tr><td>System</td><td>$7,500–$10,000/mo</td><td>Full acquisition system + creative cadence + lead QA</td></tr>
+      </table>
+      <h3>Call rule</h3>
+      <p class="muted">If they can’t spend at least ~$3k–$5k/mo on ads on top of the fee, they’re not this offer. Take a project or walk.</p>
+    </div>
+  </section>
+</main>
+<script>
+const STAGES = ["New","Qualified","Ready","Contacted","Replied","Call booked","Proposal","Won","Lost"];
+const storeKey = "la_lead_engine_v1";
+
+const demo = [
+  {id:1, demo:true, name:"Northlake Roofing", vert:"Roofing", city:"Keller, TX", web:"https://example.com", dm:"Owner", email:"", rev:"4.7 / 186", job:18000, gads:"weak", meta:"some", issues:["No financing CTA","Slow mobile","Generic homepage"], stage:"Ready"},
+  {id:2, demo:true, name:"Trinity Valley HVAC", vert:"HVAC", city:"Fort Worth, TX", web:"https://example.com", dm:"Ops manager", email:"", rev:"4.9 / 412", job:8500, gads:"some", meta:"weak", issues:["No offer above fold","Chat widget only"], stage:"Qualified"},
+  {id:3, demo:true, name:"Red Oak Foundation", vert:"Foundation repair", city:"Midlothian, TX", web:"https://example.com", dm:"Owner", email:"", rev:"4.6 / 98", job:14000, gads:"weak", meta:"weak", issues:["Stock photos only","Form buried"], stage:"Ready"},
+  {id:4, demo:true, name:"Cleburne Sewer & Drain", vert:"Plumbing / sewer", city:"Cleburne, TX", web:"https://example.com", dm:"Office", email:"", rev:"4.8 / 73", job:9000, gads:"weak", meta:"some", issues:["No Google Booking","Weak service pages"], stage:"New"}
+];
+
+function load() {
+  const raw = localStorage.getItem(storeKey);
+  if (!raw) return demo.map(score);
+  try { return JSON.parse(raw).map(score); } catch { return demo.map(score); }
+}
+function save() { localStorage.setItem(storeKey, JSON.stringify(leads)); }
+let leads = load();
+
+function score(p) {
+  let s = 40;
+  if (p.job >= 8000) s += 15;
+  if (p.job >= 15000) s += 10;
+  if (p.gads === "weak") s += 15;
+  if (p.meta === "weak") s += 8;
+  if ((p.issues||[]).length >= 3) s += 10;
+  if (/tx|texas|dallas|fort worth|cleburne|keller|dfw/i.test(p.city||"")) s += 8;
+  if (p.rev && /4\.[5-9]|5\./.test(p.rev)) s += 6;
+  p.score = Math.min(99, s);
+  p.fit = p.score >= 78 ? "high" : p.score >= 62 ? "med" : "low";
+  p.offer = p.gads === "weak" ? "Google Search + landing page" : "Meta + Google + tracking hygiene";
+  return p;
+}
+
+function opener(p) {
+  const issue = (p.issues && p.issues[0]) ? p.issues[0].toLowerCase() : "the site doesn’t make the next step obvious";
+  return `Hi${p.dm ? " — " + p.dm.split(" ")[0] : ""},\n\nI looked at ${p.name} in ${p.city}. Reviews are solid, but ${issue}. That’s usually leaking booked jobs, not traffic.\n\nI run paid acquisition for ${p.vert.toLowerCase()} companies where a single job is worth real money. I’d send a short note on what I’d cut and what I’d test first on Google/Meta — no retainer pitch on that email.\n\nWant the 5-line audit?`;
+}
+
+function kpis() {
+  const c = Object.fromEntries(STAGES.map(s => [s, leads.filter(l => l.stage===s).length]));
+  const html = [
+    ["Prospects", leads.length],
+    ["Qualified+", leads.filter(l=>["Qualified","Ready","Contacted","Replied","Call booked","Proposal","Won"].includes(l.stage)).length],
+    ["Ready to approve", leads.filter(l=>l.stage==="Ready").length],
+    ["In conversation", leads.filter(l=>["Contacted","Replied","Call booked","Proposal"].includes(l.stage)).length],
+    ["Won", leads.filter(l=>l.stage==="Won").length]
+  ].map(([k,v]) => `<div class="kpi"><b>${v}</b><small>${k}</small></div>`).join("");
+  document.getElementById("kpis").innerHTML = html;
+}
+
+function readyList() {
+  const list = leads.filter(l => l.stage==="Ready" || l.fit==="high").slice(0,8);
+  document.getElementById("readyList").innerHTML = list.map(p => card(p)).join("") || "<p class='muted'>Add a real company on Find / Add.</p>";
+}
+
+function card(p) {
+  return `<div class="prospect" onclick="openP(${p.id})">
+    <div class="row">
+      <strong>${p.name} ${p.demo?"<span class='pill'>DEMO</span>":""}</strong>
+      <span class="pill ${p.fit}">${p.fit.toUpperCase()} ${p.score}</span>
+    </div>
+    <div class="muted">${p.vert} · ${p.city} · ${p.stage}</div>
+    <div class="muted">${p.offer}</div>
+  </div>`;
+}
+
+function pipe() {
+  document.getElementById("pipeTable").innerHTML = `<tr><th>Company</th><th>Vertical</th><th>Fit</th><th>Stage</th><th></th></tr>` +
+    leads.map(p => `<tr>
+      <td>${p.name}${p.demo?" *":""}</td><td>${p.vert}</td>
+      <td class="${p.fit}">${p.fit} ${p.score}</td>
+      <td><select onchange="setStage(${p.id}, this.value)">${STAGES.map(s=>`<option ${s===p.stage?"selected":""}>${s}</option>`).join("")}</select></td>
+      <td><button class="btn" onclick="openP(${p.id})">Open</button></td>
+    </tr>`).join("");
+}
+
+function openP(id) {
+  const p = leads.find(x => x.id===id);
+  show("detail");
+  document.getElementById("detailBox").innerHTML = `
+    <div class="row"><h2>${p.name}</h2><span class="pill ${p.fit}">${p.fit} ${p.score}</span></div>
+    <p class="muted">${p.vert} · ${p.city} · Job value ~$${Number(p.job).toLocaleString()}</p>
+    <p>Site: ${p.web || "—"} · DM: ${p.dm || "—"} · ${p.email || "no email stored"}</p>
+    <p>Google Ads: ${p.gads} · Meta: ${p.meta} · Reviews: ${p.rev||"—"}</p>
+    <h3>Issues</h3>
+    <ul>${(p.issues||[]).map(i=>`<li>${i}</li>`).join("")||"<li>None logged</li>"}</ul>
+    <h3>Suggested offer</h3>
+    <p>${p.offer} → start at Convert tier if site is leaking.</p>
+    <h3>Personalized opener (edit before send)</h3>
+    <textarea id="opener">${opener(p)}</textarea>
+    <div class="actions">
+      <button class="btn gold" onclick="copyOpener()">Copy opener</button>
+      <button class="btn" onclick="setStage(${p.id},'Contacted'); openP(${p.id})">Mark contacted</button>
+      <button class="btn" onclick="setStage(${p.id},'Call booked'); openP(${p.id})">Call booked</button>
+      <button class="btn" onclick="delP(${p.id})">Remove</button>
+    </div>
+    <p class="muted">Approve first contact yourself. Do not blast this.</p>`;
+}
+
+function copyOpener() {
+  const t = document.getElementById("opener");
+  t.select();
+  navigator.clipboard.writeText(t.value);
+}
+
+function addProspect() {
+  const issues = document.getElementById("fIssues").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const p = score({
+    id: Date.now(),
+    demo: false,
+    name: document.getElementById("fName").value || "Untitled",
+    vert: document.getElementById("fVert").value,
+    city: document.getElementById("fCity").value || "DFW, TX",
+    web: document.getElementById("fWeb").value,
+    dm: document.getElementById("fDm").value,
+    email: document.getElementById("fEmail").value,
+    rev: document.getElementById("fRev").value,
+    job: Number(document.getElementById("fJob").value||0),
+    gads: document.getElementById("fGads").value,
+    meta: document.getElementById("fMeta").value,
+    issues,
+    stage: "Ready"
+  });
+  leads.unshift(p);
+  save();
+  openP(p.id);
+}
+
+function setStage(id, stage) {
+  const p = leads.find(x=>x.id===id);
+  p.stage = stage;
+  save(); render();
+}
+function delP(id) {
+  leads = leads.filter(x=>x.id!==id);
+  save(); show("pipe"); render();
+}
+function exportCsv() {
+  const headers = ["name","vert","city","web","dm","email","score","fit","stage","offer"];
+  const rows = [headers.join(",")].concat(leads.map(p => headers.map(h => `"${(p[h]||"").toString().replace(/"/g,'')}"`).join(",")));
+  const blob = new Blob([rows.join("\n")], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "lamb-ascension-pipeline.csv";
+  a.click();
+}
+
+function show(id) {
+  document.querySelectorAll("main > section").forEach(s => s.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.view===id));
+}
+function render() { kpis(); readyList(); pipe(); }
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => { show(b.dataset.view); render(); });
+render();
+</script>
+</body>
+</html>

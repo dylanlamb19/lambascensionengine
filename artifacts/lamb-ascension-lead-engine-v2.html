@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lamb Ascension Lead Engine V2</title>
+<style>
+  :root { --bg:#0b0d12; --p:#141821; --p2:#1b2130; --line:#2a3244; --gold:#c9a24a; --gold2:#e8d7a2; --text:#eef1f6; --muted:#9aa3b5; --high:#3dba7a; --med:#d4a017; --low:#c45c5c; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0e1118;z-index:5;gap:12px;flex-wrap:wrap}
+  .brand{display:flex;gap:10px;align-items:center}
+  .mark{width:32px;height:32px;border:1px solid var(--gold);display:grid;place-items:center;color:var(--gold);font-weight:700;font-size:12px}
+  h1{font-size:15px;margin:0} .sub{color:var(--muted);font-size:12px}
+  nav button,.btn{background:transparent;border:1px solid var(--line);color:var(--text);padding:7px 11px;border-radius:6px;cursor:pointer;font-size:13px}
+  nav button.active,.btn.gold{background:var(--gold);color:#111;border-color:var(--gold);font-weight:600}
+  main{max-width:1280px;margin:0 auto;padding:18px}
+  .notice{background:#1a1730;border:1px solid #3d3558;padding:10px 12px;border-radius:8px;font-size:13px;color:#d5ccec;margin-bottom:14px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px}
+  .kpi{background:var(--p);border:1px solid var(--line);padding:12px;border-radius:10px}
+  .kpi b{display:block;font-size:20px;color:var(--gold2)}
+  .kpi small{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:300px 1fr;gap:14px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--p);border:1px solid var(--line);border-radius:12px;padding:16px}
+  label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+  input,select,textarea{width:100%;background:var(--p2);border:1px solid var(--line);color:var(--text);padding:8px 10px;border-radius:6px;font:inherit}
+  textarea{min-height:120px}
+  .prospect{background:var(--p);border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;margin-bottom:8px}
+  .prospect:hover{border-color:var(--gold)}
+  .row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .high{color:var(--high)} .med{color:var(--med)} .low{color:var(--low)}
+  .muted{color:var(--muted);font-size:13px}
+  h2{margin:0 0 10px;font-size:18px} h3{margin:14px 0 6px;font-size:13px;color:var(--gold2)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:500}
+  .hidden{display:none}
+  .bars{display:grid;gap:6px;margin:8px 0}
+  .bar{display:grid;grid-template-columns:140px 1fr 36px;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
+  .bar i{display:block;height:6px;background:#2a3244;border-radius:4px;overflow:hidden}
+  .bar i b{display:block;height:100%;background:var(--gold)}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="mark">LA</div>
+    <div><h1>Lead Engine V2</h1><div class="sub">Qualification model · researched DFW batch · approve before send</div></div>
+  </div>
+  <nav>
+    <button class="active" data-view="dash">Dashboard</button>
+    <button data-view="find">Find batch</button>
+    <button data-view="pipe">Pipeline</button>
+    <button data-view="detail">Prospect</button>
+    <button data-view="model">Score model</button>
+  </nav>
+</header>
+<main>
+<section id="dash">
+  <div class="notice">V2 still will not scrape private emails or auto-send. “Find batch” pulls from a researched public DFW set plus anything you add. Live 50-result Places/Yelp search needs a Google Places API key — add it later under Find batch.</div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card"><h2>Highest-fit, ready to review</h2><div id="ready"></div></div>
+</section>
+
+<section id="find" class="hidden">
+  <div class="grid">
+    <div class="card">
+      <h2>Run a batch</h2>
+      <label>Vertical</label>
+      <select id="qVert">
+        <option>Roofing</option><option>HVAC</option><option>Foundation repair</option>
+        <option>Plumbing / sewer</option><option>All high-ticket trades</option>
+      </select>
+      <label>Market</label>
+      <select id="qMkt"><option>DFW</option><option>Dallas</option><option>Fort Worth</option><option>Texas</option></select>
+      <label>How many</label>
+      <select id="qN"><option>10</option><option>20</option><option selected>50</option></select>
+      <p class="muted">Without an API key this loads the researched public set that matches (not 50 invented rows).</p>
+      <div class="actions"><button class="btn gold" onclick="runBatch()">Find matching companies</button></div>
+      <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+      <h3>Add one you researched</h3>
+      <label>Company</label><input id="aName">
+      <label>Vertical</label><select id="aVert"><option>Roofing</option><option>HVAC</option><option>Foundation repair</option><option>Plumbing / sewer</option></select>
+      <label>City</label><input id="aCity" value="Fort Worth, TX">
+      <label>Website</label><input id="aWeb">
+      <label>Public phone</label><input id="aPhone">
+      <label>Decision maker (if public)</label><input id="aDm">
+      <label>Reviews (rating / count)</label><input id="aRev" placeholder="4.8 / 210">
+      <label>Years in business</label><input id="aYears" type="number" value="10">
+      <label>Est. job $</label><input id="aJob" type="number" value="12000">
+      <label>Google Ads signal</label><select id="aGads"><option value="none">None visible</option><option value="weak">Weak</option><option value="some">Some</option><option value="strong">Strong / branded</option></select>
+      <label>Meta signal</label><select id="aMeta"><option value="weak">Weak / none</option><option value="some">Active page, thin ads</option><option value="strong">Heavy ads</option></select>
+      <label>Site issues (one per line)</label><textarea id="aIssues"></textarea>
+      <div class="actions"><button class="btn" onclick="addOne()">Score & add</button></div>
+    </div>
+    <div class="card">
+      <h2>Why “50 live” needs a key</h2>
+      <p class="muted">Legitimate discovery at volume is Google Places Text Search / Nearby Search (roofing_contractor, hvac_contractor around Dallas). That is a paid Google API. Yelp Fusion and data vendors work the same way.</p>
+      <p class="muted">This file ships a curated public DFW batch so you can work tonight. When you have a Places key, we wire Find batch to it and cap results so you don’t blow the quota.</p>
+      <h3>What the batch already checked</h3>
+      <p class="muted">Public website, published phone, review volume as a size proxy, owner names only when the company publishes them, conversion gaps visible on the homepage. No guessed personal emails.</p>
+    </div>
+  </div>
+</section>
+
+<section id="pipe" class="hidden">
+  <div class="card">
+    <div class="row"><h2>Pipeline</h2><button class="btn" onclick="exportCsv()">Export CSV</button></div>
+    <table id="pt"></table>
+  </div>
+</section>
+
+<section id="detail" class="hidden"><div id="db" class="card"></div></section>
+
+<section id="model" class="hidden">
+  <div class="card">
+    <h2>Qualification model (replaces +40 prototype)</h2>
+    <p>Score is 0–100. A company can look “busy on Google” and still be a bad retainer client if they can’t fund $3k–$5k media plus your fee.</p>
+    <table>
+      <tr><th>Factor</th><th>Pts</th><th>What it measures</th></tr>
+      <tr><td>Ticket / job value</td><td>0–18</td><td>Can one extra job pay the fee?</td></tr>
+      <tr><td>Demand proxy (review count)</td><td>0–14</td><td>Size / volume without claiming revenue</td></tr>
+      <tr><td>Reputation (rating)</td><td>0–8</td><td>Offers that convert vs fire-drill brands</td></tr>
+      <tr><td>Tenure</td><td>0–8</td><td>Years published; stability</td></tr>
+      <tr><td>Market</td><td>0–8</td><td>DFW / TX first while you have no case studies</td></tr>
+      <tr><td>Ad gap</td><td>0–16</td><td>Weak Google/Meta = room for you</td></tr>
+      <tr><td>Site / conversion leaks</td><td>0–14</td><td>Clicks they already paid for dying on page</td></tr>
+      <tr><td>Spend capacity</td><td>0–10</td><td>Reviews + ticket high enough to fund media</td></tr>
+      <tr><td>Decision maker public</td><td>0–4</td><td>You can actually start a conversation</td></tr>
+    </table>
+    <p class="muted">Fit: 80+ High (pursue) · 65–79 Medium (maybe) · below 65 skip or project-only. Strong ads + huge review count can score medium — they may already have an agency.</p>
+  </div>
+</section>
+</main>
+<script>
+const STAGES = ["New","Qualified","Ready","Contacted","Replied","Call booked","Proposal","Won","Lost"];
+const KEY = "la_engine_v2";
+
+const RESEARCHED = [
+  {name:"Firefighter Roofing",vert:"Roofing",city:"North Richland Hills / Dallas, TX",web:"https://firefighterroofing.com/",phone:"(817) 479-8999",dm:"Philip Perdue (founder, published)",rev:"4.9 / 400+",revN:400,years:10,job:16000,gads:"some",meta:"some",
+    issues:["Brand is strong locally — may already buy ads after storms","Two office numbers; need one tracked intake path","Quote form exists; offer is generic free quote"],
+    notes:"Firefighter/veteran story is the hook. Public founder. Good reviews. Better as Convert tier if tracking is sloppy, not a desperate shop."},
+  {name:"Lon Smith Roofing & Construction",vert:"Roofing",city:"Fort Worth, TX",web:"https://www.lonsmith.com/",phone:"(817) 926-8400",dm:"",rev:"4.9 / 400+",revN:400,years:52,job:18000,gads:"strong",meta:"some",
+    issues:["National-scale brand; likely in-house or agency already","Harder first client unless you have a wedge (landing pages / lead QA)"],
+    notes:"America’s Top 25 type operator. High capacity, low desperation. Only pitch a specific leak."},
+  {name:"Renown Roofing and Construction",vert:"Roofing",city:"DFW, TX",web:"https://renownroofing.com/",phone:"",dm:"",rev:"4.9 / 1000+",revN:1000,years:14,job:16000,gads:"strong",meta:"some",
+    issues:["INC5000 growth — already scaling acquisition","Your angle is creative testing / waste, not 'you need ads'"],
+    notes:"Big. Treat as later-stage client."},
+  {name:"Priority Roofing",vert:"Roofing",city:"Dallas, TX",web:"https://priorityroofing.com/",phone:"",dm:"",rev:"5.0 / 500–900+",revN:700,years:15,job:16000,gads:"some",meta:"some",
+    issues:["Award-heavy brand; crowded inbound","Find a weak city landing page or slow mobile quote flow"],
+    notes:"Forbes-type visibility. Only approach with a concrete page teardown."},
+  {name:"Tarrant Roofing",vert:"Roofing",city:"Fort Worth, TX",web:"https://tarrantroofing.com/",phone:"",dm:"",rev:"4.9 / 200+",revN:200,years:32,job:15000,gads:"some",meta:"weak",
+    issues:["Established 1990s operator","Meta presence likely thinner than Google"],
+    notes:"Better mid-fit than Lon Smith. Storm + Meta creative is the opener."},
+  {name:"Align Foundation Repair",vert:"Foundation repair",city:"DFW, TX",web:"https://alignfoundationrepair.com/",phone:"",dm:"Jason & Josh Spector (published)",rev:"",revN:80,years:8,job:12000,gads:"weak",meta:"weak",
+    issues:["Free estimate is the whole funnel","Phone not loud on first paint of content","Trust badges looked thin on audit"],
+    notes:"Family owners named. High-ticket. Good first-conversation target if reviews check out on Maps."},
+  {name:"SOS Foundation Repair",vert:"Foundation repair",city:"DFW, TX",web:"https://www.sosfoundationrepair.com/",phone:"(469) 528-7452",dm:"",rev:"",revN:60,years:20,job:11000,gads:"weak",meta:"weak",
+    issues:["Phone-first, thin digital booking","Little case-study proof on the page","20 years + BBB — can fund tests"],
+    notes:"Public phone. Honest-eval positioning. Pitch tracked call + landing page, not 'brand ads'."},
+  {name:"G.L. Hunt Foundation Repair",vert:"Foundation repair",city:"Fort Worth, TX",web:"https://glhunt.com/",phone:"",dm:"",rev:"4.9 / 3100+",revN:3100,years:39,job:14000,gads:"strong",meta:"some",
+    issues:["Review machine — already wins local pack","Fee only makes sense as optimization / incrementality"],
+    notes:"Too established for a cold 'you need ads' email."},
+  {name:"FCS Foundation & Concrete",vert:"Foundation repair",city:"DFW, TX",web:"https://fcsfoundationandconcrete.com/",phone:"",dm:"",rev:"5.0",revN:120,years:25,job:8000,gads:"some",meta:"weak",
+    issues:["Publishes real price ranges — conversion-literate","Still room on Meta and city pages"],
+    notes:"Publishes $3.3k–$8.5k typical jobs. They understand unit economics. Good discovery-call fit."},
+  {name:"Lawrence Air Conditioning & Heating",vert:"HVAC",city:"Fort Worth, TX",web:"",phone:"",dm:"",rev:"5.0 / 827",revN:827,years:15,job:7500,gads:"some",meta:"some",
+    issues:["High review velocity = fleet operation","May have call center / existing spend"],
+    notes:"Size is there. Confirm ads before pitching."},
+  {name:"Comfort Experts, Inc.",vert:"HVAC",city:"Fort Worth, TX",web:"https://www.comfort-experts.com/",phone:"",dm:"",rev:"4.9 / 466+",revN:466,years:20,job:8000,gads:"some",meta:"some",
+    issues:["Known local brand","Pitch waste audit, not presence"],
+    notes:"Yelp/Angi visibility. Medium unless you find a leak."},
+  {name:"AirCo Air Conditioning, Heating and Plumbing",vert:"HVAC",city:"Fort Worth, TX",web:"",phone:"",dm:"",rev:"4.8 / 4500+",revN:4500,years:20,job:7000,gads:"strong",meta:"strong",
+    issues:["National-style review volume","Almost certainly has a media buyer"],
+    notes:"Skip for first retainers."}
+];
+
+function qualify(p) {
+  let ticket = p.job >= 15000 ? 18 : p.job >= 10000 ? 14 : p.job >= 7000 ? 10 : 4;
+  let demand = p.revN >= 800 ? 14 : p.revN >= 200 ? 11 : p.revN >= 80 ? 8 : p.revN >= 20 ? 5 : 2;
+  let rating = /5\.0|4\.[7-9]/.test(p.rev||"") ? 8 : /4\.[4-6]/.test(p.rev||"") ? 5 : 2;
+  let tenure = (p.years||0) >= 20 ? 8 : (p.years||0) >= 8 ? 6 : 3;
+  let market = /dfw|dallas|fort worth|keller|cleburne|arlington|tx/i.test(p.city||"") ? 8 : 2;
+  let adGap = 0;
+  if (p.gads==="none"||p.gads==="weak") adGap += 10; else if (p.gads==="some") adGap += 5;
+  if (p.meta==="weak"||p.meta==="none") adGap += 6; else if (p.meta==="some") adGap += 3;
+  let leaks = Math.min(14, (p.issues||[]).length * 4);
+  let spend = (p.revN >= 80 && p.job >= 8000) ? 10 : (p.revN >= 30 && p.job >= 7000) ? 6 : 2;
+  let dm = p.dm ? 4 : 0;
+  // Penalty: already looks locked with an agency
+  let penalty = 0;
+  if (p.gads==="strong" && p.revN >= 400) penalty += 12;
+  const breakdown = {ticket,demand,rating,tenure,market,adGap,leaks,spend,dm,penalty};
+  const score = Math.max(0, Math.min(99, ticket+demand+rating+tenure+market+adGap+leaks+spend+dm-penalty));
+  const fit = score>=80?"high":score>=65?"med":"low";
+  const offer = (p.gads==="none"||p.gads==="weak") ? "Google Search + call tracking + landing page" : "Waste audit + Meta creative tests";
+  const pursue = score>=65 && !(p.gads==="strong" && p.revN>=800);
+  return Object.assign({}, p, {breakdown,score,fit,offer,pursue,stage:p.stage||(pursue?"Ready":"New")});
+}
+
+function opener(p) {
+  const leak = (p.issues&&p.issues[0]) ? p.issues[0] : "the next step on the site is weaker than the reviews";
+  const who = p.dm ? p.dm.split("(")[0].trim().split("&")[0].split(" ")[0] : "";
+  return `Hi${who?" "+who:""},
+
+Looked at ${p.name} in ${p.city}. Reviews say demand isn’t the problem. ${leak}.
+
+I buy Google and Meta for trades where one job is $8k–$20k. I’m not pitching a retainer in this note — I can send a 5-line teardown of where booked jobs are leaking (page + ads, if they’re running).
+
+Want that?`;
+}
+
+let leads = [];
+function boot() {
+  const raw = localStorage.getItem(KEY);
+  if (raw) { try { leads = JSON.parse(raw).map(qualify); return; } catch(e){} }
+  leads = RESEARCHED.map((r,i)=>qualify(Object.assign({id:i+1,source:"public-research"}, r)));
+}
+function save(){ localStorage.setItem(KEY, JSON.stringify(leads)); }
+
+function kpis(){
+  document.getElementById("kpis").innerHTML = [
+    ["In file", leads.length],
+    ["High fit", leads.filter(l=>l.fit==="high").length],
+    ["Pursue", leads.filter(l=>l.pursue).length],
+    ["Ready", leads.filter(l=>l.stage==="Ready").length],
+    ["Live deals", leads.filter(l=>["Contacted","Replied","Call booked","Proposal"].includes(l.stage)).length]
+  ].map(([k,v])=>`<div class="kpi"><b>${v}</b><small>${k}</small></div>`).join("");
+}
+function ready(){
+  const list = [...leads].filter(l=>l.pursue).sort((a,b)=>b.score-a.score);
+  document.getElementById("ready").innerHTML = list.map(p=>`
+    <div class="prospect" onclick="openP(${p.id})">
+      <div class="row"><strong>${p.name}</strong><span class="pill ${p.fit}">${p.fit.toUpperCase()} ${p.score}</span></div>
+      <div class="muted">${p.vert} · ${p.city} · ${p.stage}</div>
+      <div class="muted">${p.offer}</div>
+    </div>`).join("") || "<p class='muted'>No pursue-level companies yet.</p>";
+}
+function pipe(){
+  document.getElementById("pt").innerHTML = `<tr><th>Company</th><th>Vert</th><th>Fit</th><th>Stage</th><th></th></tr>` +
+    leads.sort((a,b)=>b.score-a.score).map(p=>`<tr>
+      <td>${p.name}</td><td>${p.vert}</td>
+      <td class="${p.fit}">${p.fit} ${p.score}</td>
+      <td><select onchange="setStage(${p.id},this.value)">${STAGES.map(s=>`<option ${s===p.stage?"selected":""}>${s}</option>`).join("")}</select></td>
+      <td><button class="btn" onclick="openP(${p.id})">Open</button></td></tr>`).join("");
+}
+function bars(b){
+  return Object.entries({ticket:"Ticket",demand:"Demand",rating:"Rating",tenure:"Tenure",market:"Market",adGap:"Ad gap",leaks:"Site leaks",spend:"Spend capacity",dm:"Decision maker"}).map(([k,l])=>{
+    const max = {ticket:18,demand:14,rating:8,tenure:8,market:8,adGap:16,leaks:14,spend:10,dm:4}[k];
+    const v = b[k]||0;
+    return `<div class="bar"><span>${l}</span><i><b style="width:${Math.round(v/max*100)}%"></b></i><span>${v}</span></div>`;
+  }).join("");
+}
+function openP(id){
+  const p = leads.find(x=>x.id===id);
+  show("detail");
+  document.getElementById("db").innerHTML = `
+    <div class="row"><h2>${p.name}</h2><span class="pill ${p.fit}">${p.fit} ${p.score}</span></div>
+    <p class="muted">${p.vert} · ${p.city} · ~$${Number(p.job).toLocaleString()} job · ${p.years||"—"} yrs</p>
+    <p>Web: ${p.web||"—"} · Phone: ${p.phone||"not stored"} · DM: ${p.dm||"not published"}</p>
+    <p>Reviews: ${p.rev||p.revN||"—"} · Google ads: ${p.gads} · Meta: ${p.meta}</p>
+    <p>${p.notes||""}</p>
+    <h3>Score breakdown</h3>
+    <div class="bars">${bars(p.breakdown)}</div>
+    ${p.breakdown.penalty?`<p class="muted">−${p.breakdown.penalty} agency/scale penalty</p>`:""}
+    <h3>Issues from public site / listings</h3>
+    <ul>${(p.issues||[]).map(i=>`<li>${i}</li>`).join("")}</ul>
+    <h3>Offer</h3><p>${p.offer}. ${p.pursue?"Pursue.":"Probably skip for a $2.5k–$10k retainer."}</p>
+    <h3>Opener — edit, then copy. Do not blast.</h3>
+    <textarea id="op">${opener(p)}</textarea>
+    <div class="actions">
+      <button class="btn gold" onclick="navigator.clipboard.writeText(document.getElementById('op').value)">Copy</button>
+      <button class="btn" onclick="setStage(${p.id},'Contacted');openP(${p.id})">Marked contacted</button>
+      <button class="btn" onclick="setStage(${p.id},'Call booked');openP(${p.id})">Call booked</button>
+    </div>`;
+}
+function runBatch(){
+  const v = document.getElementById("qVert").value;
+  const m = document.getElementById("qMkt").value;
+  const n = Number(document.getElementById("qN").value);
+  const pool = RESEARCHED.filter(r => (v==="All high-ticket trades"||r.vert===v) && (
+    m==="Texas" || m==="DFW" || (m==="Dallas"&&/Dallas|DFW/.test(r.city)) || (m==="Fort Worth"&&/Fort Worth|NRH|Tarrant|DFW/.test(r.city))
+  ));
+  const incoming = pool.slice(0,n).map((r,i)=>qualify(Object.assign({id:Date.now()+i,source:"batch"}, r)));
+  incoming.forEach(p=>{ if(!leads.some(l=>l.name===p.name)) leads.push(p); });
+  save(); show("dash"); render();
+  alert(`Loaded ${incoming.length} researched public companies (not a live Places pull of ${n}).`);
+}
+function addOne(){
+  const p = qualify({
+    id: Date.now(), source:"manual",
+    name: document.getElementById("aName").value||"Untitled",
+    vert: document.getElementById("aVert").value,
+    city: document.getElementById("aCity").value,
+    web: document.getElementById("aWeb").value,
+    phone: document.getElementById("aPhone").value,
+    dm: document.getElementById("aDm").value,
+    rev: document.getElementById("aRev").value,
+    revN: parseInt((document.getElementById("aRev").value||"").replace(/.*\//,""))||0,
+    years: Number(document.getElementById("aYears").value||0),
+    job: Number(document.getElementById("aJob").value||0),
+    gads: document.getElementById("aGads").value,
+    meta: document.getElementById("aMeta").value,
+    issues: document.getElementById("aIssues").value.split("\n").map(s=>s.trim()).filter(Boolean),
+    notes:"Added by you."
+  });
+  leads.unshift(p); save(); openP(p.id);
+}
+function setStage(id,s){ leads.find(x=>x.id===id).stage=s; save(); render(); }
+function exportCsv(){
+  const h=["name","vert","city","web","phone","dm","score","fit","stage","offer"];
+  const csv=[h.join(",")].concat(leads.map(p=>h.map(k=>`"${(p[k]||"").toString().replace(/"/g,"")}"`).join(",")));
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv.join("\n")])); a.download="la-pipeline-v2.csv"; a.click();
+}
+function show(id){
+  document.querySelectorAll("main>section").forEach(s=>s.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active", b.dataset.view===id));
+}
+function render(){ kpis(); ready(); pipe(); }
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{show(b.dataset.view);render();});
+boot(); render();
+</script>
+</body>
+</html>

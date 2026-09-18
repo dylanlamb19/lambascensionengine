@@ -1,0 +1,5 @@
+node_modules/
+.tanstack/
+.vercel/
+*.log
+.grok/og-pending
