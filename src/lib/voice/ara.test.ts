@@ -255,7 +255,7 @@ describe("Ara session payload / outage / key leakage", () => {
     assert.match(text, /NEVER blur/i);
     assert.match(text, /Adult Background Mode is OFF/i);
     assert.match(text, /Background Preset/i);
-    assert.match(text, /generate_image/);
+    assert.match(text, /AI image generation is paused/);
     const bg = executeAllowlistedTool("set_page_background", { scene: "mountain-lake-sunrise" }, desk);
     assert.equal(bg.rejected, false);
     assert.equal(bg.plan.type, "visual");
@@ -307,54 +307,37 @@ describe("Ara session payload / outage / key leakage", () => {
     assert.doesNotMatch(text, /I can help with your Lamb Ascension work—pipeline|For anything else, I’m not set up to answer/i);
     assert.match(text, /NOT limited to Lamb Ascension/);
     assert.match(text, /web_research|web_search/);
-    assert.match(text, /ChatGPT is the Design Director/i);
-    assert.match(text, /apply_design_operations/);
+    assert.match(text, /AI image generation is paused/);
+    assert.doesNotMatch(text, /ChatGPT is the Design Director/i);
   });
 
-  it("session uses Ara voice, native web search, and allowlisted function tools", () => {
+  it("session uses Ara voice, server VAD, and allowlisted function tools", () => {
     const payload = sessionUpdatePayload(desk);
     const session = payload.session as {
       voice: string;
       tools: { type: string; name?: string }[];
-      turn_detection: { type: string; create_response: boolean; interrupt_response: boolean };
-      input_audio_transcription?: { model?: string };
-      audio?: { input?: { transcription?: { model?: string } } };
+      turn_detection: { type: string };
     };
     assert.equal(session.voice, ARA_VOICE);
     assert.equal(session.voice, "ara");
-    assert.ok(session.tools.some((t) => t.type === "web_search"));
-    assert.ok(session.tools.some((t) => t.type === "x_search"));
+    assert.equal(session.turn_detection.type, "server_vad");
     const names = session.tools.filter((t) => t.type === "function").map((t) => t.name || "");
     for (const n of names) assert.equal(isAllowedTool(n), true, n);
     for (const allowed of ALLOWED_TOOLS) assert.equal(names.includes(allowed), true, allowed);
     assert.equal(names.includes("computer_stop"), false);
     assert.equal(isAllowedTool("computer_stop"), false);
-    assert.equal(session.turn_detection.create_response, true);
-    assert.equal(session.turn_detection.interrupt_response, false);
-    assert.equal(session.input_audio_transcription?.model, "grok-transcribe");
-    assert.equal(session.audio?.input?.transcription?.model, "grok-transcribe");
     assert.match(buildAraInstructions(desk), /screen-context update is information, not a new question/i);
   });
 
-  it("typed Ask Ara sends an input_text item, not a fake Hello turn", () => {
+  it("recovery voice client is the simple realtime path, not the VoiceMachine rewrite", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ara-client.ts"), "utf8");
+    assert.match(src, /getUserMedia/);
+    assert.match(src, /playPcm/);
+    assert.doesNotMatch(src, /VoiceMachine/);
+    assert.doesNotMatch(src, /startOpeningGreeting/);
+    assert.doesNotMatch(src, /beginSessionGreeting/);
     const payload = ownerTextItem("What should I work on?");
     assert.equal(payload.type, "conversation.item.create");
-    const item = payload.item as { type: string; role: string; content: { type: string; text: string }[] };
-    assert.equal(item.type, "message");
-    assert.equal(item.role, "user");
-    assert.equal(item.content[0]?.type, "input_text");
-    assert.equal(item.content[0]?.text, "What should I work on?");
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "ara-client.ts"), "utf8");
-    assert.match(src, /onMicDenied/);
-    assert.match(src, /startOpeningGreeting/);
-    assert.match(src, /owner_typed/);
-    assert.match(src, /pauseMicForOutput/);
-    assert.match(src, /phoneMicConstraints/);
-    assert.match(src, /isBluetoothAudioLabel/);
-    assert.match(src, /setSinkId/);
-    assert.match(src, /createMediaStreamDestination/);
-    assert.doesNotMatch(src, /micFallbackTimer/);
-    assert.doesNotMatch(src, /Microphone permission is needed to talk to Ara\. Buttons still work/);
   });
 
   it("audit records tool/uid/confirmation without audio", () => {
