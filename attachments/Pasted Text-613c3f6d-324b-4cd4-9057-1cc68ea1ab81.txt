@@ -1,0 +1,620 @@
+STOP FEATURE DEVELOPMENT AND FIX ARA'S NEW "STUCK THINKING" BUG.
+
+Use the CURRENT Lamb Ascension workspace as the source of truth.
+
+I am experiencing this exact behavior:
+
+1. Ara Conversation Mode is listening normally.
+2. I say something simple like:
+   “Hello.”
+3. Ara hears/finalizes the turn.
+4. Her status changes to:
+   `Thinking…`
+5. She never responds.
+6. She stays stuck in Thinking indefinitely.
+
+This is a critical voice regression.
+
+I want you to debug the ACTUAL current AraRealtime / VoiceMachine implementation, not patch the UI.
+
+==================================================
+IMPORTANT FINDING IN THE CURRENT CODE
+==================================================
+
+Inspect:
+
+`src/lib/voice/ara-client.ts`
+
+and:
+
+`src/lib/voice/lifecycle.ts`
+
+The current flow transitions into THINKING after:
+
+`conversation.item.input_audio_transcription.completed`
+
+via:
+
+`finalizeUserTurn()`
+
+But if xAI never subsequently emits:
+
+`response.created`
+
+there is currently no strong response-start watchdog that returns Ara to a usable state.
+
+That creates an obvious permanent:
+
+LISTENING
+→ USER_SPEAKING
+→ FINALIZING_USER_TURN
+→ THINKING
+→ NOTHING
+
+failure mode.
+
+That matches what I am seeing.
+
+Verify whether this is the actual runtime cause.
+
+Do NOT assume it is until you inspect the events.
+
+==================================================
+FIRST — CAPTURE THE REAL EVENT SEQUENCE
+==================================================
+
+Use the existing voice debug system.
+
+For one spoken:
+
+“Hello.”
+
+record the exact sequence of xAI event TYPES received.
+
+I want to know whether we receive:
+
+session.created
+conversation.created
+session.updated
+input_audio_buffer.speech_started
+input_audio_buffer.speech_stopped
+conversation.item.input_audio_transcription.completed
+response.created
+response.output_audio.delta
+response.output_audio_transcript.delta
+response.done
+
+or where that lifecycle stops.
+
+Do NOT log raw audio.
+
+Do NOT log secrets/tokens.
+
+Development logging should clearly show something like:
+
+VOICE EVENT session.updated
+VOICE EVENT input_audio_buffer.speech_started
+VOICE EVENT input_audio_buffer.speech_stopped
+TURN user_turn_12 FINALIZED
+STATE → THINKING
+WAITING FOR response.created
+
+If `response.created` never arrives, explicitly log that.
+
+==================================================
+VERIFY CURRENT xAI VOICE API CONFIGURATION
+==================================================
+
+Compare the current `session.update` payload against the CURRENT official xAI Speech-to-Speech / Realtime documentation.
+
+Do not blindly preserve old OpenAI-style fields if xAI no longer documents/supports them.
+
+The current application sends a custom server VAD configuration including fields such as:
+
+threshold
+prefix_padding_ms
+silence_duration_ms
+create_response
+interrupt_response
+
+Verify every one of these against current xAI documentation.
+
+Current xAI documentation shows server VAD as the mechanism that automatically detects turn completion and automatically creates assistant responses.
+
+Prefer the CURRENT documented xAI schema.
+
+Do not invent fields.
+
+Also verify the current transcription configuration.
+
+The current code includes:
+
+`input_audio_transcription: { model: "whisper-1" }`
+
+Compare that with current xAI Voice documentation and use xAI's currently supported transcription/session shape.
+
+If the old field is still officially supported, keep it.
+
+If it is legacy/incorrect for the current endpoint, migrate it correctly.
+
+Do not make speculative changes without verifying the provider's current API.
+
+==================================================
+WAIT FOR session.updated
+==================================================
+
+Do not treat:
+
+WebSocket opened
+
+as equivalent to:
+
+voice session fully configured.
+
+Currently the application sends `session.update` immediately after the socket opens.
+
+Add explicit tracking for:
+
+`session.updated`
+
+Ara should not begin treating herself as fully ready until the server has acknowledged the current session configuration.
+
+Desired startup:
+
+CONNECTING
+→ WebSocket open
+→ session.update sent
+→ session.updated received
+→ microphone/listening ready
+
+If `session.update` is rejected or never acknowledged:
+
+show a recoverable Ara error.
+
+Do not silently continue with a partially configured session.
+
+==================================================
+ADD A RESPONSE-START WATCHDOG
+==================================================
+
+When a real finalized owner turn enters THINKING, start a response-start watchdog.
+
+For example:
+
+TURN finalized
+→ expected response lifecycle starts
+
+If NO:
+
+`response.created`
+
+or valid assistant response activity
+
+arrives within a reasonable timeout such as 8–10 seconds:
+
+DO NOT leave Ara in THINKING forever.
+
+Perform controlled recovery.
+
+Recovery should be idempotent and tied to the exact user turn ID.
+
+==================================================
+STAGE 1 RECOVERY
+==================================================
+
+Because server VAD is expected to create responses automatically, do not normally send duplicate `response.create` events.
+
+However, if:
+
+- user turn was finalized
+- WebSocket is still OPEN
+- session is acknowledged/configured
+- no active_response_id exists
+- no response.created has arrived
+- this turn has never received a recovery kick
+
+then send AT MOST ONE controlled:
+
+`response.create`
+
+for that user turn.
+
+Track:
+
+`responseKickSentForTurn`
+
+so the same turn cannot trigger it twice.
+
+If response.created arrives normally before timeout:
+
+cancel the watchdog.
+
+If response.created arrives immediately after the recovery kick:
+
+treat it as the same response lifecycle.
+
+Do not create a second response.
+
+==================================================
+STAGE 2 RECOVERY
+==================================================
+
+If the controlled recovery still produces no response after another bounded timeout:
+
+Ara must recover instead of hanging.
+
+Preferred behavior:
+
+1. mark that turn as failed
+2. clear active THINKING state
+3. clear any invalid response/tool state
+4. reconnect the realtime session once
+5. return to LISTENING
+
+Show Dylan something simple such as:
+
+“Ara lost that response. I’m listening again — try that once more.”
+
+Do NOT repeatedly reconnect forever.
+
+Respect the existing reconnect limit.
+
+==================================================
+NO PERMANENT THINKING STATE
+==================================================
+
+Add a hard invariant:
+
+Ara may NEVER remain in THINKING indefinitely.
+
+THINKING must have an owner/reason, for example:
+
+`WAITING_FOR_RESPONSE_START`
+`TOOL_IN_FLIGHT`
+`WAITING_FOR_TOOL_FOLLOWUP`
+
+Every THINKING reason must have:
+
+- expected completion event
+- timeout
+- recovery path
+
+Do not use THINKING as a generic state with no exit.
+
+==================================================
+TOOL FOLLOW-UP WATCHDOG TOO
+==================================================
+
+The current code can also transition into THINKING while waiting for tool follow-up responses.
+
+Audit:
+
+`runTool()`
+
+`awaitingFollowup`
+
+`markFollowupSent()`
+
+`response.create`
+
+`response.done_wait_tool`
+
+Make sure a tool call cannot leave Ara stuck in THINKING forever either.
+
+For each tool lifecycle:
+
+tool begins
+→ tool completes
+→ function_call_output sent
+→ one follow-up response requested
+→ response.created
+→ response completes
+
+If follow-up response never begins:
+
+bounded recovery.
+
+Do not create duplicate follow-up responses.
+
+==================================================
+GENERIC PROVIDER ERRORS MUST NOT BE SILENT
+==================================================
+
+In the current `onEvent()` handler, non-auth provider errors can be logged without necessarily surfacing a useful recovery state.
+
+Improve this.
+
+Classify errors as:
+
+BENIGN / EXPECTED
+RECOVERABLE
+FATAL
+
+Examples of benign:
+- cancelling an already completed response
+- no active response during cleanup
+
+Recoverable:
+- temporary response-generation failure
+- transient websocket/provider issue
+
+Fatal:
+- authentication/token failure
+- unsupported session configuration
+- permission failure
+
+A recoverable provider error must not leave VoiceMachine in THINKING.
+
+==================================================
+DO NOT BREAK SERVER VAD
+==================================================
+
+I still want hands-free Conversation Mode.
+
+Normal workflow remains:
+
+Dylan speaks
+→ server VAD detects end of speech
+→ Ara responds
+→ Ara finishes
+→ microphone resumes
+
+Do NOT require me to press a Send button.
+
+Do NOT require Hold to Speak.
+
+Do NOT switch the primary experience to manual audio commits unless current xAI documentation genuinely requires it.
+
+==================================================
+DO NOT CREATE DUPLICATE RESPONSES
+==================================================
+
+This fix comes immediately after we fixed Ara repeating/interruption issues.
+
+Do NOT solve stuck Thinking by blindly sending `response.create` after every transcript.
+
+Normal server VAD should remain authoritative.
+
+Manual `response.create` is RECOVERY ONLY when the expected response lifecycle does not begin.
+
+Requirements:
+
+one owner turn
+→ at most one normal assistant response
+
+Recovery kick:
+at most once per turn.
+
+==================================================
+MICROPHONE STATE AFTER FAILURE
+==================================================
+
+When recovery returns Ara to LISTENING:
+
+verify:
+
+machine.state = LISTENING
+sendingMic = true
+mic = live
+vad = idle
+activeResponseId = null
+currentTtsId = null
+awaitingFollowup = false if abandoned
+toolsInFlight = 0 if abandoned
+
+Do not visually say Listening while microphone sending is actually gated.
+
+==================================================
+CLEAR WATCHDOGS CORRECTLY
+==================================================
+
+Clear response watchdog timers when:
+
+- response.created arrives
+- response begins producing audio
+- response.done arrives
+- turn is cancelled
+- Dylan interrupts
+- Conversation Mode stops
+- WebSocket disconnects
+- client instance is destroyed
+- another authoritative user turn replaces the previous one
+
+Never let an old watchdog fire against a newer conversation turn.
+
+Tie every timer to:
+
+conversationSessionId
++
+userTurnId
+
+==================================================
+UPDATE VOICE DEBUG
+==================================================
+
+Add these DEVELOPMENT-ONLY fields:
+
+session_config_acknowledged
+thinking_reason
+thinking_since
+response_watchdog_turn_id
+response_watchdog_elapsed
+recovery_kick_sent
+last_provider_error
+last_provider_event
+
+This should make this bug obvious if it ever returns.
+
+Normal Owner Mode should remain clean.
+
+==================================================
+TEST THE EXACT BUG
+==================================================
+
+TEST 1 — HELLO
+
+Start Conversation Mode.
+
+Dylan:
+“Hello.”
+
+Expected:
+
+LISTENING
+→ USER_SPEAKING
+→ THINKING briefly
+→ ARA_SPEAKING
+→ LISTENING
+
+Ara actually says hello/responds.
+
+No permanent Thinking.
+
+==================================================
+TEST 2 — PROVIDER RESPONSE NEVER STARTS
+
+Mock:
+
+user transcription completes
+
+but:
+
+no response.created arrives.
+
+Expected:
+
+watchdog fires.
+
+One controlled recovery occurs.
+
+Ara does NOT stay Thinking forever.
+
+==================================================
+TEST 3 — DELAYED RESPONSE.CREATED
+
+Simulate response.created arriving just before watchdog expiration.
+
+Expected:
+
+watchdog cancels.
+
+NO extra response.create is sent.
+
+Exactly one Ara answer.
+
+==================================================
+TEST 4 — RECOVERY KICK RACE
+
+Simulate:
+
+watchdog sends recovery response.create
+
+then delayed normal response lifecycle arrives.
+
+Expected:
+
+one authoritative response survives.
+
+No duplicate speech.
+
+No overlapping audio.
+
+==================================================
+TEST 5 — PROVIDER FAILURE
+
+Simulate recoverable xAI response error.
+
+Expected:
+
+Ara recovers to Listening or reconnects.
+
+No endless Thinking.
+
+==================================================
+TEST 6 — SESSION CONFIG FAILURE
+
+Simulate session.update rejection.
+
+Expected:
+
+Ara never falsely claims she is ready/listening.
+
+Show useful error.
+
+==================================================
+TEST 7 — NORMAL TOOL CALL
+
+“Open Pipeline.”
+
+Expected:
+
+tool works
+screen changes
+one acknowledgement
+no stuck Thinking.
+
+==================================================
+TEST 8 — IMAGE GENERATION TOOL
+
+Use an action that may take longer.
+
+Expected:
+
+tool state can remain Thinking while genuinely processing
+
+but it has a bounded timeout and recovery path.
+
+Do not use the short normal-response watchdog while a legitimate long-running tool is still active.
+
+==================================================
+PRESERVE
+==================================================
+
+Preserve:
+
+- one active response architecture
+- duplicate-turn protection
+- one audio pipeline
+- echo suppression
+- barge-in
+- current visible Ara captions
+- Conversation Mode
+- screen awareness
+- application tools
+- image generation
+- visual controls
+- workflow changes
+- Test Mode
+- Gmail/Calendar
+- security
+
+Do NOT add unrelated features.
+
+==================================================
+DONE MEANS
+==================================================
+
+Ara cannot get permanently trapped on:
+
+`Thinking…`
+
+A simple “Hello” must consistently receive ONE response and return to Listening.
+
+Before implementing, tell me:
+
+1. the exact event sequence you observed for the failed Hello turn
+2. whether response.created arrived
+3. whether session.updated was acknowledged
+4. whether the current session.update schema matches current xAI docs
+5. the root cause you found
+
+Then fix it.
+
+Afterward run:
+
+npm test
+npm run typecheck
+npm run lint
+npm run build
+
+Report exactly what ran and the real results.

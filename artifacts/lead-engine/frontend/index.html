@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Lamb Ascension</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#0b0e14; --p:#141922; --p2:#1c2230; --line:#2c3446;
+  --gold:#c9a24a; --gold2:#ead9a8; --text:#f3f1ea; --muted:#9aa3b5;
+  --good:#3dba7a; --warn:#d4a017; --bad:#d46565;
+  --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:"Source Sans 3",system-ui,sans-serif;line-height:1.5}
+h1,h2,h3,.brand b{font-family:Fraunces,Georgia,serif;font-weight:560}
+button,a,[role=button]{cursor:pointer}
+header{position:sticky;top:0;z-index:5;display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;padding:12px 16px;background:#0e1219;border-bottom:1px solid var(--line)}
+.brand{display:flex;gap:10px;align-items:center}
+.mark{width:36px;height:36px;border:1px solid var(--gold);display:grid;place-items:center;color:var(--gold);font-family:Fraunces,serif}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+nav button,.btn{min-height:44px;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--text);font:inherit}
+nav button.active,.btn.gold{background:var(--gold);color:#16120a;border-color:var(--gold);font-weight:700}
+.btn.ghost{background:transparent}
+main{max-width:920px;margin:0 auto;padding:16px 16px 80px}
+.card{background:var(--p);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+.lights{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.light{padding:14px;border-radius:12px;border:1px solid var(--line);background:var(--p2)}
+.light b{display:block;font-size:22px;font-family:Fraunces,serif}
+.light.green{border-color:#2e6b4a}.light.yellow{border-color:#7a6418}.light.red{border-color:#7a3b3b}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px}
+.dot.green{background:var(--good)}.dot.yellow{background:var(--warn)}.dot.red{background:var(--bad)}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input,select,textarea{width:100%;background:var(--p2);border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px;font:inherit;min-height:44px}
+.hidden{display:none !important}
+.muted{color:var(--muted);font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.hero{font-size:28px;margin:0 0 8px}
+.banner{padding:12px 14px;border-radius:12px;margin-bottom:14px}
+.banner.green{background:#13271c;border:1px solid #2e6b4a}
+.banner.yellow{background:#2a220e;border:1px solid #7a6418}
+.banner.red{background:#2a1414;border:1px solid #7a3b3b}
+.co{display:flex;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);align-items:center}
+.overlay{position:fixed;inset:0;background:rgba(6,8,12,.72);display:flex;align-items:flex-end;z-index:20;padding:12px}
+.sheet{background:var(--p);border:1px solid var(--line);border-radius:18px 18px 10px 10px;padding:18px;width:100%;max-width:920px;margin:0 auto;max-height:90vh;overflow:auto}
+.find{font-size:14px;border-bottom:1px solid var(--line);padding:8px 0}
+.flag{display:inline-block;margin:0 6px 6px 0;padding:4px 8px;border:1px solid #4a3f22;border-radius:8px;color:var(--gold2);font-size:12px}
+.steps{display:flex;gap:6px;margin:8px 0 14px}
+.steps i{flex:1;height:4px;background:var(--line);border-radius:99px}
+.steps i.on{background:var(--gold)}
+.err{background:#2a1414;border:1px solid #7a3b3b;padding:12px;border-radius:12px;margin:10px 0}
+@media(max-width:640px){.lights{grid-template-columns:1fr}.hero{font-size:24px}}
+@media(prefers-reduced-motion:reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="mark">LA</div><div><b>Lamb Ascension</b><div class="muted" id="modeLabel">Owner Mode</div></div></div>
+  <nav id="nav" class="hidden">
+    <button class="active" data-v="home">Home</button>
+    <button data-v="find">Find Clients</button>
+    <button data-v="queue">Research</button>
+    <button data-v="pipe">Pipeline</button>
+    <button data-v="setup">Setup</button>
+    <button class="hidden advonly" data-v="analytics">Numbers</button>
+  </nav>
+</header>
+<main>
+<section id="signInScreen">
+  <form class="card" style="max-width:440px;margin:40px auto" onsubmit="event.preventDefault(); signIn(); return false;">
+    <h1 class="hero">Sign in</h1>
+    <p class="muted">This is your agency desk. You’ll only see what needs you.</p>
+    <label for="em">Email</label>
+    <input id="em" name="email" value="admin@localhost" autocomplete="username" />
+    <label for="pw">Password</label>
+    <input id="pw" name="password" type="password" value="changeme" autocomplete="current-password" />
+    <div class="actions" style="margin-top:14px">
+      <button type="submit" class="btn gold" id="signInBtn">Enter</button>
+      <button type="button" class="btn" onclick="explainLocal()">Explain this to me</button>
+    </div>
+    <div id="signInErr" role="alert"></div>
+  </form>
+</section>
+
+<section id="app" class="hidden">
+  <div id="view-home">
+    <div id="banner" class="banner yellow"></div>
+    <div class="lights" id="lights"></div>
+    <div class="card">
+      <h2>What should I do?</h2>
+      <p class="muted">I’ll walk you through one thing at a time. You can stop whenever you want.</p>
+      <div class="actions">
+        <button class="btn gold" onclick="startTasks()">Start My Tasks</button>
+        <button class="btn" onclick="show('find')">Find Clients</button>
+        <button class="btn" onclick="show('add')">Add Client</button>
+        <button class="btn" onclick="explain('tasks')">Explain this to me</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Shortcuts</h3>
+      <div class="actions">
+        <button class="btn" onclick="show('find')">Find Clients</button>
+        <button class="btn" onclick="show('queue')">Research</button>
+        <button class="btn" onclick="show('pipe')">View Results</button>
+        <button class="btn" onclick="toast('Send is not turned on yet. Copy a draft from a company page.')">Send</button>
+        <button class="btn" onclick="show('pipe')">Call</button>
+        <button class="btn" onclick="toast('Proposals come after a booked call. Open a company and set stage to Proposal Sent when you send one yourself.')">Create Proposal</button>
+        <button class="btn" onclick="show('add')">Add Client</button>
+      </div>
+    </div>
+    <div class="card" id="nextList"><h3>Waiting on you</h3></div>
+  </div>
+
+  <div id="view-find" class="hidden">
+    <div class="card">
+      <h2>Find Clients</h2>
+      <p class="muted" id="findMsg">Tell me the trade and city. I’ll look up real businesses — never fake ones.</p>
+      <div class="steps" id="findSteps"><i class="on"></i><i></i><i></i></div>
+      <div id="findWiz"></div>
+      <div id="findErr"></div>
+      <pre class="muted hidden" id="findOut"></pre>
+      <button class="btn" onclick="explain('places_off')">Explain this to me</button>
+    </div>
+  </div>
+
+  <div id="view-add" class="hidden">
+    <div class="card">
+      <h2>Add Client</h2>
+      <p class="muted">Use this when you already know the company. Need their real website so we can research it.</p>
+      <label>Company name</label><input id="nName" />
+      <label>What they do</label>
+      <select id="nVert"><option>Roofing</option><option>HVAC</option><option>Plumbing / sewer</option><option>Foundation repair</option><option>Remodeling / general contractors</option><option>Solar</option><option>Med spas</option><option>Cosmetic dentistry / dental implants</option><option>Personal injury law</option><option>High-ticket B2B services</option></select>
+      <label>Website</label><input id="nWeb" placeholder="https://" />
+      <label>City</label><input id="nCity" value="Fort Worth" />
+      <details><summary class="muted">More (optional)</summary>
+        <label>Public phone</label><input id="nPhone" />
+        <label>How many Google reviews (if you know)</label><input id="nRev" type="number" value="0" />
+        <label>Typical job value, dollars (your guess, not their books)</label><input id="nJob" type="number" value="12000" />
+      </details>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn gold" onclick="addCo()">Save</button>
+        <button class="btn" onclick="show('home')">Cancel</button>
+      </div>
+      <p id="addErr"></p>
+    </div>
+  </div>
+
+  <div id="view-queue" class="hidden">
+    <div class="card">
+      <div class="row"><h2>Research</h2>
+        <div class="actions">
+          <button class="btn gold" onclick="researchNext()">Research next</button>
+          <button class="btn" onclick="researchAll()">Research all</button>
+          <button class="btn" onclick="retryFailed()">Retry problems</button>
+          <button class="btn" onclick="explain('research')">Explain this to me</button>
+        </div>
+      </div>
+      <p class="muted">We open their real website. If a site blocks us, we stop. We never invent an audit.</p>
+      <div id="qt"></div>
+    </div>
+  </div>
+
+  <div id="view-pipe" class="hidden">
+    <div class="card">
+      <h2>Pipeline</h2>
+      <p class="muted">Where each conversation stands, in plain English.</p>
+      <div id="pt"></div>
+    </div>
+  </div>
+
+  <div id="view-detail" class="hidden"><div id="detail"></div></div>
+
+  <div id="view-setup" class="hidden">
+    <div class="card" id="setBox"></div>
+    <div class="card">
+      <h3>Owner vs Advanced</h3>
+      <p class="muted">Advanced shows extra numbers. You don’t need it day to day.</p>
+      <button class="btn" id="advBtn" onclick="toggleAdv()">Show advanced</button>
+    </div>
+    <div class="card hidden" id="advBox"></div>
+  </div>
+
+  <div id="view-analytics" class="hidden"><div class="card" id="an"></div></div>
+</section>
+</main>
+
+<div id="overlay" class="overlay hidden" onclick="if(event.target.id==='overlay') closeSheet()">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+let token = localStorage.getItem("la_token") || "";
+let ADV = localStorage.getItem("la_adv") === "1";
+let TASKS = [];
+let TIX = 0;
+let FIND_STEP = 0;
+const FIND = {vertical:"Roofing", location:"Dallas, TX", limit:20, min_rating:4, min_reviews:20};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&"+"amp;", "<": "&"+"lt;", ">": "&"+"gt;", '"': "&"+"quot;", "'": "&#39;"}[c]));
+function api(path, opt={}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const headers = Object.assign({"Content-Type":"application/json"}, token ? {Authorization:"Bearer "+token} : {});
+  return fetch(path, Object.assign({headers, signal: ctrl.signal}, opt)).then(async r => {
+    clearTimeout(timer);
+    const text = await r.text();
+    let d = {};
+    try { d = text ? JSON.parse(text) : {}; } catch(e) { d = {message: "The desk answered in a way we couldn’t read."}; }
+    if (r.status === 401 && path !== "/api/login") {
+      token=""; localStorage.removeItem("la_token");
+      throw { happened: "You’re signed out.", press: "Press Enter on the sign-in screen.", code: "401" };
+    }
+    if (!r.ok) throw Object.assign({status: r.status}, d);
+    return d;
+  }).catch(err => {
+    clearTimeout(timer);
+    if (err && err.status) throw err;
+    if (err && (err.name === "AbortError" || err.message === "The user aborted a request.")) {
+      throw { happened: "The desk took too long to answer.", press: "Press Try again.", code: "timeout" };
+    }
+    throw { happened: "We couldn’t reach the desk. It may be asleep.", press: "Press Try again in a few seconds.", code: "offline" };
+  });
+}
+function showSignInErr(html){
+  const e = document.getElementById("signInErr");
+  if (e) e.innerHTML = html;
+}
+function explainLocal(){
+  openSheet(`<h2>Explain this to me</h2><p>Sign in with the desk email and password so you can supervise Lamb Ascension. Technical details stay hidden after that.</p><button class="btn gold" onclick="closeSheet()">Got it</button>`);
+}
+function toast(t){ openSheet(`<h2>Just so you know</h2><p>${esc(t)}</p><button class="btn gold" onclick="closeSheet()">OK</button>`); }
+function openSheet(html){ overlay.classList.remove("hidden"); sheet.innerHTML = html; }
+function closeSheet(){ overlay.classList.add("hidden"); }
+function show(v){
+  document.querySelectorAll("#app > div").forEach(x => x.classList.add("hidden"));
+  const el = document.getElementById("view-"+v);
+  if (el) el.classList.remove("hidden");
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.v===v));
+  if (v==="find") renderFind();
+}
+async function explain(topic, name=""){
+  try {
+    const d = await api("/api/explain", {method:"POST", body: JSON.stringify({topic, name})});
+    openSheet(`<h2>Explain this to me</h2><p>${esc(d.plain)}</p><button class="btn gold" onclick="closeSheet()">Got it</button>`);
+  } catch(e) {
+    openSheet(`<h2>Explain this to me</h2><p>This screen is for supervising. Missing numbers stay Unknown. We don’t invent performance.</p><button class="btn gold" onclick="closeSheet()">Got it</button>`);
+  }
+}
+function friendlyBox(e){
+  const happened = e.press ? e.message || e.happened : (e.detail || e.message || "Something went wrong, and we didn’t fake a result.");
+  const press = e.press || "Press Try again. If it keeps happening, open Setup.";
+  return `<div class="err"><b>What happened</b><p>${esc(happened)}</p><b>What to press</b><p>${esc(press)}</p></div>`;
+}
+async function signIn(){
+  const btn = document.getElementById("signInBtn");
+  const err = document.getElementById("signInErr");
+  if (err) err.innerHTML = "";
+  if (btn) { btn.disabled = true; btn.textContent = "Signing in…"; }
+  try {
+    const email = (document.getElementById("em") || {}).value || "";
+    const password = (document.getElementById("pw") || {}).value || "";
+    const d = await api("/api/login", {method:"POST", body: JSON.stringify({email, password})});
+    if (!d || !d.token) throw { happened: "Sign-in didn’t return a session.", press: "Press Try again." };
+    token = d.token;
+    localStorage.setItem("la_token", token);
+    await boot();
+  } catch(e) {
+    const code = e.code || (e.status === 401 ? "bad_password" : "");
+    let box;
+    if (e.status === 401 || code === "bad_password") {
+      box = friendlyBox({ happened: "We couldn’t sign you in. That email or password didn’t match.", press: "Check both boxes and press Enter again.", message: "We couldn’t sign you in. That email or password didn’t match." });
+    } else if (code === "offline" || code === "timeout") {
+      box = friendlyBox(e) + `<button type="button" class="btn gold" onclick="signIn()">Try again</button>`;
+    } else {
+      box = friendlyBox({
+        happened: e.happened || e.message || e.detail || "We couldn’t sign you in.",
+        press: e.press || "Press Try again.",
+        message: e.happened || e.message || e.detail
+      }) + `<button type="button" class="btn gold" onclick="signIn()">Try again</button>`;
+    }
+    showSignInErr(box);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Enter"; }
+  }
+}
+async function boot(){
+  if (!token) return;
+  const screen = document.getElementById("signInScreen");
+  if (screen) screen.classList.add("hidden");
+  app.classList.remove("hidden"); nav.classList.remove("hidden");
+  try {
+  applyAdv();
+  const h = await api("/api/owner/home");
+  TASKS = h.tasks || [];
+  banner.className = "banner " + h.light;
+  banner.innerHTML = `<span class="dot ${h.light}"></span><b>${esc(h.headline)}</b><div>${esc(h.blurb)}</div>`;
+  const c = h.counts;
+  lights.innerHTML = `
+    <div class="light green"><b>${c.good}</b>Looking fine</div>
+    <div class="light yellow"><b>${c.approval}</b>Needs you</div>
+    <div class="light red"><b>${c.attention}</b>Needs attention</div>`;
+  nextList.innerHTML = `<h3>Waiting on you</h3>` + (TASKS.length ? TASKS.slice(0,6).map((t,i) => `
+    <div class="co">
+      <div><span class="dot ${t.severity}"></span><b>${esc(t.title)}</b><div class="muted">${esc(t.plain)}</div></div>
+      <button class="btn gold" onclick="runTaskIx(${i})">${esc(t.button)}</button>
+    </div>`).join("") : `<p class="muted">Nothing in line. Press Find Clients when you want more companies.</p>`);
+  const list = await api("/api/companies");
+  pt.innerHTML = list.map(co => `<div class="co">
+    <div><b>${esc(co.name)}</b><div class="muted">${esc(co.stage_plain)} · ${esc(co.fit_plain)} · score ${co.score}</div></div>
+    <button class="btn" onclick="openC(${co.id})">Open</button>
+  </div>`).join("") || `<p class="muted">No companies yet. Press Find Clients or Add Client.</p>`;
+  an.innerHTML = `<p class="muted">Advanced counts. Monthly retainer shows Unknown until a real signed client exists.</p><pre class="muted">${esc(JSON.stringify({companies:c.companies, won:c.won, calls:c.calls, retainer_mrr:"UNKNOWN"},null,2))}</pre>`;
+  try {
+    const d = await api("/api/settings/discovery");
+    setBox.innerHTML = `
+      <h2>Setup</h2>
+      <p>Finding companies on Google: <b>${d.enabled && d.api_key_status==="configured" ? "On" : "Off"}</b></p>
+      <p class="muted">If it’s off, press Add Client for people you already know. We will not invent a list.</p>
+      <p>Website research cache: ${d.website_audit_cache_days} days.</p>
+      <p class="muted">Lookups today: ${d.pages_fetched_today} pages. That’s background cost tracking — you don’t need it.</p>
+      <button class="btn" onclick="explain('places_off')">Explain this to me</button>`;
+    advBox.innerHTML = `<p>Places key: ${esc(d.api_key_status)} · PageSpeed: ${esc(d.pagespeed_key)}</p>
+      <p>Daily search cap ${d.daily_discovery_cap} · audit cap ${d.daily_audit_cap} · spend cap ${d.daily_spend_cap_cents}¢</p>`;
+    if (!(d.enabled && d.api_key_status==="configured")) findMsg.textContent = "Google search is off. You can still Add Client. We will not make up companies.";
+  } catch(e) {}
+  await loadQueue();
+  } catch (e) {
+    const screen = document.getElementById("signInScreen");
+    if (screen) screen.classList.remove("hidden");
+    app.classList.add("hidden"); nav.classList.add("hidden");
+    showSignInErr(friendlyBox({
+      happened: "Signed in, but Home couldn’t load.",
+      press: "Press Try again.",
+      message: "Signed in, but Home couldn’t load."
+    }) + `<button type="button" class="btn gold" onclick="signIn()">Try again</button>`);
+    throw e;
+  }
+}
+function applyAdv(){
+  document.querySelectorAll(".advonly").forEach(b => b.classList.toggle("hidden", !ADV));
+  advBtn.textContent = ADV ? "Hide advanced" : "Show advanced";
+  advBox.classList.toggle("hidden", !ADV);
+  modeLabel.textContent = ADV ? "Owner Mode · Advanced on" : "Owner Mode";
+}
+function toggleAdv(){ ADV = !ADV; localStorage.setItem("la_adv", ADV?"1":"0"); applyAdv(); }
+function startTasks(){
+  if (!TASKS.length) { toast("You’re caught up. Press Find Clients when you want more companies."); return; }
+  TIX = 0; showTask();
+}
+function showTask(){
+  const t = TASKS[TIX];
+  if (!t) { closeSheet(); boot(); return; }
+  openSheet(`
+    <p class="muted">Task ${TIX+1} of ${TASKS.length}</p>
+    <h2>${esc(t.title)}</h2>
+    <p><b>What happened</b><br>${esc(t.plain)}</p>
+    <p><b>Why it matters</b><br>${esc(t.why)}</p>
+    <p><b>What I recommend</b><br>${esc(t.recommend)}</p>
+    <div class="actions">
+      <button class="btn gold" onclick="runTaskIx(${TIX})">${esc(t.button)}</button>
+      <button class="btn" onclick="TIX++; showTask()">Skip this</button>
+      <button class="btn" onclick="explain('tasks')">Explain this to me</button>
+      <button class="btn" onclick="closeSheet()">I’m done</button>
+    </div>`);
+}
+async function runTaskIx(i){
+  const t = TASKS[i];
+  if (t) return runTask(t);
+}
+async function runTask(t){
+  try {
+    if (t.action==="find") { closeSheet(); show("find"); return; }
+    if (t.action==="research" && t.company_id) {
+      await api(`/api/research-queue/${t.company_id}/research`, {method:"POST", body:"{}"});
+      TIX++; showTask(); boot(); return;
+    }
+    if (t.action==="retry" && t.company_id) {
+      await api(`/api/research-queue/${t.company_id}/research`, {method:"POST", body: JSON.stringify({force:true})});
+      TIX++; showTask(); boot(); return;
+    }
+    if (t.action==="open" && t.company_id) { closeSheet(); openC(t.company_id); return; }
+  } catch(e) {
+    openSheet(friendlyBox(e) + `<button class="btn gold" onclick="closeSheet()">OK</button>`);
+  }
+}
+function renderFind(){
+  const s = FIND_STEP;
+  document.querySelectorAll("#findSteps i").forEach((el,i)=>el.classList.toggle("on", i<=s));
+  if (s===0) findWiz.innerHTML = `<label>What kind of business?</label>
+    <select id="qVert">${["Roofing","HVAC","Plumbing / sewer","Foundation repair","Remodeling / general contractors","Solar","Med spas","Cosmetic dentistry / dental implants","Personal injury law","High-ticket B2B services"].map(x=>`<option ${x===FIND.vertical?"selected":""}>${x}</option>`).join("")}</select>
+    <div class="actions" style="margin-top:12px"><button class="btn gold" onclick="FIND.vertical=qVert.value; FIND_STEP=1; renderFind()">Next</button></div>`;
+  if (s===1) findWiz.innerHTML = `<label>Which city or market?</label>
+    <input id="qLoc" value="${esc(FIND.location)}" />
+    <div class="actions" style="margin-top:12px">
+      <button class="btn" onclick="FIND_STEP=0; renderFind()">Back</button>
+      <button class="btn gold" onclick="FIND.location=qLoc.value; FIND_STEP=2; renderFind()">Next</button>
+    </div>`;
+  if (s===2) findWiz.innerHTML = `<label>How many companies? (max 50)</label>
+    <input id="qLim" type="number" value="${FIND.limit}" />
+    <details><summary class="muted">More filters</summary>
+      <label>Minimum Google rating</label><input id="qMinR" type="number" step="0.1" value="${FIND.min_rating}" />
+      <label>Minimum reviews</label><input id="qMinV" type="number" value="${FIND.min_reviews}" />
+    </details>
+    <div class="actions" style="margin-top:12px">
+      <button class="btn" onclick="FIND_STEP=1; renderFind()">Back</button>
+      <button class="btn gold" onclick="FIND.limit=Number(qLim.value||20); FIND.min_rating=Number((document.getElementById('qMinR')||{}).value||4); FIND.min_reviews=Number((document.getElementById('qMinV')||{}).value||20); findLeads()">Find Clients</button>
+    </div>`;
+}
+async function findLeads(){
+  findErr.innerHTML = "";
+  findOut.textContent = "Looking up real businesses…";
+  try {
+    const d = await api("/api/finder/search", {method:"POST", body: JSON.stringify({
+      vertical: FIND.vertical, location: FIND.location, radius_m: 40000,
+      limit: FIND.limit, min_rating: FIND.min_rating, min_reviews: FIND.min_reviews, ads_preference:"any", min_score:50
+    })});
+    if (!d.ok) { findErr.innerHTML = friendlyBox(d); findOut.textContent=""; return; }
+    findOut.textContent = "";
+    findErr.innerHTML = `<div class="banner green"><b>What happened</b><p>Found ${d.returned} real companies. Added ${d.created}. Already had ${d.updated_duplicates}. ${d.queued_for_research} are ready to research.</p>
+      <p class="muted">${esc(d.note||"")}</p>
+      <button class="btn gold" onclick="show('queue')">Research them</button></div>`;
+    boot();
+  } catch(e) { findErr.innerHTML = friendlyBox(e); findOut.textContent=""; }
+}
+async function loadQueue(){
+  const rows = await api("/api/research-queue");
+  qt.innerHTML = rows.map(c => `<div class="co">
+    <div><b>${esc(c.name)}</b><div class="muted">${esc(c.city)} · ${esc(c.research_status==="queued"?"Not looked up yet":c.research_status)} · ${c.review_count} reviews</div></div>
+    <div class="actions">
+      <button class="btn gold" onclick="qAct(${c.id},'research')">Research</button>
+      <button class="btn" onclick="openC(${c.id})">Open</button>
+      <button class="btn" onclick="qAct(${c.id},'skip')">Skip</button>
+    </div></div>`).join("") || `<p class="muted">Nobody in the research line. Find Clients or Add Client first.</p>`;
+}
+async function qAct(id, act){
+  try {
+    if (act==="research") await api(`/api/research-queue/${id}/research`, {method:"POST", body:"{}"});
+    else await api(`/api/research-queue/${id}/${act}`, {method:"POST"});
+    loadQueue(); boot();
+  } catch(e) { toast((e.message||"") + " Press Retry or Skip."); }
+}
+async function researchAll(){ try { await api("/api/research-queue/research-all", {method:"POST"}); loadQueue(); boot(); } catch(e){ openSheet(friendlyBox(e)+`<button class="btn gold" onclick="closeSheet()">OK</button>`); } }
+async function researchNext(){ try { await api("/api/research-queue/next", {method:"POST"}); loadQueue(); boot(); } catch(e){ openSheet(friendlyBox(e)+`<button class="btn gold" onclick="closeSheet()">OK</button>`); } }
+async function retryFailed(){ try { await api("/api/research-queue/retry-failed", {method:"POST"}); loadQueue(); boot(); } catch(e){ openSheet(friendlyBox(e)+`<button class="btn gold" onclick="closeSheet()">OK</button>`); } }
+async function openC(id){
+  const c = await api("/api/companies/"+id);
+  show("detail");
+  const a = c.audit;
+  const findings = (a && a.findings) || [];
+  const flags = c.flags || [];
+  const simpleFindings = findings.filter(f => ["resolves","https","click_to_call","contact_form","booking","primary_cta","meta_pixel","gtm","pagespeed_mobile"].includes(f.id));
+  detail.innerHTML = `
+    <div class="card">
+      <div class="row"><h2>${esc(c.name)}</h2><button class="btn" onclick="explain('score','${esc(c.name)}')">Explain this to me</button></div>
+      <p>${esc(c.fit_plain)} · ${esc(c.stage_plain)}</p>
+      <p class="muted">${esc(c.vertical)} · ${esc(c.city)} · ${c.review_count} public reviews</p>
+      <p><b>What happened:</b> ${c.audit_status==="complete"||c.audit_status==="partial" ? "We opened their website and recorded what we saw." : c.audit_status==="blocked" ? "Their site blocked us. We did not sneak around it." : c.audit_status==="failed" ? "The site didn’t load. We did not invent findings." : "We have not opened their website yet."}</p>
+      <div class="actions">
+        <button class="btn gold" onclick="forceResearch(${c.id})">Research</button>
+        <button class="btn" onclick="saveStage(${c.id},'Approved for Outreach')">Approve</button>
+        <button class="btn" onclick="toast('Send is off. Copy the draft below and email it yourself, then mark Contacted.')">Send</button>
+        <button class="btn" onclick="saveStage(${c.id},'Call Booked')">Call</button>
+        <button class="btn" onclick="saveStage(${c.id},'Proposal Sent')">Create Proposal</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Why the score is ${c.score}/100</h3>
+      <p class="muted">Ability to pay is still a guess from typical job size — not their tax return.</p>
+      <ul>${(c.why||[]).slice(0,8).map(w=>`<li>${esc(w)}</li>`).join("")}</ul>
+      <details><summary class="muted">See more (numbers)</summary>
+        <pre class="muted">${esc(JSON.stringify(c.breakdown||{},null,2))}</pre>
+      </details>
+    </div>
+    <div class="card">
+      <h3>Website in plain English</h3>
+      ${simpleFindings.map(f=>`<div class="find"><b>${esc(plainFind(f.id))}</b> — ${esc(f.result)}<div class="muted">${esc(f.status)}</div></div>`).join("") || "<p class='muted'>Press Research.</p>"}
+      <p>${flags.map(f=>`<span class="flag">${esc(f.title)}</span>`).join("")}</p>
+      <button class="btn" onclick="explain('flags','${esc(c.name)}')">Explain this to me</button>
+      <details><summary class="muted">See more (every check)</summary>
+        ${findings.map(f=>`<div class="find">${esc(f.id)} · ${esc(f.status)} · ${esc(f.result)}<div class="muted">${esc(f.source)} · ${esc(f.checked_at||"")}</div></div>`).join("")}
+      </details>
+    </div>
+    <div class="card">
+      <h3>Draft note (you send it)</h3>
+      <textarea id="op">${esc(c.opener||"")}</textarea>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('op').value); toast('Copied. Paste into your email or text.')">Copy draft</button>
+        <button class="btn" onclick="explain('send')">Explain this to me</button>
+      </div>
+      <label>Move this conversation</label>
+      <select id="st">${["New","Researching","Qualified","Ready for Review","Approved for Outreach","Contacted","Replied","Call Booked","Proposal Sent","Negotiation","Won","Lost","Do Not Contact"].map(s=>`<option value="${s}" ${s===c.stage?"selected":""}>${s}</option>`).join("")}</select>
+      <button class="btn gold" style="margin-top:8px" onclick="saveStage(${c.id})">Save</button>
+    </div>`;
+}
+function plainFind(id){
+  return ({resolves:"Website loaded", https:"Secure site (https)", click_to_call:"Click-to-call", contact_form:"Contact form", booking:"Online booking", primary_cta:"Main button/offer", meta_pixel:"Facebook/Meta tracking snippet", gtm:"Google Tag Manager snippet", pagespeed_mobile:"Phone speed"}[id]||id);
+}
+async function forceResearch(id){
+  try { await api(`/api/research-queue/${id}/research`, {method:"POST", body: JSON.stringify({force:true})}); openC(id); loadQueue(); }
+  catch(e){ openSheet(friendlyBox(e)+`<button class="btn gold" onclick="closeSheet()">OK</button>`); }
+}
+async function saveStage(id, forced){
+  const sel = document.getElementById("st");
+  const value = forced || (sel && sel.value);
+  if (!value) return;
+  await api("/api/companies/"+id+"/stage",{method:"PATCH", body:JSON.stringify({stage:value})});
+  boot(); openC(id);
+}
+async function addCo(){
+  addErr.innerHTML = "";
+  if (!nName.value) { addErr.innerHTML = friendlyBox({message:"I need the company name.", press:"Type the name, then Save."}); return; }
+  try {
+    const c = await api("/api/companies",{method:"POST", body:JSON.stringify({name:nName.value, vertical:nVert.value, website:nWeb.value, city:nCity.value, phone:nPhone.value, review_count:Number(nRev.value||0), job_value_est:Number(nJob.value||0), source:"manual"})});
+    openC(c.id); boot();
+  } catch(e) { addErr.innerHTML = friendlyBox(Object.assign({press:"If it says duplicate, open Pipeline and find them there."}, e)); }
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => show(b.dataset.v));
+if (token) boot();
+</script>
+</body>
+</html>
