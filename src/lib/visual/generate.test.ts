@@ -10,6 +10,7 @@ import { asAspectRatio, asQuality, composeModelPrompt, IMAGINE_ENDPOINT, IMAGINE
 import { executeAllowlistedTool } from "../voice/tools.ts";
 import { spokenToAction, applyDeskAction, emptyDesk } from "../voice/desk-actions.ts";
 import { buildAraInstructions } from "../voice/ara-context.ts";
+import { FLAGS } from "../flags.ts";
 
 const desk = {
   view: "home" as const,
@@ -67,12 +68,17 @@ describe("true AI generation vs background presets", () => {
 
   it("generate_background tool is an image generation plan, not set_page_background", () => {
     const r = executeAllowlistedTool("generate_background", { prompt: "cyberpunk city at night" }, desk);
-    assert.equal(r.rejected, false);
-    assert.equal(r.plan.type, "image");
-    if (r.plan.type === "image" && r.plan.cmd.op === "generate") {
-      assert.equal(r.plan.cmd.asBackground, true);
-      assert.equal(r.plan.cmd.kind, "background");
-      assert.match(r.plan.cmd.prompt, /cyberpunk/i);
+    if (!FLAGS.AI_IMAGE_GENERATION) {
+      assert.equal(r.rejected, true);
+      assert.match(String(r.output.reason), /paused/i);
+    } else {
+      assert.equal(r.rejected, false);
+      assert.equal(r.plan.type, "image");
+      if (r.plan.type === "image" && r.plan.cmd.op === "generate") {
+        assert.equal(r.plan.cmd.asBackground, true);
+        assert.equal(r.plan.cmd.kind, "background");
+        assert.match(r.plan.cmd.prompt, /cyberpunk/i);
+      }
     }
     const preset = executeAllowlistedTool("set_page_background", { scene: "mountain-lake-sunrise" }, desk);
     assert.equal(preset.plan.type, "visual");
@@ -118,7 +124,7 @@ describe("true AI generation vs background presets", () => {
     const text = buildAraInstructions(desk);
     assert.match(text, /Background Preset/i);
     assert.match(text, /Never call a preset/);
-    assert.match(text, /generate_image/);
+    assert.match(text, /AI image generation is paused/);
   });
 
   it("desk IMAGE generate does not apply a preset as a side effect", () => {

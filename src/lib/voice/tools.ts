@@ -8,6 +8,7 @@ import { asImageKind, detectImageKind, parseImageCommand, summarizeGallery, type
 import { asIntendedUse } from "../visual/safety.ts";
 import { parseDesignOps } from "../design/engine.ts";
 import type { DesignOp, SafeDesignSnapshot } from "../design/types.ts";
+import { FLAGS } from "../flags.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
@@ -711,6 +712,15 @@ export function executeAllowlistedTool(
     };
   }
   if (tool === "generate_image" || tool === "generate_background" || tool === "apply_generated_image" || tool === "favorite_generated_image" || tool === "clear_generated_image" || tool === "expand_generated_image" || tool === "regenerate_image" || tool === "list_generated_images" || tool === "delete_generated_image") {
+    if (!FLAGS.AI_IMAGE_GENERATION && (tool === "generate_image" || tool === "generate_background" || tool === "regenerate_image")) {
+      return {
+        ok: false,
+        tool,
+        rejected: true,
+        output: { ok: false, reason: "AI image generation is paused. Use a Background Preset instead." },
+        plan: { type: "none" },
+      };
+    }
     let cmd: ImageCommand;
     if (tool === "apply_generated_image") {
       cmd = {

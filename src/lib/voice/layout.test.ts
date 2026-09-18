@@ -103,15 +103,9 @@ describe("Ara operates the same screen Dylan sees", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const bar = readFileSync(join(here, "../../components/voice-bar.tsx"), "utf8");
     assert.match(bar, /data-ara-caption/);
-    assert.match(bar, /View conversation/);
     assert.match(bar, /la-ara-reply/);
-    assert.match(bar, /data-ara-ask/);
     assert.match(bar, /Hold to speak/);
-    assert.match(bar, /Type or hold/);
-    assert.match(bar, /unlockAraOutput/);
-    assert.match(bar, /replayAraOutput/);
-    assert.match(bar, /data-ara-hear/);
-    assert.match(bar, /Hear Ara/);
+    assert.match(bar, /Conversation/);
     assert.equal(/IDLE_COLLAPSE_MS/.test(bar), false);
     assert.equal(/Ara voice is temporarily unavailable/.test(bar), false);
   });
@@ -186,13 +180,15 @@ describe("Ara operates the same screen Dylan sees", () => {
     }
   });
 
-  it("Owner Mode mounts ChatGPT Design Director next to compact Ara", () => {
+  it("Owner Mode keeps Design Director code but does not mount it on recovery", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const deskSrc = readFileSync(join(here, "../../components/owner-desk.tsx"), "utf8");
+    const flags = readFileSync(join(here, "../flags.ts"), "utf8");
     assert.match(deskSrc, /DesignDirectorBar/);
-    assert.match(deskSrc, /designDirectorTurnFn/);
-    assert.match(deskSrc, /sendOwnerText/);
-    assert.match(deskSrc, /onMicDenied/);
+    assert.match(deskSrc, /FLAGS\.DESIGN_DIRECTOR/);
+    assert.match(flags, /DESIGN_DIRECTOR:\s*false/);
+    assert.match(flags, /AI_IMAGE_GENERATION:\s*false/);
+    assert.match(flags, /EXPERIMENTAL_VOICE_FEATURES:\s*false/);
     assert.equal(/Get Paid/.test(deskSrc), false);
   });
 });

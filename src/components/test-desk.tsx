@@ -288,7 +288,7 @@ export function TestDesk({
         {Object.entries(LABELS).map(([k, label]) => (
           <p key={k} className="text-sm">{mark(data.integrations[k] === "ready")} {label}</p>
         ))}
-        <p className="text-sm">{(data.worker?.detail || "Worker not configured").replace(/^[🟢🟡🔴✅❌]\s*/, "")}</p>
+        <p className="text-sm">{(data.worker?.detail || "Worker not configured").replace(/^[🟢🟡🔴✅❌]\s*/u, "")}</p>
         {data.gmailEmail ? <p className="mt-2 text-sm text-muted">Connected Gmail: {data.gmailEmail}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button className="la-btn la-btn-primary" disabled={Boolean(busy)} onClick={() => {

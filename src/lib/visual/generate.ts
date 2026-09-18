@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
+import { FLAGS } from "@/lib/flags";
 import type { VisualAsset } from "./theme";
 import { asImageKind, type GalleryItem, type ImageKind } from "./gallery";
 import { asIntendedUse, evaluateImageSafety, type IntendedUse, type SafetyStatus } from "./safety";
@@ -340,6 +341,9 @@ export const generateImageFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: GenInput) => data)
   .handler(async ({ data, context }) => {
+    if (!FLAGS.AI_IMAGE_GENERATION) {
+      return { ok: false as const, reason: "AI image generation is paused while Lamb Ascension is on the recovery build." };
+    }
     const n = Math.min(3, Math.max(1, Math.round(Number(data.n) || 1)));
     const kind = asImageKind(data.kind);
     const intendedUse = asIntendedUse(String(data.intendedUse || (kind === "background" ? "home" : kind === "ad" ? "ad" : "general")));

@@ -150,7 +150,7 @@ export async function runDesignDirectorTurn(opts: {
   previousResponseId?: string | null;
   execute: (name: string, args: Record<string, unknown>) => { output: Record<string, unknown>; ops: DesignOp[]; preview: boolean; spoken: string };
 }): Promise<OpenAiTurn> {
-  let input: unknown[] = [{ role: "user", content: opts.prompt }];
+  const input: unknown[] = [{ role: "user", content: opts.prompt }];
   const collected: DesignOp[] = [];
   let preview = false;
   let spoken = "";

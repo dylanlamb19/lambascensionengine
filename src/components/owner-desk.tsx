@@ -32,7 +32,6 @@ import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmS
 import { speak, stopSpeaking } from "@/lib/voice/speech";
 import type { OwnerView, VoiceMode } from "@/lib/voice/types";
 import { AraRealtime, type AraStatus } from "@/lib/voice/ara-client";
-import type { VoiceSnapshot } from "@/lib/voice/lifecycle";
 import { executeAllowlistedTool, planProspectUid, type AraDeskContext, type ToolResult } from "@/lib/voice/tools";
 import {
   applyDeskAction,
@@ -76,6 +75,7 @@ import {
 } from "@/lib/visual/gallery";
 import { ImageDock } from "@/components/image-dock";
 import { DesignDirectorBar } from "@/components/design-director";
+import { FLAGS } from "@/lib/flags";
 import {
   applyDesignOps,
   cloneDesign,
@@ -257,10 +257,7 @@ export function OwnerDesk() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [araStatus, setAraStatus] = useState<AraStatus>("ready");
   const [araErr, setAraErr] = useState("");
-  const [realtimeLive, setRealtimeLive] = useState(false);
   const [araSources, setAraSources] = useState<AraSource[]>([]);
-  const [voiceSnap, setVoiceSnap] = useState<VoiceSnapshot | null>(null);
-  const [voiceDebug, setVoiceDebug] = useState(false);
   const [calView, setCalView] = useState<CalView>("week");
   const [calAnchor, setCalAnchor] = useState(ymdInTz());
   const [calEventId, setCalEventId] = useState<string | null>(null);
@@ -1170,7 +1167,6 @@ export function OwnerDesk() {
     araGen.current += 1;
     araRef.current?.stop();
     araRef.current = null;
-    setRealtimeLive(false);
     setAraStatus((s) => (s === "unavailable" ? s : "ready"));
   }
 
@@ -1180,46 +1176,32 @@ export function OwnerDesk() {
     araRef.current?.stop();
     araRef.current = null;
     setAraErr("");
-    setAraSources([]);
     setAraStatus("connecting");
-    setRealtimeLive(false);
     try {
       const ses = await createAraSessionFn();
       if (araGen.current !== gen) return;
       if (!ses.ok) {
-        setAraErr("Voice isn’t available here. Type or hold to speak — Ara still runs the desk.");
-        setAraStatus("ready");
-        setRealtimeLive(false);
+        setAraErr(ses.reason || "Ara voice isn’t available. Hold to speak still works.");
+        setAraStatus("unavailable");
         return;
       }
       const client = new AraRealtime(ses.token, ses.wsUrl, {
         onStatus: (s) => {
-          if (s === "unavailable") {
-            setAraStatus("ready");
-            setRealtimeLive(false);
-            setVoiceListening(false);
-            return;
-          }
           setAraStatus(s);
-          setVoiceListening(s === "listening" || s === "hearing");
-          if (s === "listening" || s === "hearing" || s === "speaking" || s === "thinking") {
-            setRealtimeLive(true);
-            araReconnects.current = 0;
-          }
+          setVoiceListening(s === "listening");
         },
         onUserTranscript: (text, isFinal) => {
           setYouSaid(text);
           handleAraOwnerTranscript(text, isFinal);
         },
         onAraTranscript: (text) => setVoiceReply(text),
-        onSources: (sources) => setAraSources(sources),
         onToolCall: async (name, args) => {
           if (isClientOwnedStopTool(name)) {
             return { ok: true, ignored: true, cancelled_speech: true, conversation_active: true };
           }
           const result = executeAllowlistedTool(name, args, araDesk(), "owner_session");
           if (result.plan.type === "design") {
-            void applyLocalDesignOps(result.plan.operations, "ARA", result.plan.preview);
+            if (FLAGS.DESIGN_DIRECTOR) void applyLocalDesignOps(result.plan.operations, "ARA", result.plan.preview);
             const rec = makeVoiceAudit({
               tool: name,
               prospectUid: liveRef.current.openUid,
@@ -1242,28 +1224,9 @@ export function OwnerDesk() {
           return hydrateAraOutput(name, result);
         },
         onError: (plain) => {
-          setAraErr(plain || "Voice dropped. Type or hold to speak — Ara still runs the desk.");
-          setRealtimeLive(false);
-          setAraStatus("ready");
-        },
-        onMicDenied: (plain) => {
-          setAraErr(plain);
-        },
-        onSnapshot: (snap) => setVoiceSnap(snap),
-        onNeedReconnect: () => {
-          if (liveRef.current.voiceMode !== "conversation") return;
-          if (araReconnects.current >= 3) {
-            setAraErr("Voice dropped. Type or hold to speak — Ara still runs the desk.");
-            setRealtimeLive(false);
-            setAraStatus("ready");
-            return;
-          }
-          araReconnects.current += 1;
-          if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-          reconnectTimer.current = setTimeout(() => {
-            reconnectTimer.current = null;
-            if (liveRef.current.voiceMode === "conversation") void startAra();
-          }, 250);
+          setAraErr(plain || "Ara voice dropped. Hold to speak still works.");
+          if (/microphone/i.test(plain || "")) return;
+          setAraStatus("unavailable");
         },
       });
       if (araGen.current !== gen) {
@@ -1275,19 +1238,17 @@ export function OwnerDesk() {
       client.setMuted(voiceMuted);
     } catch {
       if (araGen.current !== gen) return;
-      setAraErr("Voice isn’t available here. Type or hold to speak — Ara still runs the desk.");
-      setAraStatus("ready");
-      setRealtimeLive(false);
+      setAraErr("Ara voice isn’t available. Hold to speak still works.");
+      setAraStatus("unavailable");
     }
   }
 
   function handleAraOwnerTranscript(text: string, isFinal = true) {
-    const voice = araRef.current?.voiceState();
-    const speaking = voice === "ARA_SPEAKING" || voice === "THINKING" || araStatus === "speaking" || araStatus === "thinking";
+    const speaking = araStatus === "speaking";
     const stop = classifyOwnerStopIntent(text, {
       finalized: isFinal,
       araSpeaking: speaking,
-      turnId: voiceSnap?.activeUserTurnId || null,
+      turnId: null,
     });
     if (stop.kind === "stop_conversation") {
       gateRef.current.cancel();
@@ -1298,17 +1259,16 @@ export function OwnerDesk() {
       return;
     }
     if (stop.kind === "stop_speech") {
-      araRef.current?.cancelSpeechAndListen("stop_speech");
+      stopSpeaking();
       return;
     }
     if (stop.kind === "stop_task") {
       gateRef.current.cancel();
-      araRef.current?.cancelSpeechAndListen("stop_task");
+      stopSpeaking();
       return;
     }
     if (!isFinal) return;
-    if (isDesignDirectorUtterance(text)) {
-      araRef.current?.cancelSpeechAndListen("design_director");
+    if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
     }
@@ -1364,14 +1324,6 @@ export function OwnerDesk() {
   }
 
   useEffect(() => {
-    try {
-      setVoiceDebug(new URLSearchParams(window.location.search).get("araVoiceDebug") === "1");
-    } catch {
-      setVoiceDebug(false);
-    }
-  }, []);
-
-  useEffect(() => {
     if (voiceMode !== "conversation") {
       stopAra();
       return;
@@ -1422,14 +1374,6 @@ export function OwnerDesk() {
     }
   }
 
-  function askOwner(text: string) {
-    const t = text.trim();
-    if (t.length < 2) return;
-    setYouSaid(t);
-    if (araRef.current?.sendOwnerText(t)) return;
-    onVoiceTranscript(t, true, 1);
-  }
-
   function onVoiceTranscript(text: string, isFinal: boolean, confidence: number | undefined) {
     setYouSaid(text);
     if (!isFinal) return;
@@ -1437,7 +1381,7 @@ export function OwnerDesk() {
       say("I didn't catch that. Can you say it again?");
       return;
     }
-    const speaking = araStatus === "speaking" || araStatus === "thinking";
+    const speaking = araStatus === "speaking";
     const stop = classifyOwnerStopIntent(text, { finalized: true, araSpeaking: speaking });
     if (stop.kind === "stop_conversation") {
       gateRef.current.cancel();
@@ -1460,7 +1404,7 @@ export function OwnerDesk() {
       runOwnerConfirm(text);
       return;
     }
-    if (isDesignDirectorUtterance(text)) {
+    if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
     }
@@ -1893,11 +1837,8 @@ export function OwnerDesk() {
             }}
             araStatus={araStatus}
             araError={araErr}
-            sources={araSources}
-            debug={voiceDebug ? voiceSnap : null}
-            realtime={realtimeLive}
-            onAsk={askOwner}
           />
+          {FLAGS.DESIGN_DIRECTOR ? (
           <DesignDirectorBar
             status={ddStatus}
             paused={ddPaused}
@@ -1924,6 +1865,7 @@ export function OwnerDesk() {
             onTryAnother={tryAnotherDesign}
             onOpenSettings={() => dispatchAction({ name: "NAVIGATE_SETTINGS" })}
           />
+          ) : null}
         </div>
       </header>
       <main
@@ -1964,6 +1906,10 @@ export function OwnerDesk() {
               filePickRef.current?.click();
             }}
             onGenerate={(prompt, nsfw) => {
+              if (!FLAGS.AI_IMAGE_GENERATION) {
+                say("AI image generation is paused on this recovery build. Use a Background Preset in Settings.");
+                return;
+              }
               dispatchAction({
                 name: "IMAGE",
                 image: { op: "generate", prompt, n: 1, kind: "background", nsfw, asBackground: true, aspectRatio: "16:9", intendedUse: "home" },
