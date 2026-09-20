@@ -28,6 +28,8 @@ const currentProduction: IntegrationStatus = {
   calendar_identity: "",
   calendar_token_valid: false,
   calendar_freebusy_valid: false,
+  calendar_freebusy_code: "",
+  calendar_freebusy_detail: "",
   worker_configured: true,
   worker_last_success: null,
   worker_state: "configured",

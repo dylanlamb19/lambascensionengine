@@ -37,14 +37,20 @@ export async function loadIntegrationStatus(
   let calendar_freebusy_valid = false;
   let calendar_token_valid = false;
   let calendar_identity = accounts.calendarEmail || "";
+  let calendar_freebusy_code = "";
+  let calendar_freebusy_detail = "";
   if (accounts.calendar === "connected" || accounts.calendar === "attention") {
     const tokens = await accessFor(userId, "calendar");
     calendar_token_valid = Boolean(tokens);
     if (tokens?.email) calendar_identity = tokens.email;
     if (tokens && opts?.probeLive) {
-      const probe = await probeFreeBusy(tokens.access_token);
+      const probe = await probeFreeBusy(tokens.access_token, fetch, calendar_identity || tokens.email, tokens.scope);
       calendar_freebusy_valid = probe.ok;
-      if (!probe.ok) calendar_token_valid = probe.code !== "TOKEN_INVALID";
+      if (!probe.ok) {
+        calendar_freebusy_code = probe.code;
+        calendar_freebusy_detail = probe.reason;
+        calendar_token_valid = probe.code !== "CALENDAR_TOKEN_INVALID" && probe.code !== "TOKEN_INVALID" && probe.code !== "CALENDAR_TOKEN_REFRESH_FAILED";
+      }
     }
   }
 
@@ -57,6 +63,8 @@ export async function loadIntegrationStatus(
     calendar_identity,
     calendar_token_valid,
     calendar_freebusy_valid,
+    calendar_freebusy_code,
+    calendar_freebusy_detail,
     worker_configured: worker.state !== "missing",
     worker_last_success: beat.lastCompletedAt ? new Date(beat.lastCompletedAt).toISOString() : null,
     worker_state: worker.state,

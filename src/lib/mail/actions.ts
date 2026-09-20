@@ -180,7 +180,7 @@ export const availabilityFn = createServerFn({ method: "GET" })
     const { offeredSlots, CALENDAR_UNREADABLE } = await import("../google/calendar");
     const tokens = await accessFor(context.userId, "calendar");
     if (!tokens) return { ok: false as const, reason: "Calendar is not connected.", slots: [] as { start: string; end: string; label: string }[] };
-    const result = await offeredSlots(tokens.access_token, { count: 3 });
+    const result = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email });
     if (!result.ok) return { ok: false as const, reason: CALENDAR_UNREADABLE, slots: [] };
     const slots = result.slots.map((s) => ({ start: s.start.toISOString(), end: s.end.toISOString(), label: s.label }));
     return { ok: true as const, slots };
@@ -202,7 +202,7 @@ export const scheduleCallFn = createServerFn({ method: "POST" })
     const start = new Date(data.start);
     const end = new Date(data.end);
     const now = new Date();
-    const avail = await offeredSlots(tokens.access_token, { from: now, count: 8 });
+    const avail = await offeredSlots(tokens.access_token, { from: now, count: 8, calendarId: tokens.email });
     if (!avail.ok) return { ok: false as const, reason: CALENDAR_UNREADABLE };
     const check = slotIsOffered({ start, end }, avail.slots, now);
     if (!check.ok) return { ok: false as const, reason: check.reason };
@@ -327,7 +327,7 @@ export const calendarTestEventFn = createServerFn({ method: "POST" })
       if (!gone.ok) return { ok: false as const, reason: gone.error, code: gone.code };
       return { ok: true as const, deleted: true as const, eventId: id };
     }
-    const avail = await offeredSlots(tokens.access_token, { count: 1 });
+    const avail = await offeredSlots(tokens.access_token, { count: 1, calendarId: tokens.email });
     if (!avail.ok || !avail.slots[0]) {
       return { ok: false as const, reason: avail.ok ? "No verified free slot was found." : avail.reason, code: avail.ok ? "FREEBUSY_FAILED" as const : avail.code };
     }

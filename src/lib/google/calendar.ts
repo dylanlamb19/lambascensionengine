@@ -1,7 +1,9 @@
 import { openSlots, type Busy } from "../calendar/slots.ts";
 import {
   calendarFailureReason,
+  calendarScopeFlags,
   classifyGoogleCalendarHttp,
+  googleErrorReason,
   CALENDAR_API_DISABLED_MESSAGE,
   type CalendarFailureCode,
 } from "./calendar-errors.ts";
@@ -21,14 +23,60 @@ export type GoogleCalEvent = {
   htmlLink?: string;
 };
 
-async function readGoogleError(res: Response): Promise<{ status: number; body: string; code: CalendarFailureCode }> {
+export type FreeBusyMeta = {
+  httpStatus: number;
+  googleReason: string;
+  calendarId: string;
+};
+
+async function readGoogleError(res: Response): Promise<{ status: number; body: string; code: CalendarFailureCode; googleReason: string }> {
   const body = await res.text().catch(() => "");
-  return { status: res.status, body, code: classifyGoogleCalendarHttp(res.status, body) };
+  return {
+    status: res.status,
+    body,
+    code: classifyGoogleCalendarHttp(res.status, body),
+    googleReason: googleErrorReason(body),
+  };
+}
+
+function freeBusyItemIds(calendarId?: string): string[] {
+  const ids: string[] = [];
+  const verified = (calendarId || "").trim();
+  if (verified && verified.includes("@")) ids.push(verified);
+  if (!ids.includes("primary")) ids.push("primary");
+  return ids;
+}
+
+type CalBusy = { busy?: { start: string; end: string }[]; errors?: { reason?: string }[] };
+
+function pickReadableCalendar(
+  calendars: Record<string, CalBusy> | undefined,
+  preferred?: string,
+): { id: string; busy: { start: string; end: string }[] } | { id: string; error: string } | null {
+  const map = calendars || {};
+  const entries = Object.entries(map);
+  if (!entries.length) return null;
+  const tryId = (id: string) => {
+    const row = map[id];
+    if (!row) return null;
+    if (row.errors && row.errors.length) return { id, error: String(row.errors[0]?.reason || "notFound") };
+    return { id, busy: row.busy || [] };
+  };
+  if (preferred) {
+    const hit = tryId(preferred);
+    if (hit && !("error" in hit)) return hit;
+  }
+  for (const [id, row] of entries) {
+    if (!row.errors?.length) return { id, busy: row.busy || [] };
+  }
+  const first = tryId(entries[0][0]);
+  return first && "error" in first ? first : { id: entries[0][0], error: "notFound" };
 }
 
 export async function probeCalendarApiEnabled(
   accessToken: string,
   fetchImpl: typeof fetch = fetch,
+  calendarId?: string,
 ): Promise<{ enabled: boolean | "unknown"; code: CalendarFailureCode | null; reason: string }> {
   try {
     const from = new Date();
@@ -42,7 +90,8 @@ export async function probeCalendarApiEnabled(
       body: JSON.stringify({
         timeMin: from.toISOString(),
         timeMax: to.toISOString(),
-        items: [{ id: "primary" }],
+        timeZone: "UTC",
+        items: freeBusyItemIds(calendarId).map((id) => ({ id })),
       }),
     });
     if (res.ok) return { enabled: true, code: null, reason: "" };
@@ -50,12 +99,12 @@ export async function probeCalendarApiEnabled(
     if (err.code === "CALENDAR_API_DISABLED") {
       return { enabled: false, code: err.code, reason: CALENDAR_API_DISABLED_MESSAGE };
     }
-    if (err.code === "CALENDAR_NOT_AUTHORIZED") {
+    if (err.code === "CALENDAR_NOT_AUTHORIZED" || err.code === "CALENDAR_SCOPE_MISSING") {
       return { enabled: true, code: err.code, reason: "" };
     }
     return { enabled: "unknown", code: err.code, reason: calendarFailureReason(err.code) };
   } catch {
-    return { enabled: "unknown", code: "FREEBUSY_FAILED", reason: CALENDAR_UNREADABLE };
+    return { enabled: "unknown", code: "FREEBUSY_PROVIDER_ERROR", reason: CALENDAR_UNREADABLE };
   }
 }
 
@@ -108,15 +157,17 @@ export async function listEvents(
 }
 
 export type ListBusyResult =
-  | { ok: true; busy: Busy[] }
-  | { ok: false; reason: string; code: CalendarFailureCode };
+  | { ok: true; busy: Busy[]; calendarId: string }
+  | { ok: false; reason: string; code: CalendarFailureCode; httpStatus: number; googleReason: string; calendarId: string };
 
 export async function listBusy(
   accessToken: string,
   from: Date,
   to: Date,
   fetchImpl: typeof fetch = fetch,
+  calendarId?: string,
 ): Promise<ListBusyResult> {
+  const ids = freeBusyItemIds(calendarId);
   try {
     const res = await fetchImpl("https://www.googleapis.com/calendar/v3/freeBusy", {
       method: "POST",
@@ -127,29 +178,71 @@ export async function listBusy(
       body: JSON.stringify({
         timeMin: from.toISOString(),
         timeMax: to.toISOString(),
-        items: [{ id: "primary" }],
+        timeZone: "UTC",
+        items: ids.map((id) => ({ id })),
       }),
     });
     if (!res.ok) {
       const err = await readGoogleError(res);
-      if (err.code === "CALENDAR_API_DISABLED") return { ok: false, reason: CALENDAR_API_DISABLED_MESSAGE, code: err.code };
-      if (err.code === "TOKEN_INVALID" || err.code === "CALENDAR_NOT_AUTHORIZED") {
-        return { ok: false, reason: calendarFailureReason(err.code), code: err.code };
-      }
-      return { ok: false, reason: CALENDAR_UNREADABLE, code: "FREEBUSY_FAILED" };
+      return {
+        ok: false,
+        reason: err.code === "CALENDAR_API_DISABLED" ? CALENDAR_API_DISABLED_MESSAGE : calendarFailureReason(err.code),
+        code: err.code,
+        httpStatus: err.status,
+        googleReason: err.googleReason,
+        calendarId: ids[0] || "primary",
+      };
     }
     const json = (await res.json()) as {
       error?: { message?: string };
-      calendars?: { primary?: { busy?: { start: string; end: string }[]; errors?: unknown[] } };
+      calendars?: Record<string, CalBusy>;
     };
-    if (json.error) return { ok: false, reason: CALENDAR_UNREADABLE, code: "FREEBUSY_FAILED" };
-    const primary = json.calendars?.primary;
-    if (!primary) return { ok: false, reason: CALENDAR_UNREADABLE, code: "FREEBUSY_FAILED" };
-    if (primary.errors && primary.errors.length) return { ok: false, reason: CALENDAR_UNREADABLE, code: "FREEBUSY_FAILED" };
-    const busy = (primary.busy || []).map((b) => ({ start: new Date(b.start), end: new Date(b.end) }));
-    return { ok: true, busy };
+    if (json.error) {
+      const googleReason = googleErrorReason(JSON.stringify(json));
+      return {
+        ok: false,
+        reason: CALENDAR_UNREADABLE,
+        code: "FREEBUSY_FAILED",
+        httpStatus: 200,
+        googleReason,
+        calendarId: ids[0] || "primary",
+      };
+    }
+    const picked = pickReadableCalendar(json.calendars, calendarId && calendarId.includes("@") ? calendarId : "primary");
+    if (!picked) {
+      return {
+        ok: false,
+        reason: CALENDAR_UNREADABLE,
+        code: "FREEBUSY_FAILED",
+        httpStatus: 200,
+        googleReason: "empty_calendars",
+        calendarId: ids[0] || "primary",
+      };
+    }
+    if ("error" in picked) {
+      return {
+        ok: false,
+        reason: CALENDAR_UNREADABLE,
+        code: classifyGoogleCalendarHttp(200, JSON.stringify({ calendars: json.calendars })),
+        httpStatus: 200,
+        googleReason: picked.error,
+        calendarId: picked.id,
+      };
+    }
+    return {
+      ok: true,
+      busy: picked.busy.map((b) => ({ start: new Date(b.start), end: new Date(b.end) })),
+      calendarId: picked.id,
+    };
   } catch {
-    return { ok: false, reason: CALENDAR_UNREADABLE, code: "FREEBUSY_FAILED" };
+    return {
+      ok: false,
+      reason: CALENDAR_UNREADABLE,
+      code: "FREEBUSY_PROVIDER_ERROR",
+      httpStatus: 0,
+      googleReason: "network",
+      calendarId: ids[0] || "primary",
+    };
   }
 }
 
@@ -201,23 +294,36 @@ export async function deleteEvent(
 export async function probeFreeBusy(
   accessToken: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true } | { ok: false; reason: string; code: CalendarFailureCode }> {
+  calendarId?: string,
+  scope?: string,
+): Promise<{ ok: true; calendarId: string } | { ok: false; reason: string; code: CalendarFailureCode; httpStatus: number; googleReason: string; calendarId: string }> {
+  const flags = calendarScopeFlags(scope);
+  if (flags.listed && !flags.freebusy) {
+    return {
+      ok: false,
+      reason: calendarFailureReason("CALENDAR_SCOPE_MISSING"),
+      code: "CALENDAR_SCOPE_MISSING",
+      httpStatus: 0,
+      googleReason: "scope_missing",
+      calendarId: calendarId || "primary",
+    };
+  }
   const from = new Date();
   const to = new Date(from.getTime() + 24 * 3600 * 1000);
-  const result = await listBusy(accessToken, from, to, fetchImpl);
-  if (!result.ok) return { ok: false, reason: result.reason, code: result.code };
-  return { ok: true };
+  const result = await listBusy(accessToken, from, to, fetchImpl, calendarId);
+  if (!result.ok) return result;
+  return { ok: true, calendarId: result.calendarId };
 }
 
 export async function offeredSlots(
   accessToken: string,
-  opts: { from?: Date; count?: number } = {},
+  opts: { from?: Date; count?: number; calendarId?: string } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; busy: Busy[]; slots: { start: Date; end: Date; label: string }[] } | { ok: false; reason: string; slots: []; code: CalendarFailureCode }> {
   const from = opts.from || new Date();
-  const result = await listBusy(accessToken, from, new Date(from.getTime() + 14 * 86400000), fetchImpl);
+  const result = await listBusy(accessToken, from, new Date(from.getTime() + 14 * 86400000), fetchImpl, opts.calendarId);
   if (!result.ok) return { ok: false, reason: CALENDAR_UNREADABLE, slots: [], code: result.code };
   return { ok: true, busy: result.busy, slots: openSlots({ from, busy: result.busy, count: opts.count ?? 3 }) };
 }
 
-export { openSlots };
+export { openSlots, calendarScopeFlags };

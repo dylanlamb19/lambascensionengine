@@ -18,6 +18,8 @@ export type IntegrationStatus = {
   calendar_identity: string;
   calendar_token_valid: boolean;
   calendar_freebusy_valid: boolean;
+  calendar_freebusy_code: string;
+  calendar_freebusy_detail: string;
   worker_configured: boolean;
   worker_last_success: string | null;
   worker_state: WorkerState;
@@ -28,6 +30,7 @@ export type IntegrationStatus = {
 export type IntegrationSpeech = {
   gmailAnswer: string;
   calendarAnswer: string;
+  freeBusyAnswer: string;
   setupRemaining: string;
   settingsImportant: string;
   settingsNext: string;
@@ -115,6 +118,12 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
       ? "No. Gmail is connected, but Google Calendar still needs to be connected."
       : "No. Google Calendar isn’t connected yet.";
 
+  const freeBusyAnswer = !s.calendar_connected
+    ? "No. Calendar still needs to be connected, so I cannot see when you’re free."
+    : s.calendar_freebusy_valid
+      ? "Yes. I can read your Google Calendar availability."
+      : s.calendar_freebusy_detail || "Calendar is connected, but availability couldn’t be read.";
+
   const remaining: string[] = [];
   if (!s.gmail_connected) remaining.push("Gmail still needs to be connected");
   if (!s.calendar_connected) remaining.push("Google Calendar still needs to be connected");
@@ -160,7 +169,7 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
     text: s.test_mode ? "Test Mode is on. Emails only go to the allowlist." : "Test Mode is off. Live outreach rules apply. First-contact approval still required.",
   });
 
-  return { gmailAnswer, calendarAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
+  return { gmailAnswer, calendarAnswer, freeBusyAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
 }
 
 export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: string[] = []): string {
@@ -175,10 +184,12 @@ export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: str
     `calendar_token_valid: ${s.calendar_token_valid ? "true" : "false"}.`,
     `calendar_identity: ${s.calendar_identity || "none"}.`,
     `calendar_freebusy_valid: ${s.calendar_freebusy_valid ? "true" : "false"}.`,
+    `calendar_freebusy_code: ${s.calendar_freebusy_code || "none"}.`,
     `worker_state: ${s.worker_state}. worker_configured: ${s.worker_configured ? "true" : "false"}. worker_last_success: ${s.worker_last_success || "none"}.`,
     `test_mode: ${s.test_mode ? "ON" : "off"}.`,
     `If Dylan asks whether Gmail is connected, answer: ${speech.gmailAnswer}`,
     `If Dylan asks whether Calendar is connected, answer: ${speech.calendarAnswer}`,
+    `If Dylan asks whether you can see when he is free, answer: ${speech.freeBusyAnswer}`,
     `If Dylan asks what still needs setup, answer: ${speech.setupRemaining}`,
     "Never say Gmail is missing when gmail_connected is true.",
     "Never say Calendar is disconnected when calendar_connected is true.",

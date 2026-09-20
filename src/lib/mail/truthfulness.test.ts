@@ -45,7 +45,7 @@ test("Google free/busy HTTP failure produces zero offered slots and an error", a
   const fetchImpl = (async () => new Response("nope", { status: 500 })) as typeof fetch;
   const busy = await listBusy("tok", new Date(), new Date(), fetchImpl);
   assert.equal(busy.ok, false);
-  if (!busy.ok) assert.equal(busy.reason, CALENDAR_UNREADABLE);
+  if (!busy.ok) assert.match(busy.reason, /provider error|couldn’t verify|couldn’t be read/i);
   const offered = await offeredSlots("tok", { count: 3 }, fetchImpl);
   assert.equal(offered.ok, false);
   assert.equal(offered.slots.length, 0);

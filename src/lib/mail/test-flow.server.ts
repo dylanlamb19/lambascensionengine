@@ -67,7 +67,12 @@ export async function connectionTest(userId: string) {
     : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar account identity was not read." : "Calendar is not connected.", email: "" };
   const calendarFreeBusy = integration.calendar_freebusy_valid
     ? { ok: true as boolean, detail: "Calendar availability was read." }
-    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar availability couldn’t be read. (FREEBUSY_FAILED)" : "Calendar is not connected." };
+    : {
+      ok: false as boolean,
+      detail: integration.calendar_connected
+        ? (integration.calendar_freebusy_detail || "Calendar availability couldn’t be read.")
+        : "Calendar is not connected.",
+    };
   const worker = {
     ok: integration.worker_state === "running",
     detail: integration.worker_detail,
@@ -315,7 +320,7 @@ export async function testBookingLink(userId: string, origin: string) {
   if (!prospect) return { ok: false as const, reason: "Choose a test recipient first." };
   const tokens = await accessFor(userId, "calendar");
   if (!tokens) return { ok: false as const, reason: "Calendar is not connected." };
-  const avail = await offeredSlots(tokens.access_token, { count: 3 });
+  const avail = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email });
   if (!avail.ok) return { ok: false as const, reason: CALENDAR_UNREADABLE };
   const slots = avail.slots.map((s) => ({
     start: s.start.toISOString(),
@@ -341,7 +346,7 @@ export async function testBookSlot(userId: string, startIso: string, endIso: str
   const start = new Date(startIso);
   const end = new Date(endIso);
   const from = new Date();
-  const avail = await offeredSlots(tokens.access_token, { from, count: 8 });
+  const avail = await offeredSlots(tokens.access_token, { from, count: 8, calendarId: tokens.email });
   if (!avail.ok) {
     await finishBookingLink(token, "open");
     return { ok: false as const, reason: CALENDAR_UNREADABLE };

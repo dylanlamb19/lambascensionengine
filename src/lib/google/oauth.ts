@@ -146,6 +146,7 @@ export async function ensureFreshAccess(
     next.refresh_token = tokens.refresh_token;
     next.email = tokens.email;
     next.sub = tokens.sub;
+    next.scope = next.scope || tokens.scope || "";
     return { ok: true, tokens: next, refreshed: true };
   } catch {
     return { ok: false, error: "Calendar needs to be reconnected." };
