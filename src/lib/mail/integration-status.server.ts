@@ -35,11 +35,16 @@ export async function loadIntegrationStatus(
   }
 
   let calendar_freebusy_valid = false;
-  if (accounts.calendar === "connected") {
+  let calendar_token_valid = false;
+  let calendar_identity = accounts.calendarEmail || "";
+  if (accounts.calendar === "connected" || accounts.calendar === "attention") {
     const tokens = await accessFor(userId, "calendar");
+    calendar_token_valid = Boolean(tokens);
+    if (tokens?.email) calendar_identity = tokens.email;
     if (tokens && opts?.probeLive) {
       const probe = await probeFreeBusy(tokens.access_token);
       calendar_freebusy_valid = probe.ok;
+      if (!probe.ok) calendar_token_valid = probe.code !== "TOKEN_INVALID";
     }
   }
 
@@ -49,7 +54,8 @@ export async function loadIntegrationStatus(
     gmail_identity,
     gmail_token_valid,
     calendar_connected: accounts.calendar === "connected" || accounts.calendar === "attention",
-    calendar_identity: accounts.calendarEmail || "",
+    calendar_identity,
+    calendar_token_valid,
     calendar_freebusy_valid,
     worker_configured: worker.state !== "missing",
     worker_last_success: beat.lastCompletedAt ? new Date(beat.lastCompletedAt).toISOString() : null,

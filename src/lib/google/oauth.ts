@@ -44,7 +44,7 @@ export function scopesFor(kind: OauthKind): string[] {
   return kind === "calendar" ? [...CALENDAR_SCOPES] : [...GMAIL_SCOPES];
 }
 
-export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl: string }): string {
+export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl: string; loginHint?: string }): string {
   const clientId = env("GOOGLE_OAUTH_CLIENT_ID") || "";
   const unique = [...new Set(scopesFor(opts.kind))];
   const p = new URLSearchParams({
@@ -54,8 +54,10 @@ export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl:
     scope: unique.join(" "),
     access_type: "offline",
     prompt: "consent",
+    include_granted_scopes: "false",
     state: opts.state,
   });
+  if (opts.loginHint) p.set("login_hint", opts.loginHint);
   return `https://accounts.google.com/o/oauth2/v2/auth?${p.toString()}`;
 }
 

@@ -11,6 +11,7 @@ import {
   testBookingLinkFn,
   testBookSlotFn,
   testSettingsFn,
+  calendarTestEventFn,
 } from "@/lib/mail/actions";
 import type { LiveCheck } from "@/lib/mail/test-mode";
 import { startGoogleOAuth, isGoogleOauthMessage, type OauthMissing } from "@/lib/google/launch";
@@ -30,6 +31,7 @@ type View = {
   integrations: Record<string, Ready | boolean>;
   worker?: { state: string; detail: string };
   gmailEmail: string;
+  calendarEmail?: string;
   checks: LiveCheck[];
   integration?: IntegrationStatus;
 };
@@ -82,6 +84,8 @@ export function TestDesk({
   const [googleMissing, setGoogleMissing] = useState<OauthMissing[]>([]);
   const [googleNext, setGoogleNext] = useState("");
   const [googleUrl, setGoogleUrl] = useState("");
+  const [calTestMsg, setCalTestMsg] = useState("");
+  const [calTestId, setCalTestId] = useState("");
 
   async function refresh() {
     const r = await testSettingsFn();
@@ -93,6 +97,7 @@ export function TestDesk({
         integrations: r.integrations as View["integrations"],
         worker: r.worker,
         gmailEmail: r.gmailEmail,
+        calendarEmail: r.calendarEmail,
         checks: r.checks,
         integration: r.integration,
       });
@@ -311,6 +316,7 @@ export function TestDesk({
         ))}
         <p className="text-sm">{(data.worker?.detail || "Worker not configured").replace(/^[🟢🟡🔴✅❌]\s*/u, "")}</p>
         {data.gmailEmail ? <p className="mt-2 text-sm text-muted">Connected Gmail: {data.gmailEmail}</p> : null}
+        {data.calendarEmail ? <p className="text-sm text-muted">Connected Calendar: {data.calendarEmail}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="la-btn la-btn-primary" disabled={Boolean(busy)} onClick={() => void connectGoogle("gmail")}>
             {busy === "gmail" ? "Connecting…" : "Connect Gmail"}
@@ -346,6 +352,7 @@ export function TestDesk({
               gmailToken: r.gmailToken,
               gmailIdentity: r.gmailIdentity,
               calendarToken: r.calendarToken,
+              calendarIdentity: r.calendarIdentity,
               calendarFreeBusy: r.calendarFreeBusy,
               worker: r.worker,
             });
@@ -359,6 +366,57 @@ export function TestDesk({
               <p key={k}><span className={`la-dot la-dot-inline ${v.ok ? "la-dot-good" : "la-dot-bad"}`} />{v.detail}</p>
             ))}
             <p className="text-muted">This check does not send email.</p>
+          </div>
+        ) : null}
+        {data.testMode ? (
+          <div className="mt-4 space-y-2">
+            <p className="text-sm text-muted">Internal Calendar test — no prospect is contacted, no guests are invited.</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="la-btn la-btn-ghost"
+                disabled={Boolean(busy)}
+                onClick={() => {
+                  setBusy("caltest");
+                  setCalTestMsg("");
+                  void calendarTestEventFn({ data: { action: "create" } })
+                    .then((r) => {
+                      if (!r.ok) setCalTestMsg(r.reason);
+                      else if ("visibleInEngine" in r) {
+                        setCalTestId(r.eventId);
+                        setCalTestMsg(`Created “LambAscensionEngine Calendar Test”${r.visibleInEngine ? " and lascengine can see it." : "."} No prospect was contacted.`);
+                      }
+                      setBusy("");
+                    })
+                    .catch(() => { setCalTestMsg("Could not create the Calendar test event."); setBusy(""); });
+                }}
+              >
+                {busy === "caltest" ? "Creating…" : "Create Calendar test event"}
+              </button>
+              {calTestId ? (
+                <button
+                  type="button"
+                  className="la-btn la-btn-ghost"
+                  disabled={Boolean(busy)}
+                  onClick={() => {
+                    setBusy("caldel");
+                    void calendarTestEventFn({ data: { action: "delete", eventId: calTestId } })
+                      .then((r) => {
+                        if (!r.ok) setCalTestMsg(r.reason);
+                        else {
+                          setCalTestMsg("Test event deleted.");
+                          setCalTestId("");
+                        }
+                        setBusy("");
+                      })
+                      .catch(() => { setCalTestMsg("Could not delete the test event."); setBusy(""); });
+                  }}
+                >
+                  Delete test event
+                </button>
+              ) : null}
+            </div>
+            {calTestMsg ? <p className="text-sm">{calTestMsg}</p> : null}
           </div>
         ) : null}
       </section>

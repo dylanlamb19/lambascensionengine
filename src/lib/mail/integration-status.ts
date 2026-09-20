@@ -16,6 +16,7 @@ export type IntegrationStatus = {
   gmail_token_valid: boolean;
   calendar_connected: boolean;
   calendar_identity: string;
+  calendar_token_valid: boolean;
   calendar_freebusy_valid: boolean;
   worker_configured: boolean;
   worker_last_success: string | null;
@@ -26,6 +27,7 @@ export type IntegrationStatus = {
 
 export type IntegrationSpeech = {
   gmailAnswer: string;
+  calendarAnswer: string;
   setupRemaining: string;
   settingsImportant: string;
   settingsNext: string;
@@ -41,6 +43,7 @@ export function gmailHealth(s: IntegrationStatus): Exclude<ConnectionHealth, "un
 
 export function calendarHealth(s: IntegrationStatus): Exclude<ConnectionHealth, "unknown"> {
   if (!s.calendar_connected) return "missing";
+  if (!s.calendar_token_valid) return "attention";
   return "connected";
 }
 
@@ -106,15 +109,23 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
         ? "No. Gmail isn’t connected yet."
         : "No. Google isn’t configured yet, so Gmail can’t connect.";
 
+  const calendarAnswer = s.calendar_connected
+    ? "Yes. Google Calendar is connected."
+    : s.gmail_connected
+      ? "No. Gmail is connected, but Google Calendar still needs to be connected."
+      : "No. Google Calendar isn’t connected yet.";
+
   const remaining: string[] = [];
   if (!s.gmail_connected) remaining.push("Gmail still needs to be connected");
   if (!s.calendar_connected) remaining.push("Google Calendar still needs to be connected");
   if (workerNeedsObservedRun(s)) remaining.push("the outreach worker hasn’t completed an observed run yet");
   else if (!s.worker_configured) remaining.push("the outreach worker still needs to be configured");
 
-  const setupRemaining = !remaining.length
-    ? "Gmail and Google Calendar are connected. Nothing else is waiting on setup."
-    : remaining.map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part)).join(", and ") + ".";
+  const setupRemaining = s.gmail_connected && s.calendar_connected && remaining.length
+    ? `Gmail and Google Calendar are connected. The outreach worker still needs a successful observed run.`
+    : !remaining.length
+      ? "Gmail and Google Calendar are connected. Nothing else is waiting on setup."
+      : remaining.map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part)).join(", and ") + ".";
 
   const settingsImportant = oauthBlocker
     || [gmailConnectedLine(s), calendarLine(s)].join(" ");
@@ -149,7 +160,7 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
     text: s.test_mode ? "Test Mode is on. Emails only go to the allowlist." : "Test Mode is off. Live outreach rules apply. First-contact approval still required.",
   });
 
-  return { gmailAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
+  return { gmailAnswer, calendarAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
 }
 
 export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: string[] = []): string {
@@ -161,13 +172,16 @@ export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: str
     `gmail_token_valid: ${s.gmail_token_valid ? "true" : "false"}.`,
     `gmail_identity: ${s.gmail_identity || "none"}.`,
     `calendar_connected: ${s.calendar_connected ? "true" : "false"}.`,
+    `calendar_token_valid: ${s.calendar_token_valid ? "true" : "false"}.`,
     `calendar_identity: ${s.calendar_identity || "none"}.`,
     `calendar_freebusy_valid: ${s.calendar_freebusy_valid ? "true" : "false"}.`,
     `worker_state: ${s.worker_state}. worker_configured: ${s.worker_configured ? "true" : "false"}. worker_last_success: ${s.worker_last_success || "none"}.`,
     `test_mode: ${s.test_mode ? "ON" : "off"}.`,
     `If Dylan asks whether Gmail is connected, answer: ${speech.gmailAnswer}`,
+    `If Dylan asks whether Calendar is connected, answer: ${speech.calendarAnswer}`,
     `If Dylan asks what still needs setup, answer: ${speech.setupRemaining}`,
     "Never say Gmail is missing when gmail_connected is true.",
+    "Never say Calendar is disconnected when calendar_connected is true.",
     "Never say Google isn’t configured when google_oauth_configured is true.",
     "Gmail and Calendar are separate. A missing Calendar connection does not mean Gmail or Google OAuth is missing.",
     "Ara voice availability is a separate issue from Gmail and Calendar.",
@@ -175,4 +189,4 @@ export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: str
 }
 
 export const INTEGRATIONS_LOADING_INSTRUCTION =
-  "INTEGRATION TRUTH: status is UNKNOWN because the server IntegrationStatus has not loaded yet. Do not say Gmail isn’t connected. Do not say Google isn’t configured. Do not guess. Wait for the next context update, or say you are checking integrations.";
+  "INTEGRATION TRUTH: status is UNKNOWN because the server IntegrationStatus has not loaded yet. Do not say Gmail isn’t connected. Do not say Calendar is disconnected. Do not say Google isn’t configured. Do not guess. Wait for the next context update, or say you are checking integrations.";

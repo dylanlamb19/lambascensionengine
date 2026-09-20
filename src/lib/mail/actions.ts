@@ -34,14 +34,36 @@ export const googleStartFn = createServerFn({ method: "POST" })
     if (!googleOAuthConfigured()) {
       return {
         ok: false as const,
-        reason: "Gmail can’t be connected yet because Google OAuth isn’t configured on this server.",
+        reason: data.kind === "calendar"
+          ? "Google Calendar can’t be connected yet because Google OAuth isn’t configured on this server."
+          : "Gmail can’t be connected yet because Google OAuth isn’t configured on this server.",
         missing,
         next: "Whoever hosts Lamb Ascension needs to add the missing values. We will not ask for your Gmail password.",
       };
     }
-    const { saveOauthState } = await import("./sql.server");
+    if (data.kind === "calendar") {
+      const { accessFor } = await import("./live.server");
+      const { probeCalendarApiEnabled } = await import("../google/calendar");
+      const { CALENDAR_API_DISABLED_MESSAGE } = await import("../google/calendar-errors");
+      const gmailTokens = await accessFor(context.userId, "gmail");
+      if (gmailTokens) {
+        const api = await probeCalendarApiEnabled(gmailTokens.access_token);
+        if (api.enabled === false) {
+          return {
+            ok: false as const,
+            reason: CALENDAR_API_DISABLED_MESSAGE,
+            code: "CALENDAR_API_DISABLED" as const,
+            missing,
+            next: "Enable Google Calendar API in Google Cloud for LambAscensionEngine, then press Connect Google Calendar again. Gmail is unchanged.",
+          };
+        }
+      }
+    }
+    const { saveOauthState, googleStatus } = await import("./sql.server");
     const rec = await saveOauthState(context.userId, data.kind);
-    const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin });
+    const accounts = await googleStatus(context.userId);
+    const loginHint = data.kind === "calendar" ? (accounts.gmailEmail || undefined) : undefined;
+    const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin, loginHint });
     return { ok: true as const, url, missing };
   });
 
@@ -283,6 +305,49 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
     }
     events.sort((a, b) => a.start.localeCompare(b.start));
     return { ok: true as const, connected: true, events };
+  });
+
+export const calendarTestEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { action: "create" | "delete"; eventId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { offeredSlots, createEvent, deleteEvent, listEvents } = await import("../google/calendar");
+    const settings = await loadSettings(context.userId);
+    if (!settings.testMode) {
+      return { ok: false as const, reason: "Turn Test Mode on to create an internal Calendar test event." };
+    }
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) return { ok: false as const, reason: "Calendar is not connected.", code: "CALENDAR_NOT_AUTHORIZED" as const };
+    if (data.action === "delete") {
+      const id = (data.eventId || "").trim();
+      if (!id) return { ok: false as const, reason: "No test event to delete." };
+      const gone = await deleteEvent(tokens.access_token, id);
+      if (!gone.ok) return { ok: false as const, reason: gone.error, code: gone.code };
+      return { ok: true as const, deleted: true as const, eventId: id };
+    }
+    const avail = await offeredSlots(tokens.access_token, { count: 1 });
+    if (!avail.ok || !avail.slots[0]) {
+      return { ok: false as const, reason: avail.ok ? "No verified free slot was found." : avail.reason, code: avail.ok ? "FREEBUSY_FAILED" as const : avail.code };
+    }
+    const slot = avail.slots[0];
+    const created = await createEvent(tokens.access_token, {
+      title: "LambAscensionEngine Calendar Test",
+      start: slot.start,
+      end: slot.end,
+      description: "Internal Test Mode event. No prospect was contacted.",
+    });
+    if (!created.ok) return { ok: false as const, reason: created.error, code: created.code };
+    const seen = await listEvents(tokens.access_token, slot.start, slot.end);
+    const visible = seen.ok && seen.events.some((e) => e.id === created.id);
+    return {
+      ok: true as const,
+      eventId: created.id,
+      start: slot.start.toISOString(),
+      end: slot.end.toISOString(),
+      visibleInEngine: visible,
+    };
   });
 
 export type AgendaEvent = {

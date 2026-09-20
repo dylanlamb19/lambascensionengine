@@ -14,6 +14,7 @@ import {
   integrationSpeech,
   oauthCredentialGaps,
   oauthOnlyGaps,
+  resolvedCalendarHealth,
   resolvedGmailHealth,
   type IntegrationStatus,
 } from "./integration-status.ts";
@@ -25,6 +26,7 @@ const currentProduction: IntegrationStatus = {
   gmail_token_valid: true,
   calendar_connected: false,
   calendar_identity: "",
+  calendar_token_valid: false,
   calendar_freebusy_valid: false,
   worker_configured: true,
   worker_last_success: null,
@@ -207,6 +209,8 @@ test("not-loaded-yet is UNKNOWN, never disconnected", () => {
   assert.equal(resolvedGmailHealth(null), "unknown");
   assert.equal(resolvedGmailHealth(undefined), "unknown");
   assert.equal(resolvedGmailHealth(currentProduction), "connected");
+  assert.equal(resolvedCalendarHealth(null), "unknown");
+  assert.equal(resolvedCalendarHealth(currentProduction), "missing");
 });
 
 test("Home loading state must not auto-announce Gmail isn’t connected", () => {
@@ -303,5 +307,50 @@ test("owner desk defaults Gmail to unknown and waits for IntegrationStatus befor
   assert.match(desk, /if \(!integration\) return;/);
   assert.match(desk, /INTEGRATION_STATE_MISMATCH/);
   assert.match(desk, /if \(!liveRef\.current\.integration\)/);
+});
+
+test("Ara Calendar answers before and after connection", () => {
+  const before = integrationSpeech(currentProduction);
+  assert.equal(before.calendarAnswer, "No. Gmail is connected, but Google Calendar still needs to be connected.");
+  const afterStatus: IntegrationStatus = {
+    ...currentProduction,
+    calendar_connected: true,
+    calendar_token_valid: true,
+    calendar_identity: "lambascension99@gmail.com",
+    calendar_freebusy_valid: true,
+  };
+  const after = integrationSpeech(afterStatus);
+  assert.equal(after.calendarAnswer, "Yes. Google Calendar is connected.");
+  assert.equal(
+    after.setupRemaining,
+    "Gmail and Google Calendar are connected. The outreach worker still needs a successful observed run.",
+  );
+  assert.equal(calendarHealth(afterStatus), "connected");
+});
+
+test("Calendar page does not treat unknown as disconnected", () => {
+  const ctx = buildScreenContext(emptyDesk({ view: "calendar" }), {
+    prospects: [],
+    tasks: [],
+    gmail: "connected",
+    calendarStatus: "unknown",
+    testMode: true,
+  });
+  assert.match(ctx.important, /checking Calendar/i);
+  assert.doesNotMatch(ctx.important, /isn’t connected yet/);
+  assert.equal(autoAnnounceFromScreen(ctx), null);
+});
+
+test("callback still uses /api/google/callback and never deletes Gmail rows", () => {
+  const callback = readFileSync(new URL("../../routes/api/google/callback.ts", import.meta.url), "utf8");
+  assert.match(callback, /createFileRoute\("\/api\/google\/callback"\)/);
+  assert.match(callback, /saveGoogleAccount\(rec\.userId, rec\.kind/);
+  assert.doesNotMatch(callback, /disconnectGoogle/);
+  const oauth = readFileSync(new URL("../google/oauth.ts", import.meta.url), "utf8");
+  assert.match(oauth, /include_granted_scopes/);
+  assert.match(oauth, /login_hint/);
+  assert.match(oauth, /calendar\.events/);
+  assert.match(oauth, /calendar\.freebusy/);
+  assert.doesNotMatch(oauth, /auth\/calendar"/);
 });
 

@@ -59,17 +59,20 @@ export async function connectionTest(userId: string) {
   const gmailIdentity = integration.gmail_identity
     ? { ok: true as boolean, detail: `Gmail account: ${integration.gmail_identity}`, email: integration.gmail_identity }
     : { ok: false as boolean, detail: "Gmail account identity was not read.", email: "" };
-  const calendarToken = integration.calendar_connected
+  const calendarToken = integration.calendar_connected && integration.calendar_token_valid
     ? { ok: true as boolean, detail: "Calendar token is valid." }
-    : { ok: false as boolean, detail: "Calendar is not connected." };
+    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar token needs attention. (TOKEN_INVALID)" : "Calendar is not connected. (CALENDAR_NOT_AUTHORIZED)" };
+  const calendarIdentity = integration.calendar_identity
+    ? { ok: true as boolean, detail: `Calendar account: ${integration.calendar_identity}`, email: integration.calendar_identity }
+    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar account identity was not read." : "Calendar is not connected.", email: "" };
   const calendarFreeBusy = integration.calendar_freebusy_valid
-    ? { ok: true as boolean, detail: "Calendar free/busy can be read." }
-    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar free/busy was not read." : "Calendar is not connected." };
+    ? { ok: true as boolean, detail: "Calendar availability was read." }
+    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar availability couldn’t be read. (FREEBUSY_FAILED)" : "Calendar is not connected." };
   const worker = {
     ok: integration.worker_state === "running",
     detail: integration.worker_detail,
   };
-  return { session, gmailToken, gmailIdentity, calendarToken, calendarFreeBusy, worker, integration };
+  return { session, gmailToken, gmailIdentity, calendarToken, calendarIdentity, calendarFreeBusy, worker, integration };
 }
 
 function testProspect(email: string): Prospect {

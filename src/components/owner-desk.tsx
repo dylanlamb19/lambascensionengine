@@ -252,7 +252,7 @@ export function OwnerDesk() {
   const [findMsg, setFindMsg] = useState("");
   const [findLimit, setFindLimit] = useState(20);
   const [findMore, setFindMore] = useState(false);
-  const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", error: "" });
+  const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [googleMsg, setGoogleMsg] = useState("");
   const [googleErr, setGoogleErr] = useState("");
@@ -370,7 +370,7 @@ export function OwnerDesk() {
           const [g, s] = await Promise.all([googleStatusFn(), salesCountsFn()]);
           if (!cancelled && g.ok) {
             if (g.integration) applyIntegration(g.integration);
-            else setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+            else setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, calendarEmail: g.calendarEmail || "", error: g.error });
           }
           if (!cancelled && s.ok) setSales({ ready: s.ready, followups: s.followups, replies: s.replies, calls: s.calls });
           try {
@@ -529,6 +529,7 @@ export function OwnerDesk() {
       calendar: calendarHealth(status),
       configured: status.google_oauth_configured,
       gmailEmail: status.gmail_identity,
+      calendarEmail: status.calendar_identity,
       error: "",
     });
     setTestModeOn(status.test_mode);
@@ -545,7 +546,7 @@ export function OwnerDesk() {
     const g = await googleStatusFn();
     if (g.ok && g.integration) applyIntegration(g.integration);
     else if (g.ok) {
-      setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+      setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, calendarEmail: g.calendarEmail || "", error: g.error });
     }
   }
 
@@ -2128,7 +2129,7 @@ export function OwnerDesk() {
         <section key={id} data-home-widget="connections" className="la-card mb-6">
           <h2 className="font-display text-xl">Connections</h2>
           <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? `Gmail connected${google.gmailEmail ? ` · ${google.gmailEmail}` : ""}` : google.gmail === "attention" ? "Gmail needs attention" : google.gmail === "unknown" ? "Checking Gmail…" : "Gmail not connected"}</p>
-          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? "Calendar connected" : google.calendar === "attention" ? "Calendar needs attention" : google.calendar === "unknown" ? "Checking Calendar…" : "Calendar not connected"}</p>
+          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? `Calendar connected${google.calendarEmail ? ` · ${google.calendarEmail}` : ""}` : google.calendar === "attention" ? "Calendar needs attention" : google.calendar === "unknown" ? "Checking Calendar…" : "Calendar not connected"}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
             <button type="button" className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>
@@ -2468,7 +2469,7 @@ export function OwnerDesk() {
             calAnchor={calAnchor}
             events={calEvents}
             selectedId={calEventId}
-            connected={calConnected || google.calendar === "connected"}
+            health={integration ? calendarHealth(integration) : google.calendar}
             reason={calReason}
             loading={calLoading}
             onToday={() => dispatchAction({ name: "CALENDAR_TODAY" })}

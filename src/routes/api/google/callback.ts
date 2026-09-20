@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-function oauthReturnPage(status: "connected" | "denied" | "failed" | "bad_state") {
+function oauthReturnPage(status: "connected" | "denied" | "failed" | "bad_state", kind: "gmail" | "calendar" | "") {
   const copy =
     status === "connected"
-      ? "Google connected. You can close this window."
+      ? kind === "calendar"
+        ? "Google Calendar connected. You can close this window."
+        : kind === "gmail"
+          ? "Gmail connected. You can close this window."
+          : "Google connected. You can close this window."
       : "Google sign-in didn’t finish. Nothing was connected. You can close this window.";
   const html = `<!doctype html>
 <html lang="en">
@@ -13,13 +17,18 @@ function oauthReturnPage(status: "connected" | "denied" | "failed" | "bad_state"
 <script>
 (function () {
   var status = ${JSON.stringify(status)};
+  var kind = ${JSON.stringify(kind)};
   try {
     if (window.opener && !window.opener.closed) {
-      window.opener.postMessage({ source: "lascengine-google", status: status }, window.location.origin);
+      window.opener.postMessage({ source: "lascengine-google", status: status, kind: kind }, window.location.origin);
     }
   } catch (e) {}
   try { window.close(); } catch (e) {}
-  setTimeout(function () { location.replace("/?google=" + status); }, 500);
+  setTimeout(function () {
+    var q = "/?google=" + status;
+    if (kind) q += "&kind=" + encodeURIComponent(kind);
+    location.replace(q);
+  }, 500);
 })();
 </script>
 </body>
@@ -39,21 +48,21 @@ export const Route = createFileRoute("/api/google/callback")({
         const state = url.searchParams.get("state") || "";
         const err = url.searchParams.get("error");
         if (err || !code || !state) {
-          return oauthReturnPage("denied");
+          return oauthReturnPage("denied", "");
         }
         try {
           const { takeOauthState, saveGoogleAccount, audit } = await import("@/lib/mail/sql.server");
           const rec = await takeOauthState(state);
           if (!rec) {
-            return oauthReturnPage("bad_state");
+            return oauthReturnPage("bad_state", "");
           }
           const { exchangeCode } = await import("@/lib/google/oauth");
           const tokens = await exchangeCode(code, request.url);
           await saveGoogleAccount(rec.userId, rec.kind, tokens);
           await audit(rec.userId, "google_connect", `Connected ${rec.kind}`, { method: "MANUAL" });
-          return oauthReturnPage("connected");
+          return oauthReturnPage("connected", rec.kind);
         } catch {
-          return oauthReturnPage("failed");
+          return oauthReturnPage("failed", "");
         }
       },
     },

@@ -159,7 +159,10 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     next = "Preview, edit, or say Confirm send if you want it sent.";
   } else if (screen === "CALENDAR") {
     lookingAt = `You’re looking at your calendar (${state.calView} view${world.calendarRange ? `, ${world.calendarRange}` : ""}).`;
-    if (world.calendarStatus !== "connected") {
+    if (world.calendarStatus === "unknown") {
+      important = "I’m checking Calendar. I will not say it’s disconnected until the server status loads.";
+      next = "Wait a moment, then I can read what’s actually on the calendar.";
+    } else if (world.calendarStatus !== "connected") {
       important = "Google Calendar isn’t connected yet, so I cannot show real events.";
       next = "Connect Calendar in Settings. I will not guess what’s on your calendar.";
     } else if (world.calendarUnreadable) {
