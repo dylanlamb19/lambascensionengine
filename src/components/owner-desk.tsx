@@ -62,7 +62,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, isOwnerCalendarFollowupTime, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarSpeech, type LastOwnerEvent } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarSpeech, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -1599,7 +1599,12 @@ export function OwnerDesk() {
           setYouSaid(text);
           handleAraOwnerTranscript(text, isFinal);
         },
-        onAraTranscript: (text) => setVoiceReply(text),
+        onAraTranscript: (text) => {
+          setVoiceReply(text);
+          if (isOwnerCalendarRefusalSpeech(text)) {
+            araRef.current?.cancelResponse();
+          }
+        },
         onToolCall: async (name, args) => {
           if (isClientOwnedStopTool(name)) {
             return { ok: true, ignored: true, cancelled_speech: true, conversation_active: true };
@@ -1709,6 +1714,9 @@ export function OwnerDesk() {
       araSpeech().stop({ keepConversation: true });
       stopSpeaking();
       return;
+    }
+    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current)) {
+      araRef.current?.cancelResponse();
     }
     if (!isFinal) return;
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {

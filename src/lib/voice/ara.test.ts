@@ -242,6 +242,14 @@ describe("Ara allowlisted tools", () => {
     assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
   });
 
+  it("Conversation Mode intercepts personal calendar speech before Ara can refuse", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/owner-desk.tsx"), "utf8");
+    assert.match(src, /shouldSilenceAraForOwnerCalendar/);
+    assert.match(src, /isOwnerCalendarRefusalSpeech/);
+    assert.match(src, /runOwnerPersonalCalendar/);
+    assert.match(src, /createOwnerCalendarEventFn/);
+  });
+
   it("uppercase action names and prospect_uid still operate the UI", () => {
     const pipe = executeAllowlistedTool("NAVIGATE_PIPELINE", {}, desk);
     assert.equal(pipe.rejected, false);

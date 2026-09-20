@@ -5,6 +5,8 @@ import {
   fromZonedLocal,
   isOwnerCalendarFollowupTime,
   isPersonalCalendarCommand,
+  isOwnerCalendarRefusalSpeech,
+  shouldSilenceAraForOwnerCalendar,
   ownerEventFailureSpeech,
   ownerEventFingerprint,
   ownerEventSpeechFromState,
@@ -166,5 +168,21 @@ describe("personal calendar speech parsing", () => {
     assert.equal(isOwnerCalendarFollowupTime("noon"), true);
     assert.equal(isOwnerCalendarFollowupTime("Add a dentist appointment tomorrow"), false);
     assert.equal(isOwnerCalendarFollowupTime("never mind"), false);
+  });
+
+  it("silences Ara on personal calendar speech, including partials and the old refusal", () => {
+    assert.equal(
+      shouldSilenceAraForOwnerCalendar(
+        "Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank",
+      ),
+      true,
+    );
+    assert.equal(shouldSilenceAraForOwnerCalendar("Add a dentist appointment tomorrow"), true);
+    assert.equal(shouldSilenceAraForOwnerCalendar("what did you just add"), true);
+    assert.equal(shouldSilenceAraForOwnerCalendar("2 PM", { title: "Dentist appointment", when: "tomorrow" }), true);
+    assert.equal(shouldSilenceAraForOwnerCalendar("Pull up my calendar"), false);
+    assert.equal(shouldSilenceAraForOwnerCalendar("Schedule the call"), false);
+    assert.equal(isOwnerCalendarRefusalSpeech("I'll prepare that calendar booking for you. I can open your calendar or help with sales call bookings, but I don't have a tool to add personal reminders or events."), true);
+    assert.equal(isOwnerCalendarRefusalSpeech("Done — I added ‘Go to SouthState Bank and withdraw cash’ to your calendar for tomorrow at 4:00 PM."), false);
   });
 });

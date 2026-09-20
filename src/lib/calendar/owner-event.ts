@@ -390,6 +390,29 @@ export function isOwnerCalendarFollowupTime(raw: string): boolean {
   return Boolean(parseClock(t));
 }
 
+/** True when Ara must stop talking and let the app own this personal-calendar turn. */
+export function shouldSilenceAraForOwnerCalendar(
+  raw: string,
+  pending?: { title: string; when: string } | null,
+): boolean {
+  const t = (raw || "").trim();
+  if (!t) return false;
+  if (/\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(t)) return true;
+  if (isPersonalCalendarCommand(t)) return true;
+  if (pending && isOwnerCalendarFollowupTime(t)) return true;
+  return false;
+}
+
+/** The production refusal Ara used before personal events were wired. */
+export function isOwnerCalendarRefusalSpeech(raw: string): boolean {
+  const t = (raw || "").toLowerCase();
+  if (!t) return false;
+  if (/i('ll| will) prepare that calendar booking/.test(t)) return true;
+  if (/don'?t have a tool to add personal (reminders|events)/.test(t)) return true;
+  if (/i can open your calendar or help with sales call bookings/.test(t)) return true;
+  return false;
+}
+
 export function sanitizeOwnerTitle(raw: string): string {
   const parsed = parseOwnerCalendarSpeech(raw);
   if (parsed.matched && parsed.title) return parsed.title;
