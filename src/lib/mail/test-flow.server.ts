@@ -14,7 +14,6 @@ import {
   createBookingLink,
   claimBookingLink,
   finishBookingLink,
-  saveCalendarEvent,
   audit,
   loadWorkerHeartbeat,
   loadTestLoop,
@@ -212,7 +211,8 @@ function asTestLoop(row: Awaited<ReturnType<typeof loadTestLoop>>): TestLoopStat
 export async function testSettingsView(userId: string) {
   const settings = await loadSettings(userId);
   const integration = await loadIntegrationStatus(userId);
-  const state = await loadTestState(userId);
+  const reconciled = await (await import("./booking-confirm.server")).reconcileTestBookingFromPersisted(userId);
+  const state = reconciled.state;
   const beat = await loadWorkerHeartbeat();
   const loopRow = await loadTestLoop(userId);
   const testLoop = asTestLoop(loopRow);
@@ -250,6 +250,7 @@ export async function testSettingsView(userId: string) {
     testLoop,
     speech: testLoopSpeech(testLoop),
     trail: loopRow.trail,
+    bookingReconciled: reconciled.reconciled,
   };
 }
 
@@ -552,6 +553,7 @@ export async function testBookingLink(userId: string, origin: string) {
   }));
   const token = await createBookingLink(userId, uid);
   const next = await saveTestState(userId, { booking_token: token, slots_offered: slots.length, step: 10 });
+  await audit(userId, "booking_link_created", `Booking link created for ${prospect.name}`, { prospectUid: uid, method: "MANUAL" });
   return { ok: true as const, url: `${origin}/book/${token}`, token, slots, state: next };
 }
 
@@ -559,8 +561,23 @@ export async function testBookSlot(userId: string, startIso: string, endIso: str
   const state = await loadTestState(userId);
   const token = state.booking_token;
   if (!token) return { ok: false as const, reason: "Generate a booking link first." };
+  const runUid = isTestWorkflowUid(state.prospect_uid) ? state.prospect_uid : null;
+  const { persistConfirmedBooking, provenBookingEventId, applyExistingBookingToTestState } = await import("./booking-confirm.server");
+  const { googleEventIdForBookingToken } = await import("./booking-evidence");
   const claimed = await claimBookingLink(token);
-  if (!claimed) return { ok: false as const, reason: "This booking link was already used." };
+  if (!claimed) {
+    if (!runUid) return { ok: false as const, reason: "This booking link was already used." };
+    const existing = await provenBookingEventId(userId, runUid, token);
+    if (!existing) {
+      return {
+        ok: false as const,
+        reason: "The Calendar event may already exist, but booking state could not be confirmed. No second event was created.",
+        code: "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE" as const,
+      };
+    }
+    const next = await applyExistingBookingToTestState(userId, runUid, existing.eventId, existing.startAt, existing.endAt, existing.title);
+    return { ok: true as const, eventId: existing.eventId, state: next, already: true as const };
+  }
   const tokens = await accessFor(userId, "calendar");
   if (!tokens) {
     await finishBookingLink(token, "open");
@@ -584,24 +601,25 @@ export async function testBookSlot(userId: string, startIso: string, endIso: str
     start,
     end,
     description: "Test Mode calendar check. Not a client meeting.",
+    eventId: googleEventIdForBookingToken(token),
   });
   if (!created.ok) {
     await finishBookingLink(token, "open");
     return { ok: false as const, reason: created.error };
   }
-  await finishBookingLink(token, "used");
-  await saveCalendarEvent(userId, claimed.prospect_uid, created.id, "TEST sales call", start, end);
-  const prospect = await getProspectByUid(userId, claimed.prospect_uid);
-  if (prospect) {
-    prospect.stage = "Call Booked";
-    prospect.stage_plain = "Test call booked";
-    await upsertProspects(userId, [prospect]);
-  }
-  const next = await saveTestState(userId, {
-    event_id: created.id,
-    pipeline_stage: "Call Booked",
-    step: 11,
+  const persisted = await persistConfirmedBooking({
+    userId,
+    prospectUid: claimed.prospect_uid,
+    googleEventId: created.id,
+    title: "TEST sales call",
+    start,
+    end,
+    token,
+    method: "MANUAL",
   });
-  await audit(userId, "test_booking", "Test Mode booked a calendar slot", { prospectUid: claimed.prospect_uid, method: "MANUAL", providerIds: created.id });
+  if (!persisted.ok) {
+    return { ok: false as const, reason: persisted.reason, code: persisted.code, eventId: persisted.eventId };
+  }
+  const next = await loadTestState(userId);
   return { ok: true as const, eventId: created.id, state: next };
 }

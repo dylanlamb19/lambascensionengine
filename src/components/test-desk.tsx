@@ -61,6 +61,12 @@ const TRAIL_LABEL: Record<string, string> = {
   reply: "inbound reply detected",
   followups_cancelled: "remaining follow-ups cancelled",
   TEST_FLOW_RESET: "TEST flow reset",
+  booking_link_created: "booking link created",
+  booking_link: "booking confirmed",
+  booking_confirmed: "booking confirmed",
+  test_booking: "booking confirmed",
+  TEST_BOOKING_STATE_RECONCILED: "TEST booking state reconciled",
+  BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE: "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE",
   FOLLOWUP_CANCEL_FAILED: "FOLLOWUP_CANCEL_FAILED",
   UNKNOWN_DELIVERY: "UNKNOWN_DELIVERY",
 };
@@ -133,6 +139,7 @@ export function TestDesk({
       setStep(r.state.step || 1);
       if (r.state.message_id) setSendIds({ messageId: r.state.message_id, threadId: r.state.thread_id || undefined });
       else setSendIds(null);
+      setBooked(r.state.event_id || "");
       if (r.integration) onIntegration?.(r.integration);
       if (r.testLoop) onTestLoop?.(r.testLoop);
       if (r.testLoop?.followupDueAt) setFollowDue(r.testLoop.followupDueAt);

@@ -127,8 +127,8 @@ export function scoreLiveChecks(evidence: {
     workerSeenAt: evidence.workerSeenAt,
   });
   const availability = (evidence.slotsOffered || 0) > 0;
-  const booking = Boolean(evidence.eventId);
-  const pipeline = evidence.pipelineStage === "Call Booked";
+  const booking = Boolean(evidence.eventId && String(evidence.eventId).trim());
+  const pipeline = evidence.pipelineStage === "Call Booked" && booking;
   return [
     { key: "send", label: "Gmail send", ok: send },
     { key: "thread", label: "Gmail threading", ok: thread },

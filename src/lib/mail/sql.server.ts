@@ -328,12 +328,87 @@ export async function insertReply(userId: string, prospectUid: string, gmailMess
   }
 }
 
-export async function saveCalendarEvent(userId: string, prospectUid: string, googleEventId: string, title: string, start: Date, end: Date): Promise<void> {
+export async function saveCalendarEvent(
+  userId: string,
+  prospectUid: string,
+  googleEventId: string,
+  title: string,
+  start: Date,
+  end: Date,
+  bookingToken?: string | null,
+): Promise<void> {
   const sql = await getSql();
-  await sql`
-    insert into calendar_events (id, user_id, prospect_uid, google_event_id, title, start_at, end_at, status)
-    values (${newUid()}, ${userId}, ${prospectUid}, ${googleEventId}, ${title}, ${start.toISOString()}, ${end.toISOString()}, ${"booked"})
+  const existing = await sql<{ id: string }>`
+    select id from calendar_events
+    where user_id = ${userId} and google_event_id = ${googleEventId}
+    limit 1
   `;
+  if (existing[0]) return;
+  try {
+    await sql`
+      insert into calendar_events (id, user_id, prospect_uid, google_event_id, title, start_at, end_at, status, booking_token)
+      values (
+        ${newUid()}, ${userId}, ${prospectUid}, ${googleEventId}, ${title},
+        ${start.toISOString()}, ${end.toISOString()}, ${"booked"}, ${bookingToken || null}
+      )
+    `;
+  } catch {
+    // Unique booking_token: already stored for this session.
+  }
+}
+
+export type BookedCalendarRow = {
+  id: string;
+  prospect_uid: string;
+  google_event_id: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  status: string;
+  booking_token: string | null;
+};
+
+export async function findBookedCalendarEvent(
+  userId: string,
+  prospectUid: string,
+  bookingToken?: string | null,
+): Promise<BookedCalendarRow | null> {
+  const sql = await getSql();
+  if (bookingToken) {
+    const byToken = await sql<BookedCalendarRow>`
+      select id, prospect_uid, google_event_id, title, start_at, end_at, status, booking_token
+      from calendar_events
+      where user_id = ${userId} and booking_token = ${bookingToken}
+        and google_event_id is not null and google_event_id <> ''
+      order by created_at desc
+      limit 1
+    `;
+    if (byToken[0]?.google_event_id) return byToken[0];
+  }
+  const rows = await sql<BookedCalendarRow>`
+    select id, prospect_uid, google_event_id, title, start_at, end_at, status, booking_token
+    from calendar_events
+    where user_id = ${userId} and prospect_uid = ${prospectUid}
+      and status = 'booked'
+      and google_event_id is not null and google_event_id <> ''
+    order by created_at desc
+    limit 1
+  `;
+  return rows[0] || null;
+}
+
+export async function findBookingAuditEventId(userId: string, prospectUid: string): Promise<string | null> {
+  const sql = await getSql();
+  const rows = await sql<{ provider_ids: string }>`
+    select provider_ids from outreach_audit
+    where user_id = ${userId} and prospect_uid = ${prospectUid}
+      and action in ('booking_link', 'booking_confirmed', 'test_booking', 'TEST_BOOKING_STATE_RECONCILED', 'BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE')
+      and provider_ids is not null and provider_ids <> ''
+    order by created_at desc
+    limit 1
+  `;
+  const id = (rows[0]?.provider_ids || "").trim();
+  return id || null;
 }
 
 export async function createBookingLink(userId: string, prospectUid: string): Promise<string> {

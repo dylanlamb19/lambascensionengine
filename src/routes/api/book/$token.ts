@@ -26,15 +26,63 @@ export const Route = createFileRoute("/api/book/$token")({
         return Response.json({ ok: true, slots });
       },
       POST: async ({ params, request }) => {
-        const { getBookingLink, claimBookingLink, finishBookingLink, saveCalendarEvent, audit } = await import("@/lib/mail/sql.server");
+        const { getBookingLink, claimBookingLink, finishBookingLink } = await import("@/lib/mail/sql.server");
         const { accessFor } = await import("@/lib/mail/live.server");
         const { getProspectByUid } = await import("@/lib/prospects/repo.server");
+        const {
+          persistConfirmedBooking,
+          provenBookingEventId,
+          applyExistingBookingToTestState,
+          publicBookingDecision,
+        } = await import("@/lib/mail/booking-confirm.server");
+        const { googleEventIdForBookingToken } = await import("@/lib/mail/booking-evidence");
         const existing = await getBookingLink(params.token);
-        if (!existing || existing.status !== "open") {
+        if (!existing) {
+          return Response.json({ ok: false, reason: "This booking link is not valid." });
+        }
+        const already = await provenBookingEventId(existing.user_id, existing.prospect_uid, params.token);
+        const decision = publicBookingDecision({
+          linkStatus: existing.status,
+          persistedGoogleEventId: already?.eventId,
+        });
+        if (decision.action === "return_existing") {
+          await applyExistingBookingToTestState(
+            existing.user_id,
+            existing.prospect_uid,
+            decision.eventId,
+            already?.startAt,
+            already?.endAt,
+            already?.title,
+          );
+          return Response.json({ ok: true, eventId: decision.eventId, already: true });
+        }
+        if (decision.action === "persistence_failed") {
+          return Response.json({
+            ok: false,
+            reason: "The Calendar event may already exist, but booking state could not be confirmed. No second event was created.",
+            code: "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE",
+            eventId: already?.eventId || null,
+          });
+        }
+        if (decision.action !== "create") {
           return Response.json({ ok: false, reason: "This booking link is not valid." });
         }
         const claimed = await claimBookingLink(params.token);
-        if (!claimed) return Response.json({ ok: false, reason: "This booking link was already used." });
+        if (!claimed) {
+          const race = await provenBookingEventId(existing.user_id, existing.prospect_uid, params.token);
+          if (race?.eventId) {
+            await applyExistingBookingToTestState(
+              existing.user_id,
+              existing.prospect_uid,
+              race.eventId,
+              race.startAt,
+              race.endAt,
+              race.title,
+            );
+            return Response.json({ ok: true, eventId: race.eventId, already: true });
+          }
+          return Response.json({ ok: false, reason: "This booking link was already used." });
+        }
         const prospect = await getProspectByUid(claimed.user_id, claimed.prospect_uid);
         if (!prospect) {
           await finishBookingLink(params.token, "open");
@@ -65,15 +113,31 @@ export const Route = createFileRoute("/api/book/$token")({
           title: `Lamb Ascension / ${prospect.name}`,
           start,
           end,
+          eventId: googleEventIdForBookingToken(params.token),
         });
         if (!created.ok) {
           await finishBookingLink(params.token, "open");
           return Response.json({ ok: false, reason: created.error });
         }
-        await finishBookingLink(params.token, "used");
-        await saveCalendarEvent(claimed.user_id, claimed.prospect_uid, created.id, "Sales call", start, end);
-        await audit(claimed.user_id, "booking_link", "Prospect booked a time", { prospectUid: claimed.prospect_uid, method: "AUTOMATION", providerIds: created.id });
-        return Response.json({ ok: true });
+        const persisted = await persistConfirmedBooking({
+          userId: claimed.user_id,
+          prospectUid: claimed.prospect_uid,
+          googleEventId: created.id,
+          title: "Sales call",
+          start,
+          end,
+          token: params.token,
+          method: "AUTOMATION",
+        });
+        if (!persisted.ok) {
+          return Response.json({
+            ok: false,
+            reason: persisted.reason,
+            code: persisted.code,
+            eventId: persisted.eventId,
+          });
+        }
+        return Response.json({ ok: true, eventId: created.id });
       },
     },
   },
