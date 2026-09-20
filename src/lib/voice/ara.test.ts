@@ -203,6 +203,15 @@ describe("Ara allowlisted tools", () => {
       assert.equal(ready.plan.title, "Go to SouthState Bank and withdraw cash");
     }
 
+    const fromSpeech = executeAllowlistedTool("create_owner_calendar_event", {
+      title: "Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash",
+    }, { ...desk, timezone: "America/Chicago" });
+    assert.equal(fromSpeech.ok, true);
+    assert.equal(fromSpeech.plan.type, "owner_calendar_event");
+    if (fromSpeech.plan.type === "owner_calendar_event") {
+      assert.equal(fromSpeech.plan.title, "Go to SouthState Bank and withdraw cash");
+    }
+
     const sales = executeAllowlistedTool("schedule_call", { uid: "uid-fire" }, desk);
     assert.equal(sales.plan.type, "arm");
     if (sales.plan.type === "arm") assert.equal(sales.plan.intent, "SCHEDULE_CALL");
@@ -228,6 +237,8 @@ describe("Ara allowlisted tools", () => {
     assert.match(text, /create_owner_calendar_event/);
     assert.match(text, /Do NOT use schedule_call for personal reminders/i);
     assert.match(text, /Owner timezone: America\/Chicago/);
+    assert.match(text, /Never say you don.t have a tool for personal reminders/i);
+    assert.match(text, /Always-available personal calendar tools/);
     assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
   });
 
@@ -297,7 +308,8 @@ describe("Ara session payload / outage / key leakage", () => {
     assert.match(text, /Test Mode/);
     assert.match(text, /Confirm send/);
     assert.match(text, /You can operate Lamb Ascension|operate Lamb Ascension/);
-    assert.match(text, /Available tools on this screen/);
+    assert.match(text, /Available on-screen buttons/);
+    assert.match(text, /create_owner_calendar_event/);
     assert.doesNotMatch(text, /cannot click|no direct UI|DOM access|My tools are limited/i);
     assert.match(text, /navigate_pipeline/);
   });

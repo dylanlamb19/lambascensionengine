@@ -62,7 +62,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, type LastOwnerEvent } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, isOwnerCalendarFollowupTime, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarSpeech, type LastOwnerEvent } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -297,6 +297,7 @@ export function OwnerDesk() {
   const [nextCall, setNextCall] = useState<{ prospect_uid: string; start_at: string; title: string } | null>(null);
   const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
   const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
+  const pendingOwnerCalRef = useRef<{ title: string; when: string } | null>(null);
   const [layout, setLayout] = useState<HomeLayout>(DEFAULT_HOME_LAYOUT);
   const [visual, setVisual] = useState<VisualTheme>(DEFAULT_VISUAL_THEME);
   const [chrome, setChrome] = useState<DesignChrome>(DEFAULT_CHROME);
@@ -1288,7 +1289,11 @@ export function OwnerDesk() {
       allowlist: live.allowlist,
       sales: live.sales,
       testLoop: live.testLoop,
-      availableActions: ctx.availableActions,
+      availableActions: Array.from(new Set([
+        ...ctx.availableActions,
+        "create_owner_calendar_event",
+        "get_last_owner_calendar_event",
+      ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
       pipelineStage: company?.stage_plain || null,
@@ -1457,6 +1462,43 @@ export function OwnerDesk() {
       }
     }
     return result.output;
+  }
+
+  async function runOwnerPersonalCalendar(text: string): Promise<boolean> {
+    const lastAsk = /\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(text);
+    if (lastAsk) {
+      araRef.current?.cancelResponse();
+      utter(ownerEventSpeechFromState(lastOwnerEventRef.current), "TOOL_RESULT");
+      return true;
+    }
+    const pending = pendingOwnerCalRef.current;
+    const parsed = parseOwnerCalendarSpeech(text);
+    let title = "";
+    let when = "";
+    if (parsed.matched) {
+      title = parsed.title;
+      when = parsed.when;
+      pendingOwnerCalRef.current = null;
+    } else if (pending && isOwnerCalendarFollowupTime(text)) {
+      title = pending.title;
+      when = `${pending.when} ${text}`.trim();
+      pendingOwnerCalRef.current = null;
+    } else {
+      if (pending && !isPersonalCalendarCommand(text) && text.trim().length > 24) {
+        pendingOwnerCalRef.current = null;
+      }
+      return false;
+    }
+    araRef.current?.cancelResponse();
+    const result = executeAllowlistedTool("create_owner_calendar_event", { title, when }, araDesk(), "owner_session");
+    if (!result.ok && result.output.need) {
+      pendingOwnerCalRef.current = { title: String(result.output.title || title), when };
+      utter(String(result.output.spoken || result.output.question || "What time?"), "TOOL_RESULT");
+      return true;
+    }
+    const output = await hydrateAraOutput("create_owner_calendar_event", result);
+    utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
+    return true;
   }
 
   function stopAra() {
@@ -1669,30 +1711,33 @@ export function OwnerDesk() {
       return;
     }
     if (!isFinal) return;
-    const parsed = parseSpokenCommand(text);
-    if (parsed.intent === "READ_PAGE" || parsed.intent === "READ_EVERYTHING" || parsed.intent === "READ_WARNING" || parsed.intent === "READ_FORM" || parsed.intent === "READ_OPTIONS") {
-      araRef.current?.cancelResponse();
-      dispatchRef.current({
-        name: parsed.intent === "READ_EVERYTHING" ? "READ_EVERYTHING"
-          : parsed.intent === "READ_WARNING" ? "READ_WARNING"
-            : parsed.intent === "READ_FORM" ? "READ_FORM"
-              : parsed.intent === "READ_OPTIONS" ? "READ_OPTIONS"
-                : "READ_PAGE",
-        readMode: parsed.intent === "READ_EVERYTHING" ? "everything"
-          : parsed.intent === "READ_WARNING" ? "warning"
-            : parsed.intent === "READ_FORM" ? "form"
-              : parsed.intent === "READ_OPTIONS" ? "options"
-                : "page",
-      });
-      return;
-    }
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
     }
-    if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {
-      runOwnerConfirm(text);
-    }
+    void runOwnerPersonalCalendar(text).then((handled) => {
+      if (handled) return;
+      const parsed = parseSpokenCommand(text);
+      if (parsed.intent === "READ_PAGE" || parsed.intent === "READ_EVERYTHING" || parsed.intent === "READ_WARNING" || parsed.intent === "READ_FORM" || parsed.intent === "READ_OPTIONS") {
+        araRef.current?.cancelResponse();
+        dispatchRef.current({
+          name: parsed.intent === "READ_EVERYTHING" ? "READ_EVERYTHING"
+            : parsed.intent === "READ_WARNING" ? "READ_WARNING"
+              : parsed.intent === "READ_FORM" ? "READ_FORM"
+                : parsed.intent === "READ_OPTIONS" ? "READ_OPTIONS"
+                  : "READ_PAGE",
+          readMode: parsed.intent === "READ_EVERYTHING" ? "everything"
+            : parsed.intent === "READ_WARNING" ? "warning"
+              : parsed.intent === "READ_FORM" ? "form"
+                : parsed.intent === "READ_OPTIONS" ? "options"
+                  : "page",
+        });
+        return;
+      }
+      if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {
+        runOwnerConfirm(text);
+      }
+    });
   }
 
   function runOwnerConfirm(text: string) {
@@ -1898,26 +1943,29 @@ export function OwnerDesk() {
       void runDesignDirector(text);
       return;
     }
-    const decided = spokenToAction(text, currentDesk(), deskWorld());
-    if ("ask" in decided) {
-      say(decided.ask);
-      return;
-    }
-    if ("action" in decided) {
-      const id = makeActionId(decided.action.name, decided.action.uid || openUid, text);
-      if (gateRef.current.seen(id)) return;
-      if (decided.action.name === "STOP_LISTENING") {
-        gateRef.current.cancel();
-        stopSpeaking();
-        setVoiceMode("off");
-        setVoiceReply("Okay. Stopped.");
-        utter("Okay. Stopped.", "STOP");
+    void runOwnerPersonalCalendar(text).then((handled) => {
+      if (handled) return;
+      const decided = spokenToAction(text, currentDesk(), deskWorld());
+      if ("ask" in decided) {
+        say(decided.ask);
         return;
       }
-      dispatchAction(decided.action);
-      return;
-    }
-    void askGeneral(text);
+      if ("action" in decided) {
+        const id = makeActionId(decided.action.name, decided.action.uid || openUid, text);
+        if (gateRef.current.seen(id)) return;
+        if (decided.action.name === "STOP_LISTENING") {
+          gateRef.current.cancel();
+          stopSpeaking();
+          setVoiceMode("off");
+          setVoiceReply("Okay. Stopped.");
+          utter("Okay. Stopped.", "STOP");
+          return;
+        }
+        dispatchAction(decided.action);
+        return;
+      }
+      void askGeneral(text);
+    });
   }
 
   function approveProspect(open: Prospect, method: "MANUAL" | "VOICE") {

@@ -1,6 +1,7 @@
 import type { IntentName, ParsedIntent, Risk, VoiceContext } from "./types.ts";
 import { HIGH_INTENTS, MEDIUM_INTENTS } from "./types.ts";
 import { parseSpokenHour } from "../calendar/range.ts";
+import { isPersonalCalendarCommand } from "../calendar/owner-event.ts";
 
 function riskOf(intent: IntentName): Risk {
   if (HIGH_INTENTS.includes(intent)) return "HIGH";
@@ -210,6 +211,9 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /read( me)? (their |the )?reply|what did they say/)) return { ...base, intent: "READ_REPLY", risk: "LOW" };
   if (hit(t, /draft a response|draft a reply|write a response/)) return { ...base, intent: "DRAFT_RESPONSE", risk: "LOW" };
   if (hit(t, /stop (their |the )?follow-?ups/)) return { ...base, intent: "STOP_FOLLOWUPS", risk: "MEDIUM" };
+  if (isPersonalCalendarCommand(stripped)) {
+    return { ...base, intent: "CREATE_OWNER_CALENDAR_EVENT", risk: "LOW", confidence: 0.98 };
+  }
   if (hit(t, /when is my next (sales )?call|next sales call/)) return { ...base, intent: "NEXT_CALL", risk: "LOW" };
   if (hit(t, /what times am i (available|free)|available wednesday|free wednesday|open times/)) return { ...base, intent: "AVAILABILITY", risk: "LOW" };
   if (hit(t, /schedule (them|it|the call)|book (them|the call)/)) return { ...base, intent: "SCHEDULE_CALL", risk: "HIGH" };

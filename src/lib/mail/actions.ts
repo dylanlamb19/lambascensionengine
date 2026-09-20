@@ -370,13 +370,19 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     const {
       resolveOwnerWhen,
       sanitizeOwnerTitle,
+      parseOwnerCalendarSpeech,
       ownerEventFingerprint,
       ownerEventSuccessSpeech,
       ownerEventFailureSpeech,
       OWNER_TZ_DEFAULT,
     } = await import("../calendar/owner-event");
 
-    const title = sanitizeOwnerTitle(data.title || "");
+    const parsedSpeech = parseOwnerCalendarSpeech(
+      [data.title, data.when, data.date, data.time].filter((s) => typeof s === "string" && s.trim()).join(" "),
+    );
+    const title = parsedSpeech.matched && parsedSpeech.title
+      ? parsedSpeech.title
+      : sanitizeOwnerTitle(data.title || "");
     if (!title) {
       return {
         ok: false as const,
@@ -389,7 +395,7 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     const settings = await loadSettings(context.userId);
     const timezone = settings.timezone || OWNER_TZ_DEFAULT;
     const resolved = resolveOwnerWhen({
-      when: data.when,
+      when: data.when || (parsedSpeech.matched ? parsedSpeech.when : undefined),
       date: data.date,
       time: data.time,
       durationMinutes: data.durationMinutes,

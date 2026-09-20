@@ -301,7 +301,98 @@ export function resolveOwnerWhen(input: ResolveOwnerWhenInput): ResolveOwnerWhen
   };
 }
 
+const SALES_BOOKING_RE = /\b(schedule|book)\s+(them|it|the call|a (sales )?call|this (call|company|prospect)|the meeting)\b/i;
+const VIEW_CALENDAR_RE = /\b(pull up|show( me)?|open|go to)\s+(my |the )?calendar\b|\bwhat(?:'s| is) on my calendar\b|\bwhat (?:do i have|have i got|calls do i have)\b/i;
+const PERSONAL_HINT_RE = new RegExp(
+  [
+    String.raw`\bremind me\b`,
+    String.raw`\b(set|add|put)\s+(a |an )?(reminder|event|appointment)\b`,
+    String.raw`\b(add|put|schedule)\b[\s\S]{0,120}\b(on|to)\s+my calendar\b`,
+    String.raw`\bschedule\s+(gym|dentist|lunch|dinner|haircut|doctor|workout|run|errand)\b`,
+    String.raw`\b(set|add|put|schedule)\s+(a |an )?.{0,40}\b(appointment|reminder)\b`,
+  ].join("|"),
+  "i",
+);
+const WEEKDAY_WORDS = "sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|wed|thu(?:r(?:s)?)?|fri|sat";
+const RELATIVE_WORDS = "today|tonight|tomorrow";
+const MONTH_WORDS = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec";
+
+function stripWakeWord(raw: string): string {
+  return (raw || "").replace(/\s+/g, " ").trim().replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").trim();
+}
+
+export function isPersonalCalendarCommand(raw: string): boolean {
+  const lower = stripWakeWord(raw).toLowerCase();
+  if (!lower) return false;
+  if (SALES_BOOKING_RE.test(lower)) return false;
+  if (VIEW_CALENDAR_RE.test(lower) && !/\b(remind|reminder|add |put |set a )\b/.test(lower)) return false;
+  if (PERSONAL_HINT_RE.test(lower)) return true;
+  return /\bon my calendar\b/.test(lower) && /\b(remind|reminder|add|put|set|schedule)\b/.test(lower);
+}
+
+function stripWhenFromTitle(s: string): string {
+  let t = s;
+  t = t.replace(new RegExp(`\\b(next\\s+)?(this\\s+)?(on\\s+)?(${WEEKDAY_WORDS})s?\\b`, "gi"), " ");
+  t = t.replace(new RegExp(`\\b(${RELATIVE_WORDS})\\b`, "gi"), " ");
+  t = t.replace(new RegExp(`\\b(${MONTH_WORDS})\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?\\b`, "gi"), " ");
+  t = t.replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ");
+  t = t.replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, " ");
+  t = t.replace(/\b(at\s+)?\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b/gi, " ");
+  t = t.replace(/\bat\s+\d{1,2}(:\d{2})?\b/gi, " ");
+  t = t.replace(/\b(at\s+)?(noon|midnight|midday)\b/gi, " ");
+  t = t.replace(/\bfor\s+\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)?\b/gi, " ");
+  t = t.replace(/\b(on|to)\s+my calendar\b/gi, " ");
+  return t.replace(/\s+/g, " ").trim();
+}
+
+function tidyOwnerTitle(s: string): string {
+  let t = s.replace(/^[-–—,:;.\s]+|[-–—,:;.\s]+$/g, "").trim();
+  t = t.replace(/^(a |an |the )/i, "");
+  t = t.replace(/^that i (need to |have to |should )/i, "");
+  t = t.replace(/^to\s+/i, "");
+  t = t.replace(/^['"]|['"]$/g, "").trim();
+  if (t && t[0] === t[0].toLowerCase()) t = t[0].toUpperCase() + t.slice(1);
+  return t.slice(0, 200);
+}
+
+export type OwnerCalendarSpeech =
+  | { matched: false }
+  | { matched: true; title: string; when: string };
+
+export function parseOwnerCalendarSpeech(raw: string): OwnerCalendarSpeech {
+  const stripped = stripWakeWord(raw);
+  if (!isPersonalCalendarCommand(stripped)) return { matched: false };
+
+  const quoted = stripped.match(/['"“”‘’](.+?)['"“”‘’]/);
+  const thatNeed = stripped.match(/\bthat i (?:need to |have to |should )?(.+)$/i);
+  const remindTo = stripped.match(/\bremind me(?: on my calendar)?(?: to | that i (?:need to |have to )?)(.+)$/i);
+
+  let title = "";
+  if (quoted?.[1]) title = quoted[1];
+  else if (thatNeed?.[1]) title = thatNeed[1];
+  else if (remindTo?.[1]) title = remindTo[1];
+  else {
+    title = stripped
+      .replace(/^(please\s+)/i, "")
+      .replace(/^(set|add|put|schedule)\s+(a |an )?(reminder|event)\s+(on my calendar\s+)?(for\s+)?/i, "")
+      .replace(/^(set|add|put|schedule)\s+(a |an )?/i, "")
+      .replace(/\s+(on|to)\s+my calendar\b/i, " ");
+  }
+  title = tidyOwnerTitle(stripWhenFromTitle(title));
+  if (!title) title = "Reminder";
+  return { matched: true, title, when: stripped };
+}
+
+export function isOwnerCalendarFollowupTime(raw: string): boolean {
+  const t = stripWakeWord(raw);
+  if (!t || isPersonalCalendarCommand(t)) return false;
+  if (/\b(cancel|never mind|forget it|stop)\b/i.test(t)) return false;
+  return Boolean(parseClock(t));
+}
+
 export function sanitizeOwnerTitle(raw: string): string {
+  const parsed = parseOwnerCalendarSpeech(raw);
+  if (parsed.matched && parsed.title) return parsed.title;
   let t = (raw || "").replace(/\s+/g, " ").trim();
   t = t.replace(/^(please\s+)?(remind me (on my calendar )?to|add|put|schedule|set (a |an )?(reminder|event) (on my calendar )?(for|to)?)\s+/i, "");
   t = t.replace(/^that i need to\s+/i, "");

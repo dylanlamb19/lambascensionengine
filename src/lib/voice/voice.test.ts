@@ -224,3 +224,14 @@ test("read this page and read everything are screen-reader intents", () => {
   assert.equal(parseSpokenCommand("What are my options?").intent, "READ_OPTIONS");
   assert.equal(parseSpokenCommand("Read the form.").intent, "READ_FORM");
 });
+
+test("personal calendar reminders are not sales bookings or calendar view", () => {
+  const bank = parseSpokenCommand("Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash.");
+  assert.equal(bank.intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Add a dentist appointment tomorrow.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Put lunch with Mom on my calendar Friday at noon.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Schedule gym tomorrow at 6 PM.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Schedule the call").intent, "SCHEDULE_CALL");
+  assert.equal(parseSpokenCommand("Pull up my calendar").intent, "NAVIGATE_CALENDAR");
+  assert.equal(parseSpokenCommand("What's on my calendar").intent, "NAVIGATE_CALENDAR");
+});

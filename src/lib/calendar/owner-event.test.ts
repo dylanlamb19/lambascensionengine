@@ -3,11 +3,14 @@ import { describe, it } from "node:test";
 import {
   OWNER_TZ_DEFAULT,
   fromZonedLocal,
+  isOwnerCalendarFollowupTime,
+  isPersonalCalendarCommand,
   ownerEventFailureSpeech,
   ownerEventFingerprint,
   ownerEventSpeechFromState,
   ownerEventSuccessSpeech,
   parseClock,
+  parseOwnerCalendarSpeech,
   resolveOwnerWhen,
   sanitizeOwnerTitle,
   toOffsetIso,
@@ -105,5 +108,63 @@ describe("owner calendar timezone resolution", () => {
   it("title sanitizer keeps the bank errand", () => {
     const t = sanitizeOwnerTitle("Go to SouthState Bank and withdraw cash");
     assert.equal(t, "Go to SouthState Bank and withdraw cash");
+  });
+});
+
+describe("personal calendar speech parsing", () => {
+  it("extracts the SouthState reminder from a full Ara command", () => {
+    const p = parseOwnerCalendarSpeech(
+      "Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash.",
+    );
+    assert.equal(p.matched, true);
+    if (!p.matched) return;
+    assert.equal(p.title, "Go to SouthState Bank and withdraw cash");
+    const r = resolveOwnerWhen({ when: p.when, now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.start.toISOString(), "2026-09-21T21:00:00.000Z");
+    assert.equal(r.durationMinutes, 30);
+  });
+
+  it("parses dentist / lunch / gym / quoted title commands", () => {
+    const dentist = parseOwnerCalendarSpeech("Add a dentist appointment tomorrow at 2 PM.");
+    assert.equal(dentist.matched, true);
+    if (dentist.matched) assert.match(dentist.title, /dentist appointment/i);
+
+    const lunch = parseOwnerCalendarSpeech("Put lunch with Mom on my calendar Friday at noon.");
+    assert.equal(lunch.matched, true);
+    if (lunch.matched) assert.match(lunch.title, /lunch with Mom/i);
+
+    const gym = parseOwnerCalendarSpeech("Schedule gym tomorrow at 6 PM.");
+    assert.equal(gym.matched, true);
+    if (gym.matched) assert.equal(gym.title.toLowerCase(), "gym");
+
+    const quoted = parseOwnerCalendarSpeech("Add 'Call insurance company' to my calendar Monday at 10.");
+    assert.equal(quoted.matched, true);
+    if (quoted.matched) assert.match(quoted.title, /Call insurance company/i);
+  });
+
+  it("does not invent a time for dentist tomorrow", () => {
+    const p = parseOwnerCalendarSpeech("Add a dentist appointment tomorrow.");
+    assert.equal(p.matched, true);
+    if (!p.matched) return;
+    const r = resolveOwnerWhen({ when: p.when, now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.need, "time");
+  });
+
+  it("does not treat sales booking or calendar view as a personal event", () => {
+    assert.equal(isPersonalCalendarCommand("Schedule the call"), false);
+    assert.equal(isPersonalCalendarCommand("Book them"), false);
+    assert.equal(isPersonalCalendarCommand("Pull up my calendar"), false);
+    assert.equal(isPersonalCalendarCommand("What's on my calendar"), false);
+    assert.equal(parseOwnerCalendarSpeech("Show my calendar").matched, false);
+  });
+
+  it("treats a bare time as a follow-up after asking what time", () => {
+    assert.equal(isOwnerCalendarFollowupTime("2 PM"), true);
+    assert.equal(isOwnerCalendarFollowupTime("noon"), true);
+    assert.equal(isOwnerCalendarFollowupTime("Add a dentist appointment tomorrow"), false);
+    assert.equal(isOwnerCalendarFollowupTime("never mind"), false);
   });
 });

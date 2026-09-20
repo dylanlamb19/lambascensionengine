@@ -13,6 +13,7 @@ import { readScreen, type ReadMode } from "./read-screen.ts";
 import type { ScreenFact } from "./screen-context.ts";
 import {
   OWNER_TZ_DEFAULT,
+  parseOwnerCalendarSpeech,
   resolveOwnerWhen,
   sanitizeOwnerTitle,
   type LastOwnerEvent,
@@ -924,10 +925,15 @@ export function executeAllowlistedTool(
     };
   }
   if (tool === "create_owner_calendar_event") {
-    const title = sanitizeOwnerTitle(String(args.title || args.summary || args.name || ""));
-    const when = String(args.when || args.at || "").trim();
+    const rawTitle = String(args.title || args.summary || args.name || args.when || "");
+    const rawWhen = String(args.when || args.at || "").trim();
     const date = String(args.date || "").trim();
     const time = String(args.time || "").trim();
+    const parsedSpeech = parseOwnerCalendarSpeech([rawTitle, rawWhen, date, time].filter(Boolean).join(" "));
+    const title = parsedSpeech.matched && parsedSpeech.title
+      ? parsedSpeech.title
+      : sanitizeOwnerTitle(rawTitle);
+    const when = rawWhen || (parsedSpeech.matched ? parsedSpeech.when : "");
     const durationMinutes = num(args, "duration_minutes", "durationMinutes", "duration");
     const description = String(args.description || args.notes || "").slice(0, 1000);
     const location = String(args.location || "").slice(0, 200);
