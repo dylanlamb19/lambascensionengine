@@ -1,0 +1,16 @@
+node_modules/
+.tanstack/
+.vercel/
+*.log
+.grok/og-pending
+.grok/preview.pid
+.env
+.env.*
+!.env.example
+artifacts/
+screenshots/
+attachments/
+recovery-snapshots/
+data/
+*.zip
+.project_id
