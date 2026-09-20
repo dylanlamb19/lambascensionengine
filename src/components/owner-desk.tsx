@@ -20,6 +20,7 @@ import { listProspectsFn, importProspectsFn, upsertProspectsFn } from "@/lib/pro
 import { matchExisting } from "@/lib/prospects/dedupe";
 import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/identity";
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
+import { contactSummary, ownerQualify } from "@/lib/prospects/qualify";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
@@ -252,8 +253,9 @@ export function OwnerDesk() {
   const [syncReady, setSyncReady] = useState(false);
   const [findBusy, setFindBusy] = useState(false);
   const [findMsg, setFindMsg] = useState("");
-  const [findLimit, setFindLimit] = useState(20);
+  const [findLimit, setFindLimit] = useState(8);
   const [findMore, setFindMore] = useState(false);
+  const [radiusMiles, setRadiusMiles] = useState(25);
   const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [googleMsg, setGoogleMsg] = useState("");
@@ -268,6 +270,7 @@ export function OwnerDesk() {
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoResearchRef = useRef(new Set<string>());
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("off");
   const [youSaid, setYouSaid] = useState("");
   const [voiceReply, setVoiceReply] = useState("");
@@ -1281,7 +1284,22 @@ export function OwnerDesk() {
           || (p.history || []).filter((h) => /reply/i.test(h.action) || /reply/i.test(h.detail)).at(-1)?.detail
           || "",
         recipient: usefulEmail(p)?.value || "",
-        decisionMaker: (p.contacts || []).find((c) => c.name && c.name !== "UNKNOWN")?.name || "",
+        decisionMaker: (() => {
+          const c = (p.contacts || []).find((x) => x.name && x.name !== "UNKNOWN");
+          if (!c) return "";
+          return c.title && c.title !== "UNKNOWN" ? `${c.name}, ${c.title}` : c.name;
+        })(),
+        vertical: p.vertical,
+        city: p.city,
+        address: p.address || "",
+        category: p.provider_category || "",
+        place_id: p.provider_place_id || "",
+        website_note: p.website_note || "",
+        readiness: p.readiness || "",
+        readiness_why: p.readiness_why || ownerQualify(p).why,
+        contact_summary: contactSummary(p),
+        opportunity_summary: opportunities(p).map((o) => o.title).join("; "),
+        fit_headline: ownerQualify(p).headline,
       })),
       gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
       calendar: live.integration ? calendarHealth(live.integration) : live.google.calendar,
@@ -1838,6 +1856,18 @@ export function OwnerDesk() {
   }, [userId]);
 
   useEffect(() => {
+    if (view !== "detail" || !openUid || deepBusy) return;
+    const company = findByUid(rows, openUid);
+    if (!company?.uid) return;
+    if (company.provider !== "google_places") return;
+    if (company.research_status !== "queued" && company.research_status !== "none") return;
+    if (autoResearchRef.current.has(company.uid)) return;
+    autoResearchRef.current.add(company.uid);
+    void researchFurther(company.uid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, openUid]);
+
+  useEffect(() => {
     if (!hydrated) return;
     if (!integration) return;
     const ctx = buildScreenContext(currentDesk(), deskWorld());
@@ -2086,6 +2116,7 @@ export function OwnerDesk() {
           estimated_cents: result.estimated_cents,
           pages_fetched: result.pages_fetched,
           research_status: nextResearchStatus(c.research_status, { siteOk, foundContact }),
+          findings: (result.findings && result.findings.length) ? result.findings : c.findings,
         };
       }));
       const preview = { ...company, contacts, research_status: nextStatus };
@@ -2109,7 +2140,14 @@ export function OwnerDesk() {
     setFindMsg("");
     try {
       const result = await findClientsFn({
-        data: { vertical: v, location: loc, limit: n, radiusM: 40000, minRating, minReviews },
+        data: {
+          vertical: v,
+          location: loc,
+          limit: n,
+          radiusM: Math.round(radiusMiles * 1609.34),
+          minRating,
+          minReviews,
+        },
       });
       if (!result.ok) {
         setFindMsg(result.reason);
@@ -2553,24 +2591,37 @@ export function OwnerDesk() {
             <p className="la-kicker">Acquisition</p>
             <h2 className="font-display mt-2 text-2xl">Find Clients</h2>
             <p className="mb-4 mt-1 text-sm text-muted">We’ll look up real companies. We will not invent names.</p>
+            {discoveryConfigured === false ? (
+              <div className="la-ribbon la-ribbon-bad mb-4">
+                Live Find Clients is off because Google Places is not configured. Add GOOGLE_PLACES_API_KEY on the server, and enable Places API (New) plus Geocoding API. We will not invent businesses. You can still add a company you already know.
+              </div>
+            ) : null}
             <label className="la-label">What kind of company?</label>
-            <select className="la-field mb-3" value={vert} onChange={(e) => setVert(e.target.value)}>
-              {["Roofing", "HVAC", "Plumbing / sewer", "Foundation repair", "Solar", "Med spa / cosmetic", "Dental", "Law / personal injury", "B2B consulting", "SaaS / software", "Other"].map((x) => <option key={x}>{x}</option>)}
-            </select>
+            <input
+              className="la-field mb-3"
+              list="la-verticals"
+              value={vert}
+              onChange={(e) => setVert(e.target.value)}
+              placeholder="Roofing companies, cosmetic dentists, …"
+            />
+            <datalist id="la-verticals">
+              {["Roofing", "HVAC", "Plumbing / sewer", "Foundation repair", "Solar", "Med spa / cosmetic", "Dental", "Law / personal injury", "B2B consulting", "SaaS / software"].map((x) => <option key={x} value={x} />)}
+            </datalist>
             <label className="la-label">Where?</label>
-            <input className="la-field mb-3" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Dallas, Fort Worth, …" />
+            <input className="la-field mb-3" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Fort Worth, Texas" />
             <label className="la-label">How many?</label>
-            <input className="la-field mb-3" type="number" min={1} max={50} value={findLimit} onChange={(e) => setFindLimit(Number(e.target.value) || 10)} />
+            <input className="la-field mb-3" type="number" min={1} max={20} value={findLimit} onChange={(e) => setFindLimit(Number(e.target.value) || 8)} />
             <button type="button" className="la-btn la-btn-quiet mb-3" onClick={() => setFindMore((v) => !v)}>{findMore ? "Hide extra filters" : "More"}</button>
             {findMore ? (
               <div className="mb-3 grid gap-2">
+                <label className="text-sm text-muted">Search radius (miles) <input className="la-field ml-2 inline-block w-24" type="number" min={1} max={50} value={radiusMiles} onChange={(e) => setRadiusMiles(Number(e.target.value) || 25)} /></label>
                 <label className="text-sm text-muted">Minimum rating <input className="la-field ml-2 inline-block w-24" type="number" min={0} max={5} step={0.5} value={minRating} onChange={(e) => setMinRating(Number(e.target.value) || 0)} /></label>
-                <label className="text-sm text-muted">Minimum reviews <input className="la-field ml-2 inline-block w-24" type="number" min={0} value={minReviews} onChange={(e) => setMinReviews(Number(e.target.value) || 0)} /></label>
+                <label className="text-sm text-muted">Minimum reviews (optional, not a gate) <input className="la-field ml-2 inline-block w-24" type="number" min={0} value={minReviews} onChange={(e) => setMinReviews(Number(e.target.value) || 0)} /></label>
               </div>
             ) : null}
             {findMsg ? <p className="mb-3 text-sm">{findMsg}</p> : null}
             <div className="flex flex-wrap gap-2">
-              <button className="la-btn la-btn-primary" type="submit" disabled={findBusy}>
+              <button className="la-btn la-btn-primary" type="submit" disabled={findBusy || discoveryConfigured === false}>
                 {findBusy ? "Looking…" : "Find Clients"}
               </button>
               <button className="la-btn la-btn-ghost" type="button" onClick={() => setView("add")}>Add one I already know</button>
@@ -2610,9 +2661,8 @@ export function OwnerDesk() {
               <button key={c.uid || c.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
                 <span>
                   <b className="la-list-name">{c.name}</b>
-                  <span className="mt-0.5 block text-sm text-muted">{reachLabel(reachKind(c))} · {c.stage_plain}</span>
+                  <span className="mt-0.5 block text-sm text-muted">{ownerQualify(c).headline} · {reachLabel(reachKind(c))} · {c.stage_plain}</span>
                 </span>
-                <span className="la-score">{c.score}</span>
               </button>
             )) : <p className="la-empty">No companies yet. Find Clients or add one you already know.</p>}
           </section>
@@ -2831,6 +2881,13 @@ function ReviewPage({
             <button className={`la-btn ${primaryApprove ? "la-btn-ghost" : "la-btn-primary"}`} onClick={onResearch} disabled={busy}>
               {busy ? "Looking…" : "Find Contact"}
             </button>
+            {verifiedWebsite(company) ? (
+              <button className="la-btn la-btn-ghost" type="button" onClick={() => onAction("open_website")}>Open Website</button>
+            ) : null}
+            {listingPhone(company) ? (
+              <button className="la-btn la-btn-ghost" type="button" onClick={() => onAction("call")}>Call</button>
+            ) : null}
+            <button className="la-btn la-btn-ghost" type="button" onClick={() => onAction("draft_outreach")}>Draft Outreach</button>
             <button className={`la-btn ${primaryApprove ? "la-btn-primary" : "la-btn-ghost"}`} onClick={onApprove}>
               Approve for outreach
             </button>

@@ -1,9 +1,11 @@
 import { adsFromFindings } from "./ads.ts";
 import { attachPublishedEmails, extractEmails, extractPeople, extractSocials } from "./extract.ts";
 import { fetchPublicPage, innerPaths, type PageFetch } from "./fetch-page.ts";
+import { extractPageFindings, mergeFindings, websiteUnavailableFindings } from "./page-findings.ts";
 import { classifyQualification, shouldRunPaidEnrichment } from "./readiness.ts";
 import { extractSiteSignals, mergeSignals, emptySignals, signalFacts } from "./site-signals.ts";
 import type { Caps, DecisionMaker, DeepInput, DeepResult, EvidenceFact, PaidHunter } from "./types.ts";
+import type { Finding } from "../review-brief.ts";
 
 function nowIso() {
   return new Date().toISOString();
@@ -44,6 +46,7 @@ export async function runDeepResearch(
   let websiteOk = false;
   let websiteNote = "";
   let signals = emptySignals();
+  let findings: Finding[] = [];
 
   facts.push(fact("company_name", input.name, "prospect record", "VERIFIED", "high", checked));
   facts.push(fact("vertical", input.vertical || "UNKNOWN", "prospect record", input.vertical ? "VERIFIED" : "UNKNOWN", "medium", checked));
@@ -65,6 +68,7 @@ export async function runDeepResearch(
       websiteNote = "We opened their website and used it as one source among others.";
       facts.push(fact("website", home.final_url, "HTTP GET", "VERIFIED", "high", checked));
       signals = mergeSignals(signals, extractSiteSignals(home.html));
+      findings = mergeFindings(findings, extractPageFindings(home.html, home.final_url, "home"));
       const people = extractPeople(home.html, home.final_url, checked);
       const emails = extractEmails(home.html);
       socials.push(...extractSocials(home.html, home.final_url));
@@ -87,6 +91,7 @@ export async function runDeepResearch(
         pages += 1;
         if (!inner.ok) continue;
         signals = mergeSignals(signals, extractSiteSignals(inner.html));
+        findings = mergeFindings(findings, extractPageFindings(inner.html, inner.final_url, "inner"));
         const more = extractPeople(inner.html, inner.final_url, checked);
         for (const p of more) {
           if (!contacts.some((c) => c.name === p.name)) contacts.push(p);
@@ -102,18 +107,19 @@ export async function runDeepResearch(
         facts.push(fact("decision_maker", "UNKNOWN", "website pages we could open", "UNKNOWN", "medium", checked));
       }
     } else {
-      websiteNote = "We couldn't inspect their website, but we found other information about the business.";
+      websiteNote = "Website research unavailable. Google listing evidence is kept.";
       const st = home.blocked || input.research_status === "blocked" ? "UNKNOWN" : "ERROR";
       facts.push(fact("website", home.blocked ? "BLOCKED" : home.error || "FAILED", "HTTP GET", st, "low", checked));
+      findings = websiteUnavailableFindings(home.blocked ? "blocked" : home.error || "Website research unavailable");
     }
   } else {
     websiteNote = "No website on file. Other public listing facts are still below.";
     facts.push(fact("website", "UNKNOWN", "prospect record", "UNKNOWN", "high", checked));
   }
 
-  const ads = adsFromFindings(input.findings, checked);
+  const ads = adsFromFindings(findings.length ? findings : input.findings, checked);
   const funnelOk = Boolean(
-    input.findings?.some((f) =>
+    findings.some((f) =>
       ["contact_form", "contact_form_inner", "primary_cta", "gtm", "meta_pixel"].includes(f.id)
       && !/^(no |missing)/i.test(f.result || "")
       && f.status !== "ERROR" && f.status !== "UNKNOWN",
@@ -171,5 +177,6 @@ export async function runDeepResearch(
     pages_fetched: pages,
     readiness_why: qualification.why,
     company_kind: qualification.kind,
+    findings,
   };
 }

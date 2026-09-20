@@ -164,6 +164,8 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "Resolve this/them/next from the current screen. If two companies match, ask which one. Never guess.",
     "When the owner names a company, look it up in the company list and pass prospect_uid.",
     "For Find Clients, set company_type, location, and count, then run_find_clients.",
+    "Find Clients discovers REAL Google businesses only. If Places is not configured, say so. Never invent a company name, Place ID, email, or owner.",
+    "When Dylan asks what a saved company does, why they might be a good prospect, who to contact, or how to reach them, answer ONLY from persisted listing/research fields on that prospect (vertical, category, website_note, readiness_why, contact_summary, opportunity_summary). If a field is UNKNOWN or missing, say so. Do not guess.",
   ];
   if (companies) lines.push(`Company list: ${companies}`);
   if (ctx.sales) {
@@ -190,7 +192,20 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     if (open.recipient) lines.push(`Email on file: ${open.recipient}.`);
     else lines.push("Email: UNKNOWN. Do not guess one.");
     if (open.fit_plain) lines.push(`Fit: ${open.fit_plain}.`);
+    if (open.fit_headline) lines.push(`Fit headline: ${open.fit_headline}.`);
+    if (open.vertical) lines.push(`What they sell (category on file): ${open.vertical}${open.category ? ` · ${open.category}` : ""}.`);
+    if (open.city) lines.push(`Geography on file: ${open.city}.`);
+    if (open.address) lines.push(`Address on file: ${open.address}.`);
+    if (open.place_id) lines.push(`Google Place ID on file: ${open.place_id}.`);
+    else lines.push("Google Place ID: UNKNOWN for this record.");
+    if (open.website_note) lines.push(`Website research: ${open.website_note}.`);
+    if (open.readiness) lines.push(`Qualification: ${open.readiness}.`);
+    if (open.readiness_why?.length) lines.push(`Why (evidence): ${open.readiness_why.join(" | ")}`);
+    if (open.opportunity_summary) lines.push(`Observed opportunity: ${open.opportunity_summary}`);
+    else lines.push("Observed opportunity: none stored yet. Do not invent advertising spend or conversion rates.");
+    if (open.contact_summary) lines.push(`How to contact them: ${open.contact_summary}`);
     if (open.explain) lines.push(`Verified take: ${open.explain.slice(0, 400)}`);
+    lines.push("If Dylan asks who owns it and decision maker is UNKNOWN, say Decision maker unknown. Do not invent a person's name.");
   }
   if (ctx.tasks.length) {
     lines.push(`Owner tasks: ${ctx.tasks.map((t) => t.title).join("; ")}.`);

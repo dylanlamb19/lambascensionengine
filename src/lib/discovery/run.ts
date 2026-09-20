@@ -11,6 +11,7 @@ export type FindInput = {
   radiusM?: number;
   minRating?: number;
   minReviews?: number;
+  query?: string;
 };
 
 export { hitToProspect };
@@ -20,7 +21,15 @@ export const findClientsFn = createServerFn({ method: "POST" })
   .validator((data: FindInput) => data)
   .handler(async ({ data, context }) => {
     const { env } = await import("@/lib/env.server");
-    const { searchText, cacheKey, cacheSatisfiesSearch } = await import("./places");
+    const { searchText } = await import("./places");
+    const {
+      parseFindQuery,
+      discoveryCacheKey,
+      dropClosedPlaces,
+      rankPlaceHits,
+      radiusMeters,
+      useLocationBias,
+    } = await import("./query");
     const { tryReserveDiscovery, cacheGet, cacheSet, EST_SEARCH_CENTS, EST_GEOCODE_CENTS } = await import("./usage.server");
     const { listProspects, importProspects, logActivity } = await import("@/lib/prospects/repo.server");
     const { nextClientId } = await import("@/lib/prospects/ids");
@@ -29,20 +38,42 @@ export const findClientsFn = createServerFn({ method: "POST" })
     if (!key) {
       return {
         ok: false as const,
-        reason: "Live Find Clients is off. Add a Google Places key on the server, or use Add Client for a company you already know. We will not invent businesses.",
+        reason: "Live Find Clients is off. Add GOOGLE_PLACES_API_KEY on the server (Places API New + Geocoding API), or use Add Client for a company you already know. We will not invent businesses.",
         prospects: [] as Prospect[],
+        imported: 0,
+        merged: 0,
       };
     }
 
-    const vertical = (data.vertical || "").trim() || "Other";
-    const location = (data.location || "").trim();
-    const limit = Math.min(50, Math.max(1, Math.floor(Number(data.limit) || 10)));
+    const parsed = parseFindQuery({
+      vertical: (data.query || data.vertical || "").trim() || "Other",
+      location: (data.location || "").trim(),
+    });
+    const vertical = parsed.vertical;
+    const location = parsed.location;
+    const limit = Math.min(20, Math.max(1, Math.floor(Number(data.limit) || 8)));
     if (!location) {
-      return { ok: false as const, reason: "I need a city or market. Type Dallas, Fort Worth, or similar.", prospects: [] as Prospect[] };
+      return {
+        ok: false as const,
+        reason: "I need a city or market. Type Dallas, Fort Worth, or similar.",
+        prospects: [] as Prospect[],
+        imported: 0,
+        merged: 0,
+      };
     }
 
-    const ck = cacheKey({ v: vertical, loc: location, n: limit, r: data.radiusM || 40000, min: data.minRating || 0, p: "places_v1" });
+    const radiusM = radiusMeters(location, data.radiusM);
+    const skipGeocode = !useLocationBias(location);
+    const ck = discoveryCacheKey({
+      vertical,
+      location,
+      limit,
+      radiusM: skipGeocode ? 0 : radiusM,
+      minRating: data.minRating || 0,
+      textQuery: parsed.textQuery,
+    });
     const cached = await cacheGet(ck);
+    const { cacheSatisfiesSearch } = await import("./places");
     let hits: PlaceHit[] = cacheSatisfiesSearch(cached) ? cached : [];
 
     if (!hits.length) {
@@ -50,23 +81,43 @@ export const findClientsFn = createServerFn({ method: "POST" })
         apiKey: key,
         vertical,
         location,
-        radiusM: data.radiusM || 40000,
+        radiusM,
         limit,
         minRating: data.minRating || 0,
+        textQuery: parsed.textQuery,
+        skipGeocode,
+        collect: Math.min(20, Math.max(limit, 10)),
         reserve: async (kind) => {
           const cents = kind === "geocode" ? EST_GEOCODE_CENTS : EST_SEARCH_CENTS;
           return tryReserveDiscovery(context.userId, cents);
         },
       });
       if ("error" in found) {
-        return { ok: false as const, reason: found.error.message, prospects: [] as Prospect[] };
+        return {
+          ok: false as const,
+          reason: found.error.message,
+          prospects: [] as Prospect[],
+          imported: 0,
+          merged: 0,
+        };
       }
       hits = found.places;
       await cacheSet(ck, hits, 7);
     }
 
-    const minReviews = data.minReviews || 0;
-    const filtered = hits.filter((h) => h.review_count >= minReviews);
+    const minReviews = Math.max(0, data.minReviews || 0);
+    const filtered = rankPlaceHits(
+      dropClosedPlaces(hits).filter((h) => h.review_count >= minReviews),
+    ).slice(0, limit);
+    if (!filtered.length) {
+      return {
+        ok: false as const,
+        reason: "No real businesses came back for that search. We did not invent any.",
+        prospects: [] as Prospect[],
+        imported: 0,
+        merged: 0,
+      };
+    }
     const existing = await listProspects(context.userId);
     let nextId = nextClientId(existing);
     const incoming: Prospect[] = [];
@@ -76,8 +127,11 @@ export const findClientsFn = createServerFn({ method: "POST" })
     }
     const imported = await importProspects(context.userId, incoming);
     const prospects = imported.prospects;
-    await logActivity(context.userId, "find_clients", `${incoming.length} from Places (${vertical} / ${location})`);
-    return { ok: true as const, reason: `Saved ${incoming.length} real companies.`, prospects };
+    const reason = imported.imported === 0 && imported.merged > 0
+      ? `Those companies are already on your list. No duplicates added (${imported.merged} matched by Place ID).`
+      : `Saved ${imported.imported} new companies${imported.merged ? `, ${imported.merged} already on your list` : ""}.`;
+    await logActivity(context.userId, "find_clients", `${filtered.length} from Places (${vertical} / ${location}); imported ${imported.imported}, merged ${imported.merged}`);
+    return { ok: true as const, reason, prospects, imported: imported.imported, merged: imported.merged };
   });
 
 export const discoveryStatusFn = createServerFn({ method: "GET" })
@@ -91,6 +145,7 @@ export const discoveryStatusFn = createServerFn({ method: "GET" })
       configured,
       code: configured ? "READY" : "NOT_CONFIGURED",
       spoken: discoverySpoken(configured),
+      missing: configured ? [] as string[] : ["GOOGLE_PLACES_API_KEY"],
+      apis: configured ? [] as string[] : ["Places API (New)", "Geocoding API"],
     };
   });
-

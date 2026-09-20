@@ -29,6 +29,9 @@ function p(partial: Partial<Prospect> & { name: string }): Prospect {
     outreach: partial.outreach,
     suppressed: partial.suppressed,
     history: partial.history,
+    contacts: partial.contacts,
+    readiness: partial.readiness,
+    readiness_why: partial.readiness_why,
   };
 }
 
@@ -98,4 +101,36 @@ test("dedupe never locates a merge row by numeric id", () => {
   const src = readFileSync(new URL("./dedupe.ts", import.meta.url), "utf8");
   assert.doesNotMatch(src, /e\.id === hit\.id/);
   assert.match(src, /e\.uid === hit\.uid/);
+});
+
+test("overlapping Place ID search keeps researched why and contacts", () => {
+  const server = p({
+    id: 1,
+    uid: "u1",
+    provider_place_id: "Ch1",
+    name: "Place Co",
+    city: "Austin",
+    research_status: "complete",
+    findings: [{ id: "https", result: "HTTPS", status: "VERIFIED" }],
+    facts: [{ key: "place_id", value: "Ch1", source: "Google Places", checked_at: "t", confidence: "high", status: "VERIFIED" }],
+    readiness: "POSSIBLE CANDIDATE",
+    readiness_why: ["Public website loaded"],
+    contacts: [{
+      name: "Ada Owner", title: "Owner", email: "", email_status: "none",
+      profile_url: "", source: "https://place.co/about", last_verified: "t",
+    }],
+  });
+  const incoming = p({
+    id: 9,
+    uid: "new",
+    provider_place_id: "Ch1",
+    name: "Place Co",
+    city: "Austin",
+    research_status: "queued",
+  });
+  const m = mergeProspect(server, incoming);
+  assert.equal(m.uid, "u1");
+  assert.equal(m.research_status, "complete");
+  assert.equal(m.readiness_why?.[0], "Public website loaded");
+  assert.equal(m.contacts?.[0]?.name, "Ada Owner");
 });

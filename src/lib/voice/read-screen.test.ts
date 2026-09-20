@@ -58,10 +58,11 @@ describe("screen reading", () => {
   });
 
   it("Find Clients blocker is a single sentence", () => {
-    assert.equal(
+    assert.match(
       findClientsBlockerSpeech(),
-      "Live Find Clients is off because Google Places is not configured.",
+      /Google Places is not configured/i,
     );
+    assert.match(findClientsBlockerSpeech(), /GOOGLE_PLACES_API_KEY/);
   });
 
   it("Find Clients auto-announce is the Places blocker only", () => {

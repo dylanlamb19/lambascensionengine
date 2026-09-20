@@ -75,7 +75,14 @@ export function mergeProspect(server: Prospect, incoming: Prospect): Prospect {
     history: [...(server.history || []), ...(incoming.history || [])].slice(-50),
     research_status: research.research_status,
     readiness: research.readiness || server.readiness,
+    readiness_why: (research.readiness_why && research.readiness_why.length)
+      ? research.readiness_why
+      : server.readiness_why,
+    company_kind: research.company_kind || server.company_kind,
     website_note: research.website_note || server.website_note,
+    deep_at: research.deep_at || server.deep_at,
+    provider_place_id: incoming.provider_place_id || server.provider_place_id,
+    provider_source_url: incoming.provider_source_url || server.provider_source_url,
   };
 }
 

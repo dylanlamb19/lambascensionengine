@@ -5,5 +5,5 @@ export function placesKeyConfigured(read: (key: string) => string | undefined = 
 export function discoverySpoken(configured: boolean): string {
   return configured
     ? "Client discovery is ready."
-    : "Live Find Clients is off because Google Places is not configured.";
+    : "Live Find Clients is off because Google Places is not configured. Add GOOGLE_PLACES_API_KEY, with Places API New and Geocoding API enabled. We will not invent businesses.";
 }

@@ -266,6 +266,17 @@ export type AraProspectSnap = {
   reach?: string;
   recommend?: string;
   decisionMaker?: string;
+  vertical?: string;
+  city?: string;
+  address?: string;
+  category?: string;
+  place_id?: string;
+  website_note?: string;
+  readiness?: string;
+  readiness_why?: string[];
+  contact_summary?: string;
+  opportunity_summary?: string;
+  fit_headline?: string;
 };
 
 export type AraDeskContext = {
@@ -1144,7 +1155,20 @@ export function executeAllowlistedTool(
   if (tool === "explain_prospect") {
     return {
       ok: true, tool, rejected: false,
-      output: { prospect_uid: target.uid, name: target.name, explain: target.explain || "", stage: target.stage, score: target.score, unknown: ["revenue", "ad budget", "ability to pay $10K/month"] },
+      output: {
+        prospect_uid: target.uid,
+        name: target.name,
+        explain: target.explain || "",
+        stage: target.stage,
+        score: target.score,
+        what_they_sell: target.vertical || "",
+        why: (target.readiness_why || []).slice(0, 8),
+        who_to_contact: target.decisionMaker || "Decision maker unknown",
+        how_to_reach: target.contact_summary || "",
+        website_note: target.website_note || "",
+        place_id: target.place_id || "",
+        unknown: ["revenue", "ad budget", "ability to pay $10K/month"],
+      },
       plan: { type: "explain", uid: target.uid },
     };
   }

@@ -132,7 +132,7 @@ export async function fetchPublicPage(url: string, timeoutMs = 12000): Promise<P
 export function innerPaths(base: string): string[] {
   try {
     const u = new URL(base);
-    return ["/about", "/case-studies", "/customers", "/careers", "/about-us", "/our-story", "/team", "/our-team", "/leadership"].map((p) => new URL(p, u.origin).toString());
+    return ["/contact", "/contact-us", "/about", "/team", "/about-us", "/our-team", "/case-studies", "/customers", "/careers", "/leadership"].map((p) => new URL(p, u.origin).toString());
   } catch {
     return [];
   }

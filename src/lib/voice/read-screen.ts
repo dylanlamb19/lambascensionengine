@@ -61,5 +61,5 @@ export function settingsBlockerSpeech(missingNames: string[]): string {
 }
 
 export function findClientsBlockerSpeech(): string {
-  return "Live Find Clients is off because Google Places is not configured.";
+  return "Live Find Clients is off because Google Places is not configured. Add GOOGLE_PLACES_API_KEY, with Places API New and Geocoding API enabled. We will not invent businesses.";
 }

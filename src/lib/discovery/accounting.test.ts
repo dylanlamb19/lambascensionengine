@@ -148,3 +148,30 @@ test("hitToProspect keeps Places evidence and labels job value as INDUSTRY_ESTIM
   assert.match(p.facts?.find((f) => f.key === "job_value_est")?.source || "", /INDUSTRY_ESTIMATE/);
   assert.match(p.facts?.find((f) => f.key === "job_value_est")?.source || "", /not provided by Google Places/);
 });
+
+test("statewide search can skip geocode and still return real Place IDs", async () => {
+  let geocodeCalls = 0;
+  const fetchImpl: FetchLike = async (url) => {
+    if (String(url).includes("geocode")) {
+      geocodeCalls += 1;
+      return jsonResponse({ status: "REQUEST_DENIED" });
+    }
+    return jsonResponse({
+      places: [{ id: "ChTX", displayName: { text: "Texas HVAC Co" }, formattedAddress: "Austin, TX, USA" }],
+    });
+  };
+  const budget = { remaining: 100, kinds: [] as string[] };
+  const out = await searchText({
+    apiKey: "k", vertical: "HVAC", location: "Texas", radiusM: 40000, limit: 5, minRating: 0,
+    skipGeocode: true,
+    reserve: countingReserve(budget),
+    fetchImpl,
+  });
+  assert.equal(geocodeCalls, 0);
+  assert.deepEqual(budget.kinds, ["text_search"]);
+  assert.ok(!("error" in out));
+  if (!("error" in out)) {
+    assert.equal(out.places[0].provider_place_id, "ChTX");
+    assert.equal(out.calls.geocode, 0);
+  }
+});

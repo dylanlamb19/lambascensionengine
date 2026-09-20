@@ -249,7 +249,7 @@ export function whyConsider(p: Prospect): string {
   if (p.google_rating && p.google_rating !== "UNKNOWN") bits.push(`Public rating: ${p.google_rating}.`);
   if (p.website_note) bits.push(p.website_note);
   else if (p.research_status === "blocked") {
-    bits.push("We couldn't inspect their website, but we still have public listing information.");
+    bits.push("Website research unavailable. Public listing information is still kept.");
   } else if (p.research_status === "failed") {
     bits.push("Website research failed, so we only know the public listing facts above.");
   } else if (p.research_status === "complete" || p.research_status === "partial") {
@@ -342,16 +342,15 @@ export function explainCompany(p: Prospect): string {
 }
 
 export function nextStepLabel(p: Prospect): string {
-  if (p.stage === "Approved for Outreach") return "You already approved them. Next you send a note yourself (sending from the app is still off).";
+  if (p.stage === "Approved for Outreach") return "You already approved them. Draft outreach next — nothing sends until you confirm.";
   const named = (p.contacts || []).filter((c) => c.name && c.name !== "UNKNOWN");
-  if (p.readiness === "NOT ENOUGH INFORMATION" || p.readiness === "LOW PRIORITY") {
-    return "We don’t have enough to make Approve the main action. Press Research further, or Skip.";
+  const email = (p.contacts || []).some((c) => c.email && c.email.includes("@") && c.email_status !== "none");
+  if (named.length || email) return "Draft outreach — nothing sends until you approve.";
+  if (p.research_status === "blocked" || p.research_status === "failed") {
+    return "Website research unavailable. Find a decision maker from the listing phone or website, or skip. Do not invent an email.";
   }
-  if (!named.length && (p.research_status === "blocked" || p.research_status === "failed")) {
-    return "Website failed, but public listing facts remain. Research further before you spend time on outreach — or Skip.";
-  }
-  if (named.length) return `If they look right, approve outreach to ${named[0].name}.`;
-  return "Approve if you want to talk. Skip if they’re not worth your time. Research further if you want another pass at contacts.";
+  if (!named.length) return "Find decision maker. You can still open the website or call the listing number.";
+  return "Approve if you want to talk. Skip if they’re not worth your time.";
 }
 
 export function approveIsPrimary(p: Prospect): boolean {

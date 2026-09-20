@@ -37,6 +37,7 @@ test("low score skips hunter even if fetch works", async () => {
   assert.equal(out.hunter_ran, false);
   assert.match(out.hunter_skipped_reason, /Skipped paid contact/i);
   assert.equal(out.facts.find((f) => f.key === "revenue")?.value, "UNKNOWN");
+  assert.ok(out.findings.some((f) => f.id === "contact_form"));
 });
 
 test("website block still returns listing facts and a fallback sentence", async () => {
@@ -49,9 +50,10 @@ test("website block still returns listing facts and a fallback sentence", async 
     caps,
     async () => ({ ok: false, blocked: true, status: 403, final_url: "https://firefighterroofing.com/", html: "", error: "blocked" }),
   );
-  assert.match(out.website_note, /couldn't inspect their website/i);
+  assert.match(out.website_note, /Website research unavailable/i);
   assert.equal(out.facts.find((f) => f.key === "review_count")?.value, "400");
   assert.equal(out.contacts.length, 0);
+  assert.ok(out.findings.some((f) => f.id === "resolves"));
 });
 
 test("extracts a published owner from HTML, does not invent email", () => {

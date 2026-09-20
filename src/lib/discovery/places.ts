@@ -155,24 +155,31 @@ export async function searchText(opts: {
   minRating: number;
   reserve: ReserveFn;
   fetchImpl?: FetchLike;
+  textQuery?: string;
+  skipGeocode?: boolean;
+  collect?: number;
 }): Promise<{ places: PlaceHit[]; calls: { geocode: number; text_search: number } } | { error: PlacesError; calls: { geocode: number; text_search: number } }> {
   const fetchImpl = opts.fetchImpl || fetch;
   const spec = VERTICAL_QUERY[opts.vertical] || { query: opts.vertical, includedType: "", job: 5000 };
   const calls = { geocode: 0, text_search: 0 };
+  const want = Math.min(20, Math.max(opts.limit, Math.min(opts.collect || opts.limit, 20)));
 
-  const geoReserve = await opts.reserve("geocode");
-  if (!geoReserve.ok) {
-    return { error: { code: "quota", message: geoReserve.reason }, calls };
+  let bias: { lat: number; lng: number } | null = null;
+  if (!opts.skipGeocode) {
+    const geoReserve = await opts.reserve("geocode");
+    if (!geoReserve.ok) {
+      return { error: { code: "quota", message: geoReserve.reason }, calls };
+    }
+    calls.geocode += 1;
+    const geo = await geocode(opts.location, opts.apiKey, fetchImpl);
+    bias = "error" in geo ? null : geo;
   }
-  calls.geocode += 1;
-  const geo = await geocode(opts.location, opts.apiKey, fetchImpl);
-  const bias = "error" in geo ? null : geo;
   const collected: Record<string, unknown>[] = [];
   let pageToken: string | undefined;
   let pages = 0;
-  const textQuery = `${spec.query} in ${opts.location}`;
+  const textQuery = (opts.textQuery || `${spec.query} in ${opts.location}`).trim();
 
-  while (collected.length < opts.limit && pages < 5) {
+  while (collected.length < want && pages < 5) {
     const pageReserve = await opts.reserve("text_search");
     if (!pageReserve.ok) {
       if (!collected.length) return { error: { code: "quota", message: pageReserve.reason }, calls };
@@ -184,7 +191,7 @@ export async function searchText(opts: {
       textQuery,
       regionCode: "US",
       languageCode: "en",
-      maxResultCount: Math.min(20, opts.limit - collected.length),
+      maxResultCount: Math.min(20, want - collected.length),
     };
     if (bias) {
       body.locationBias = { circle: { center: { latitude: bias.lat, longitude: bias.lng }, radius: Math.max(1000, opts.radiusM) } };
@@ -220,7 +227,7 @@ export async function searchText(opts: {
     if (!pageToken || !batch.length) break;
   }
 
-  const hits = collected.slice(0, opts.limit).map((raw) => normalizePlace(raw, opts.vertical, opts.location)).filter((h) => h.provider_place_id);
+  const hits = collected.map((raw) => normalizePlace(raw, opts.vertical, opts.location)).filter((h) => h.provider_place_id);
   if (!hits.length) return { error: { code: "zero", message: "No real businesses came back for that search. We did not invent any." }, calls };
   return { places: hits, calls };
 }

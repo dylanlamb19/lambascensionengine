@@ -75,4 +75,5 @@ export type DeepResult = {
   pages_fetched: number;
   readiness_why: string[];
   company_kind: string;
+  findings: import("../review-brief.ts").Finding[];
 };

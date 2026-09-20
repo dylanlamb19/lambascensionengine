@@ -50,7 +50,7 @@ test("Firefighter blocked: no invented opportunities or offer", () => {
   assert.equal(recommendOffer(f).name, "Unknown");
   const why = whyConsider(f);
   assert.match(why, /400 public reviews/);
-  assert.match(why, /couldn't inspect their website/i);
+  assert.match(why, /Website research unavailable/i);
 });
 
 test("explain is company-specific and does not invent budget", () => {

@@ -124,6 +124,18 @@ export function contactFields(p: Prospect): ContactField[] {
   out.push(profile?.profile_url
     ? { label: "Profile", value: profile.profile_url, status: /hunter/i.test(profile.source) ? "ENRICHED" : "FOUND PUBLICLY", source: profile.source }
     : { label: "Profile", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  const form = (p.findings || []).find((f) =>
+    (f.id === "contact_form" || f.id === "contact_form_inner")
+    && f.status === "VERIFIED"
+    && !/^(no |missing)/i.test(f.result || ""),
+  );
+  out.push(form
+    ? { label: "Contact form", value: "Observed on their website", status: "FOUND PUBLICLY", source: form.source || "website HTML" }
+    : { label: "Contact form", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  const li = (p.socials || []).find((s) => s.network === "linkedin");
+  out.push(li
+    ? { label: "Company LinkedIn", value: li.url, status: "FOUND PUBLICLY", source: li.source }
+    : { label: "Company LinkedIn", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
   return out;
 }
 
@@ -157,10 +169,10 @@ export function reachTone(kind: ReachKind): "good" | "warn" | "bad" {
 
 export function whySurfaced(p: Prospect): string {
   if (p.research_status === "blocked") {
-    return "Website research didn’t finish (the site blocked our check), but we still have public listing facts. We did not invent an audit.";
+    return "Website research unavailable (the site blocked our check). Public listing facts remain. We did not invent an audit.";
   }
   if (p.research_status === "failed") {
-    return "Website research didn’t finish (timeout or error), but public listing facts remain. We did not invent findings.";
+    return "Website research unavailable (timeout or error). Public listing facts remain. We did not invent findings.";
   }
   if (p.research_status === "queued" || p.research_status === "none" || !p.research_status) {
     return "They’re on your list. We haven’t opened their website yet.";
