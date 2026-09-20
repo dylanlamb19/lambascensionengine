@@ -53,6 +53,7 @@ import {
   type NavFrame,
 } from "@/lib/voice/desk-actions";
 import { createAraSessionFn, logVoiceAuditFn } from "@/lib/voice/ara-session";
+import { voiceFailureReason } from "@/lib/voice/voice-failure";
 import { makeVoiceAudit } from "@/lib/voice/audit";
 import { araWebResearchFn } from "@/lib/voice/web-research/actions";
 import { wrapUntrustedWeb } from "@/lib/voice/web-research/parse";
@@ -1435,7 +1436,7 @@ export function OwnerDesk() {
       const ses = await createAraSessionFn();
       if (araGen.current !== gen) return;
       if (!ses.ok) {
-        setAraErr(ses.reason || "Ara's voice isn't available right now.");
+        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
         setVoiceUnavailable(true);
         setAraStatus("unavailable");
         return;
@@ -1488,13 +1489,13 @@ export function OwnerDesk() {
           return hydrateAraOutput(name, result);
         },
         onError: (plain) => {
-          if (/microphone/i.test(plain || "")) {
+          if (/microphone|MIC_BLOCKED/i.test(plain || "")) {
             setAraStatus("mic_needed");
             setVoiceListening(false);
-            setAraErr(plain);
+            setAraErr(plain || voiceFailureReason("MIC_BLOCKED"));
             return;
           }
-          setAraErr(plain || "Ara's voice isn't available right now.");
+          setAraErr(plain || voiceFailureReason("WEBSOCKET_FAILED"));
           setVoiceUnavailable(true);
           setAraStatus("unavailable");
         },
@@ -1508,8 +1509,36 @@ export function OwnerDesk() {
       client.setMuted(voiceMuted);
     } catch {
       if (araGen.current !== gen) return;
-      setAraErr("Ara's voice isn't available right now.");
+      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
       setVoiceUnavailable(true);
+      setAraStatus("unavailable");
+    }
+  }
+
+  async function reconnectAraVoice() {
+    setVoiceUnavailable(false);
+    setAraErr("");
+    setAraStatus("connecting");
+    unlockAraOutput();
+    araSpeech().unlock();
+    if (voiceMode === "conversation") {
+      void startAra();
+      return;
+    }
+    try {
+      const ses = await createAraSessionFn();
+      if (!ses.ok) {
+        setVoiceUnavailable(true);
+        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
+        setAraStatus("unavailable");
+        return;
+      }
+      setVoiceUnavailable(false);
+      setAraErr("");
+      setAraStatus("ready");
+    } catch {
+      setVoiceUnavailable(true);
+      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
       setAraStatus("unavailable");
     }
   }
@@ -2247,16 +2276,7 @@ export function OwnerDesk() {
             voiceUnavailable={voiceUnavailable}
             outputSpeaking={outputSpeaking || araStatus === "speaking"}
             onEnableMic={() => { void enableMicrophone(); }}
-            onReconnectVoice={() => {
-              setVoiceUnavailable(false);
-              setAraErr("");
-              araSpeech().unlock();
-              if (voiceMode === "conversation") void startAra();
-              else {
-                const last = liveRef.current.voiceReply;
-                if (last) utter(last, "SCREEN_READER");
-              }
-            }}
+            onReconnectVoice={() => { void reconnectAraVoice(); }}
             onReadPage={() => {
               const brief = buildScreenContext(currentDesk(), deskWorld());
               const text = readScreen(brief, "page");

@@ -4,14 +4,14 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { ARA_UNAVAILABLE } from "./ara-context";
 import { publicAraSessionPayload } from "./ara-token";
+import { voiceFailure } from "./voice-failure";
 
 export const createAraSessionFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const apiKey = process.env.XAI_API_KEY?.trim();
-    if (!apiKey) return { ok: false as const, reason: ARA_UNAVAILABLE };
+    if (!apiKey) return voiceFailure("XAI_KEY_MISSING");
     try {
       const res = await fetch("https://api.x.ai/v1/realtime/client_secrets", {
         method: "POST",
@@ -24,20 +24,19 @@ export const createAraSessionFn = createServerFn({ method: "POST" })
           session: { model: "grok-voice-latest" },
         }),
       });
-      if (!res.ok) return { ok: false as const, reason: ARA_UNAVAILABLE };
+      if (!res.ok) return voiceFailure("SESSION_CREATE_FAILED");
       const body = (await res.json()) as { value?: string; expires_at?: number };
       const pub = publicAraSessionPayload(body, apiKey);
-      if (pub.ok) {
-        try {
-          const { logActivity } = await import("@/lib/prospects/repo.server");
-          await logActivity(context.userId, "ara_session", "Ara voice session started", undefined, "VOICE");
-        } catch {
-          /* audit must not block talking to Ara */
-        }
+      if (!pub.ok) return voiceFailure("SESSION_CREATE_FAILED");
+      try {
+        const { logActivity } = await import("@/lib/prospects/repo.server");
+        await logActivity(context.userId, "ara_session", "Ara voice session started", undefined, "VOICE");
+      } catch {
+        /* audit must not block talking to Ara */
       }
       return pub;
     } catch {
-      return { ok: false as const, reason: ARA_UNAVAILABLE };
+      return voiceFailure("SESSION_CREATE_FAILED");
     }
   });
 

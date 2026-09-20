@@ -4,7 +4,8 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { ARA_UNAVAILABLE, ARA_VOICE } from "./ara-context";
+import { ARA_VOICE } from "./ara-context";
+import { voiceFailure } from "./voice-failure";
 
 const MAX_CHARS = 1800;
 const TTS_URL = "https://api.x.ai/v1/tts";
@@ -14,11 +15,9 @@ export const speakAraFn = createServerFn({ method: "POST" })
   .validator((data: { text: string; source?: string }) => data)
   .handler(async ({ data }) => {
     const apiKey = process.env.XAI_API_KEY?.trim();
-    if (!apiKey) {
-      return { ok: false as const, reason: "Ara's voice isn't available right now." };
-    }
+    if (!apiKey) return voiceFailure("XAI_KEY_MISSING");
     const text = (data.text || "").replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
-    if (!text) return { ok: false as const, reason: "Nothing to read." };
+    if (!text) return { ok: false as const, code: "PROVIDER_ERROR" as const, reason: "Nothing to read." };
     try {
       const res = await fetch(TTS_URL, {
         method: "POST",
@@ -33,9 +32,7 @@ export const speakAraFn = createServerFn({ method: "POST" })
           output_format: { codec: "pcm", sample_rate: 24000 },
         }),
       });
-      if (!res.ok) {
-        return { ok: false as const, reason: ARA_UNAVAILABLE };
-      }
+      if (!res.ok) return voiceFailure("PROVIDER_ERROR");
       const buf = Buffer.from(await res.arrayBuffer());
       return {
         ok: true as const,
@@ -47,6 +44,6 @@ export const speakAraFn = createServerFn({ method: "POST" })
         speech_source: data.source || "SCREEN_ANNOUNCEMENT",
       };
     } catch {
-      return { ok: false as const, reason: "Ara's voice isn't available right now." };
+      return voiceFailure("PROVIDER_ERROR");
     }
   });

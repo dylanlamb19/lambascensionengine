@@ -1,5 +1,6 @@
 import { isAllowedTool, type AraDeskContext } from "./tools.ts";
-import { ARA_UNAVAILABLE, sessionUpdatePayload } from "./ara-context.ts";
+import { sessionUpdatePayload } from "./ara-context.ts";
+import { voiceFailureReason } from "./voice-failure.ts";
 import { araSpeech } from "./speech-controller.ts";
 import { micStreamLive, stopMicStream } from "./mic.ts";
 
@@ -120,7 +121,7 @@ export class AraRealtime {
       else this.handlers.onStatus("ready");
     };
     ws.onerror = () => {
-      if (!this.closed) this.handlers.onError(ARA_UNAVAILABLE);
+      if (!this.closed) this.handlers.onError(voiceFailureReason("WEBSOCKET_FAILED"));
       this.handlers.onStatus("unavailable");
       araSpeech().setSession(false);
     };
@@ -129,7 +130,7 @@ export class AraRealtime {
       araSpeech().setSession(false);
       if (!this.closed) {
         this.handlers.onStatus("unavailable");
-        this.handlers.onError(ARA_UNAVAILABLE);
+        this.handlers.onError(voiceFailureReason("WEBSOCKET_FAILED"));
       }
     };
     ws.onmessage = (ev) => {
@@ -174,7 +175,7 @@ export class AraRealtime {
       }
       if (!micStreamLive(this.stream)) {
         this.handlers.onMic?.(false, "Microphone permission is needed to talk to Ara.");
-        this.handlers.onError("Microphone permission is needed to talk to Ara. Buttons still work.");
+        this.handlers.onError(voiceFailureReason("MIC_BLOCKED"));
         return false;
       }
       this.recCtx = new AudioContext();
@@ -241,7 +242,7 @@ export class AraRealtime {
   private async onEvent(ev: Record<string, unknown>) {
     const type = String(ev.type || "");
     if (type === "error") {
-      this.handlers.onError(ARA_UNAVAILABLE);
+      this.handlers.onError(voiceFailureReason("PROVIDER_ERROR"));
       this.handlers.onStatus("unavailable");
       return;
     }

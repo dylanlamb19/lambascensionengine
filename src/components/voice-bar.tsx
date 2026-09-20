@@ -168,7 +168,11 @@ export function VoiceBar({
       data-mic-permission={micPermission}
       data-voice-provider="xAI"
       data-voice-name="Ara"
+      data-voice-session-ready={voiceSessionReady ? "1" : "0"}
+      data-mic-stream-active={micStreamActive ? "1" : "0"}
+      data-output-audio={outputSpeaking ? "1" : "0"}
       data-browser-tts="0"
+      data-browser-tts-active="0"
     >
       <div className="la-ara-row">
         <button type="button" className="la-ara-id" aria-label="Ara">
@@ -229,7 +233,7 @@ export function VoiceBar({
       ) : null}
       {voiceUnavailable ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-sm text-muted">Ara's voice isn't available right now.</p>
+          <p className="text-sm text-muted">{araError || "Ara's voice isn't available right now."}</p>
           {onReconnectVoice ? (
             <button type="button" className="la-btn la-btn-primary" onClick={() => { unlockAraOutput(); araSpeech().unlock(); onReconnectVoice(); }}>
               Reconnect Ara Voice
