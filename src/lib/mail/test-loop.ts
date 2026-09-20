@@ -3,6 +3,8 @@
 export const TEST_WORKFLOW_UID = "test-sales-flow";
 export const TEST_UID = TEST_WORKFLOW_UID;
 export const TEST_RECORD_NAME = "TEST • Outreach Automation Verification";
+/** Parameterized LIKE for TEST run uids. Exact `test-sales-flow` is matched separately. */
+export const TEST_UID_LIKE = `${TEST_WORKFLOW_UID}:%`;
 
 /** Short delay so a closed-browser worker tick can be observed. Real prospects keep 3/7/12 day gaps. */
 export const TEST_FOLLOWUP_SHORT_MS = 8 * 60 * 1000;
@@ -19,8 +21,43 @@ export type TestLoopFailureCode =
   | "FOLLOWUP_CANCEL_FAILED"
   | "NOT_ALLOWLISTED";
 
-export function isTestWorkflowUid(uid: string | null | undefined): boolean {
-  return uid === TEST_WORKFLOW_UID;
+export function isTestWorkflowUid(uid: string | null | undefined): uid is string {
+  if (!uid) return false;
+  return uid === TEST_WORKFLOW_UID || uid.startsWith(`${TEST_WORKFLOW_UID}:`);
+}
+
+export function newTestRunId(): string {
+  const raw = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `r${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`;
+  return raw.replace(/-/g, "").slice(0, 16);
+}
+
+export function testRunUid(runId: string): string {
+  return `${TEST_WORKFLOW_UID}:${runId}`;
+}
+
+/** Stable within a run. Unique across runs. Never a timestamp (double-click safe). */
+export function testFollowupIdempotencyKey(
+  userId: string,
+  runUid: string,
+  step: "followup1" | "followup2",
+): string {
+  return `${userId}:${runUid}:${step}`;
+}
+
+export function isUnusedTestRun(state: {
+  prospect_uid?: string | null;
+  message_id?: string | null;
+  sequence_id?: string | null;
+}): boolean {
+  return isTestWorkflowUid(state.prospect_uid) && !state.message_id && !state.sequence_id;
+}
+
+/** Only TEST scheduled/sending rows. Never real prospects, never sent/failed/cancelled. */
+export function shouldCancelOnTestReset(opts: { prospectUid: string; status: string }): boolean {
+  if (!isTestWorkflowUid(opts.prospectUid)) return false;
+  return opts.status === "scheduled" || opts.status === "sending";
 }
 
 export type TestLoopState = {

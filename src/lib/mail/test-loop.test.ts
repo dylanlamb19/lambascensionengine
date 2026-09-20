@@ -17,6 +17,7 @@ import {
 
 test("test workflow uid is isolated from real prospects", () => {
   assert.equal(isTestWorkflowUid(TEST_WORKFLOW_UID), true);
+  assert.equal(isTestWorkflowUid("test-sales-flow:run1"), true);
   assert.equal(isTestWorkflowUid("company-a"), false);
   assert.equal(isTestWorkflowUid(""), false);
 });
@@ -180,7 +181,7 @@ test("initial test send uses a stable idempotency key, not a timestamp", async (
   assert.match(src, /sequenceId: "initial"/);
   assert.doesNotMatch(src, /testrun-\$\{Date\.now/);
   assert.equal(idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"), idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"));
-  assert.notEqual(idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"), idempotencyKey("u", TEST_WORKFLOW_UID, "email", `testrun-${Date.now()}`));
+  assert.notEqual(idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"), idempotencyKey("u", "test-sales-flow:runB", "email", "initial"));
 });
 
 test("TEST record is excluded from revenue and Home prospect lists", async () => {
@@ -219,8 +220,25 @@ test("TEST record is excluded from revenue and Home prospect lists", async () =>
       fit: "possible",
       stage: "Contacted",
     } as never,
+    {
+      id: 3,
+      uid: "test-sales-flow:run_x",
+      name: TEST_RECORD_NAME,
+      vertical: "Internal test",
+      city: "Test Mode",
+      website: "",
+      review_count: 0,
+      google_rating: "UNKNOWN",
+      phone: "UNKNOWN",
+      job_value_est: 0,
+      job_value_kind: "UNKNOWN",
+      score: 0,
+      fit: "possible",
+      stage: "Call Booked",
+    } as never,
   ]);
   assert.equal(snap.contacted, 1);
+  assert.equal(snap.calls, 0);
   const { readFileSync } = await import("node:fs");
   const { dirname, join } = await import("node:path");
   const { fileURLToPath } = await import("node:url");
@@ -230,4 +248,5 @@ test("TEST record is excluded from revenue and Home prospect lists", async () =>
   assert.match(ui, /Recipient: \{preview\.recipient\}/);
   assert.match(ui, /followPreview/);
   assert.match(ui, /worker claimed follow-up/);
+  assert.match(ui, /Reset test flow/);
 });

@@ -18,6 +18,8 @@ import {
   audit,
   loadWorkerHeartbeat,
   loadTestLoop,
+  inspectTestFlow,
+  cancelPendingTestFollowups,
 } from "./sql.server";
 import { getProspectByUid, upsertProspects } from "@/lib/prospects/repo.server";
 import {
@@ -40,8 +42,13 @@ import {
   TEST_RECORD_NAME,
   TEST_UID,
   TEST_WORKFLOW_UID,
+  isTestWorkflowUid,
+  isUnusedTestRun,
+  newTestRunId,
   testEmailCopy,
+  testFollowupIdempotencyKey,
   testLoopSpeech,
+  testRunUid,
   type TestLoopState,
 } from "./test-loop";
 
@@ -92,12 +99,12 @@ export async function connectionTest(userId: string) {
   return { session, gmailToken, gmailIdentity, calendarToken, calendarIdentity, calendarFreeBusy, worker, integration };
 }
 
-function testProspect(email: string): Prospect {
+function testProspect(email: string, uid: string): Prospect {
   const now = new Date().toISOString();
   const copy = testEmailCopy(email);
   return {
     id: 900001,
-    uid: TEST_UID,
+    uid,
     name: TEST_RECORD_NAME,
     vertical: "Internal test",
     city: "Test Mode",
@@ -276,6 +283,46 @@ export async function updateTestMode(userId: string, data: { testMode?: boolean;
   return testSettingsView(userId);
 }
 
+export async function resetTestFlow(userId: string) {
+  const settings = await loadSettings(userId);
+  const inspected = await inspectTestFlow(userId);
+  const previousUid = inspected.prospectUid;
+  const { cancelled, stoppedSequences } = await cancelPendingTestFollowups(userId);
+  const runId = newTestRunId();
+  const runUid = testRunUid(runId);
+  await audit(userId, "TEST_FLOW_RESET", `cancelled_pending=${cancelled} stopped_sequences=${stoppedSequences} previous=${previousUid || "none"} next=${runUid} sent=0`, {
+    prospectUid: runUid,
+    method: "MANUAL",
+  });
+  await saveTestState(userId, {
+    prospect_uid: runUid,
+    message_id: null,
+    thread_id: null,
+    sequence_id: null,
+    followups_before: 0,
+    reply_count: 0,
+    followups_after: null,
+    booking_token: null,
+    event_id: null,
+    slots_offered: 0,
+    pipeline_stage: null,
+    step: 1,
+  });
+  const view = await testSettingsView(userId);
+  return {
+    ...view,
+    ok: true as const,
+    sent: 0 as const,
+    cancelledFollowups: cancelled,
+    stoppedSequences,
+    previousUid,
+    runId,
+    runUid,
+    inspected,
+    testMode: settings.testMode,
+  };
+}
+
 export async function chooseTestRecipient(userId: string, recipient: string) {
   const settings = await loadSettings(userId);
   if (!settings.testMode) return { ok: false as const, reason: "Turn Test Mode on to run the live sales test." };
@@ -284,11 +331,17 @@ export async function chooseTestRecipient(userId: string, recipient: string) {
   if (!settings.allowlist.includes(email)) {
     return { ok: false as const, reason: "Add that address to the test allowlist in Settings first. Nothing was sent." };
   }
-  const prospect = testProspect(email);
+  const current = await loadTestState(userId);
+  let runUid = current.prospect_uid;
+  if (!isUnusedTestRun(current) || !isTestWorkflowUid(runUid)) {
+    const reset = await resetTestFlow(userId);
+    runUid = reset.runUid;
+  }
+  const prospect = testProspect(email, runUid!);
   await upsertProspects(userId, [prospect]);
-  await audit(userId, "test_workflow_created", `TEST • Outreach Automation Verification for ${email}`, { prospectUid: TEST_UID, method: "MANUAL" });
-  await audit(userId, "test_draft_created", `Prepared TEST outreach to ${email}`, { prospectUid: TEST_UID, method: "MANUAL" });
-  const state = await saveTestState(userId, { recipient: email, prospect_uid: TEST_UID, step: 2, pipeline_stage: prospect.stage });
+  await audit(userId, "test_workflow_created", `TEST • Outreach Automation Verification for ${email}`, { prospectUid: runUid!, method: "MANUAL" });
+  await audit(userId, "test_draft_created", `Prepared TEST outreach to ${email}`, { prospectUid: runUid!, method: "MANUAL" });
+  const state = await saveTestState(userId, { recipient: email, prospect_uid: runUid!, step: 2, pipeline_stage: prospect.stage });
   const first = prospect.outreach?.messages.find((m) => m.kind === "email");
   const follow = prospect.outreach?.messages.find((m) => m.kind === "followup1");
   return {
@@ -304,7 +357,9 @@ export async function confirmTestSend(userId: string) {
   const settings = await loadSettings(userId);
   const state = await loadTestState(userId);
   if (!settings.testMode) return { ok: false as const, reason: "Test Mode is off.", code: "INITIAL_SEND_FAILED" as const };
-  const prospect = await getProspectByUid(userId, state.prospect_uid || TEST_UID);
+  const runUid = state.prospect_uid;
+  if (!isTestWorkflowUid(runUid)) return { ok: false as const, reason: "Choose a test recipient first.", code: "INITIAL_SEND_FAILED" as const };
+  const prospect = await getProspectByUid(userId, runUid);
   if (!prospect) return { ok: false as const, reason: "Choose a test recipient first.", code: "INITIAL_SEND_FAILED" as const };
   const email = prospect.outreach?.messages.find((m) => m.kind === "email");
   if (!email) return { ok: false as const, reason: "There is no test email to send.", code: "INITIAL_SEND_FAILED" as const };
@@ -315,7 +370,7 @@ export async function confirmTestSend(userId: string) {
   if (state.message_id && state.thread_id) {
     return { ok: true as const, messageId: state.message_id, threadId: state.thread_id, state };
   }
-  await audit(userId, "initial_send_approved", `Confirm send to ${state.recipient}`, { prospectUid: TEST_UID, method: "MANUAL" });
+  await audit(userId, "initial_send_approved", `Confirm send to ${state.recipient}`, { prospectUid: runUid, method: "MANUAL" });
   const copy = testEmailCopy(state.recipient);
   const sent = await sendLive({
     userId,
@@ -331,7 +386,7 @@ export async function confirmTestSend(userId: string) {
   if (!sent.ok) {
     if (sent.code === "DUPLICATE") {
       const { lastSentIds } = await import("./sql.server");
-      const existing = await lastSentIds(userId, TEST_UID);
+      const existing = await lastSentIds(userId, runUid);
       if (existing?.messageId) {
         const next = await saveTestState(userId, {
           message_id: existing.messageId,
@@ -364,7 +419,7 @@ export async function confirmTestSend(userId: string) {
     pipeline_stage: prospect.stage,
   });
   await audit(userId, "initial_send_result", `sent message=${sent.messageId}`, {
-    prospectUid: TEST_UID,
+    prospectUid: runUid,
     method: "MANUAL",
     providerIds: sent.messageId,
   });
@@ -373,28 +428,42 @@ export async function confirmTestSend(userId: string) {
 
 export async function approveTestFollowup(userId: string) {
   const state = await loadTestState(userId);
-  const prospect = await getProspectByUid(userId, state.prospect_uid || TEST_UID);
-  if (!prospect || !state.message_id) {
+  const runUid = state.prospect_uid;
+  if (!isTestWorkflowUid(runUid) || !state.message_id) {
     return { ok: false as const, reason: "Send the test email first.", code: "FOLLOWUP_SCHEDULE_FAILED" as const };
+  }
+  const prospect = await getProspectByUid(userId, runUid);
+  if (!prospect) {
+    return { ok: false as const, reason: "Send the test email first.", code: "FOLLOWUP_SCHEDULE_FAILED" as const };
+  }
+  if (state.sequence_id) {
+    const pending = await countScheduledFollowups(userId, runUid);
+    return {
+      ok: true as const,
+      sequenceId: state.sequence_id,
+      pending,
+      dueAt: "",
+      remainingDueAt: "",
+      state,
+    };
   }
   const copy = testEmailCopy(state.recipient);
   const f1 = prospect.outreach?.messages.find((m) => m.kind === "followup1");
   const f2 = prospect.outreach?.messages.find((m) => m.kind === "followup2");
-  const threadId = (await lastThread(userId, TEST_UID)) || state.thread_id;
+  const threadId = (await lastThread(userId, runUid)) || state.thread_id;
   if (!threadId) {
     return { ok: false as const, reason: "No Gmail thread to attach the follow-up to.", code: "THREAD_MATCH_FAILED" as const };
   }
   const now = Date.now();
   const dueShort = now + TEST_FOLLOWUP_SHORT_MS;
   const dueLater = now + TEST_FOLLOWUP_REMAINING_MS;
-  const stamp = String(now);
   let id: string;
   try {
-    id = await saveSequence(userId, TEST_UID, "MANUAL", [
+    id = await saveSequence(userId, runUid, "MANUAL", [
       {
         step: "followup1",
         dueAt: dueShort,
-        idempotencyKey: `${userId}:${TEST_UID}:followup1:${stamp}`,
+        idempotencyKey: testFollowupIdempotencyKey(userId, runUid, "followup1"),
         body: f1?.body || copy.followup1,
         subject: f1?.subject || `Re: ${copy.subject}`,
         recipient: state.recipient,
@@ -403,7 +472,7 @@ export async function approveTestFollowup(userId: string) {
       {
         step: "followup2",
         dueAt: dueLater,
-        idempotencyKey: `${userId}:${TEST_UID}:followup2:${stamp}`,
+        idempotencyKey: testFollowupIdempotencyKey(userId, runUid, "followup2"),
         body: f2?.body || copy.followup2,
         subject: f2?.subject || `Re: ${copy.subject}`,
         recipient: state.recipient,
@@ -411,12 +480,24 @@ export async function approveTestFollowup(userId: string) {
       },
     ]);
   } catch {
+    const pending = await countScheduledFollowups(userId, runUid);
+    if (pending > 0) {
+      const next = await saveTestState(userId, { followups_before: pending, step: 6 });
+      return {
+        ok: true as const,
+        sequenceId: state.sequence_id || "",
+        pending,
+        dueAt: new Date(dueShort).toISOString(),
+        remainingDueAt: new Date(dueLater).toISOString(),
+        state: next,
+      };
+    }
     return { ok: false as const, reason: "Could not freeze the test follow-up schedule.", code: "FOLLOWUP_SCHEDULE_FAILED" as const };
   }
-  const pending = await countScheduledFollowups(userId, TEST_UID);
+  const pending = await countScheduledFollowups(userId, runUid);
   const next = await saveTestState(userId, { sequence_id: id, followups_before: pending, step: 6 });
   await audit(userId, "followup_approved", `short due ${new Date(dueShort).toISOString()}; remaining due ${new Date(dueLater).toISOString()}`, {
-    prospectUid: TEST_UID,
+    prospectUid: runUid,
     method: "MANUAL",
     sequenceId: id,
   });
@@ -434,7 +515,7 @@ export async function syncTestReplies(userId: string) {
   const state = await loadTestState(userId);
   try {
     const result = await syncRepliesForUser(userId);
-    const pending = await countScheduledFollowups(userId, state.prospect_uid || TEST_UID);
+    const pending = await countScheduledFollowups(userId, isTestWorkflowUid(state.prospect_uid) ? state.prospect_uid! : TEST_UID);
     if (result.replies > 0 && pending > 0) {
       return {
         ok: false as const,
@@ -457,7 +538,7 @@ export async function syncTestReplies(userId: string) {
 
 export async function testBookingLink(userId: string, origin: string) {
   const state = await loadTestState(userId);
-  const uid = state.prospect_uid || TEST_UID;
+  const uid = isTestWorkflowUid(state.prospect_uid) ? state.prospect_uid! : TEST_UID;
   const prospect = await getProspectByUid(userId, uid);
   if (!prospect) return { ok: false as const, reason: "Choose a test recipient first." };
   const tokens = await accessFor(userId, "calendar");

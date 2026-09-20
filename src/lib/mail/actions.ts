@@ -537,6 +537,17 @@ export const approveTestFollowupFn = createServerFn({ method: "POST" })
     return approveTestFollowup(context.userId);
   });
 
+export const resetTestFlowFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { confirm?: boolean }) => data)
+  .handler(async ({ data, context }) => {
+    if (data.confirm !== true) {
+      return { ok: false as const, reason: "Confirmation required. Nothing was changed." };
+    }
+    const { resetTestFlow } = await import("./test-flow.server");
+    return resetTestFlow(context.userId);
+  });
+
 export const syncTestRepliesFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {

@@ -3,6 +3,7 @@ import { decryptSecret, encryptSecret } from "./crypto";
 import { mintOauthState, type OauthKind, type OauthStateRecord } from "./oauth-state";
 import type { GoogleTokens } from "../google/oauth";
 import { newUid } from "../prospects/ids";
+import { TEST_UID_LIKE, TEST_WORKFLOW_UID, isTestWorkflowUid } from "./test-loop";
 
 export async function saveOauthState(userId: string, kind: OauthKind): Promise<OauthStateRecord> {
   const rec = mintOauthState(userId, kind);
@@ -302,10 +303,10 @@ export async function lastSentIds(userId: string, prospectUid: string): Promise<
 
 export async function salesCounts(userId: string): Promise<{ ready: number; followups: number; replies: number; calls: number }> {
   const sql = await getSql();
-  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false and uid <> ${"test-sales-flow"}`;
-  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled' and prospect_uid <> ${"test-sales-flow"}`;
-  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId} and r.prospect_uid <> ${"test-sales-flow"}`;
-  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked' and prospect_uid <> ${"test-sales-flow"}`;
+  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false and uid <> ${TEST_WORKFLOW_UID} and uid not like ${TEST_UID_LIKE}`;
+  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled' and prospect_uid <> ${TEST_WORKFLOW_UID} and prospect_uid not like ${TEST_UID_LIKE}`;
+  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId} and r.prospect_uid <> ${TEST_WORKFLOW_UID} and r.prospect_uid not like ${TEST_UID_LIKE}`;
+  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked' and prospect_uid <> ${TEST_WORKFLOW_UID} and prospect_uid not like ${TEST_UID_LIKE}`;
   return {
     ready: Number(ready[0]?.n || 0),
     followups: Number(followups[0]?.n || 0),
@@ -391,6 +392,18 @@ export async function timeline(userId: string, prospectUid: string): Promise<{ a
     order by created_at asc
   `;
   return rows.map((r) => ({ at: r.created_at, action: r.action, detail: r.detail }));
+}
+
+export async function timelineTest(userId: string): Promise<{ at: string; action: string; detail: string }[]> {
+  const sql = await getSql();
+  const rows = await sql<{ created_at: string; action: string; detail: string }>`
+    select created_at, action, detail from outreach_audit
+    where user_id = ${userId}
+      and (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+    order by created_at desc
+    limit 80
+  `;
+  return rows.slice().reverse().map((r) => ({ at: r.created_at, action: r.action, detail: r.detail }));
 }
 
 export async function nextCall(userId: string): Promise<{ prospect_uid: string; start_at: string; title: string } | null> {
@@ -708,11 +721,10 @@ export async function loadTestLoop(userId: string): Promise<{
   trail: { at: string; action: string; detail: string }[];
 }> {
   const { isAllowlisted } = await import("./test-mode");
-  const { TEST_WORKFLOW_UID } = await import("./test-loop");
   const settings = await loadSettings(userId);
   const state = await loadTestState(userId);
   const sql = await getSql();
-  const uid = state.prospect_uid || TEST_WORKFLOW_UID;
+  const uid = isTestWorkflowUid(state.prospect_uid) ? state.prospect_uid! : TEST_WORKFLOW_UID;
   const sentFirst = await sql<{ n: number }>`
     select count(*)::int as n from email_messages
     where user_id = ${userId} and prospect_uid = ${uid} and kind = 'email' and status = 'SENT'
@@ -748,20 +760,106 @@ export async function loadTestLoop(userId: string): Promise<{
     pendingFollowups: Number(pending[0]?.n || 0),
     replyCount: Number(replies[0]?.n || 0),
     sequenceStopped: Number(stopped[0]?.n || 0) > 0,
-    trail: await timeline(userId, uid),
+    trail: await timelineTest(userId),
   };
+}
+
+export type TestFlowInspect = {
+  prospectUid: string | null;
+  recipient: string;
+  messageId: string | null;
+  threadId: string | null;
+  sequenceId: string | null;
+  step: number;
+  followups: { status: string; n: number }[];
+  emails: { status: string; n: number }[];
+  pending: number;
+};
+
+export async function inspectTestFlow(userId: string): Promise<TestFlowInspect> {
+  const state = await loadTestState(userId);
+  const sql = await getSql();
+  const followups = await sql<{ status: string; n: number }>`
+    select status, count(*)::int as n from scheduled_followups
+    where user_id = ${userId}
+      and (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+    group by status
+  `;
+  const emails = await sql<{ status: string; n: number }>`
+    select status, count(*)::int as n from email_messages
+    where user_id = ${userId}
+      and (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+    group by status
+  `;
+  const pending = followups
+    .filter((r) => r.status === "scheduled" || r.status === "sending")
+    .reduce((sum, r) => sum + Number(r.n || 0), 0);
+  return {
+    prospectUid: state.prospect_uid,
+    recipient: state.recipient,
+    messageId: state.message_id,
+    threadId: state.thread_id,
+    sequenceId: state.sequence_id,
+    step: state.step,
+    followups: followups.map((r) => ({ status: r.status, n: Number(r.n || 0) })),
+    emails: emails.map((r) => ({ status: r.status, n: Number(r.n || 0) })),
+    pending,
+  };
+}
+
+export async function cancelPendingTestFollowups(userId: string): Promise<{ cancelled: number; stoppedSequences: number }> {
+  return withSqlTransaction(async (sql) => {
+    const cancelled = await sql<{ id: string; prospect_uid: string; sequence_id: string; step: string }>`
+      update scheduled_followups
+      set status = 'cancelled'
+      where user_id = ${userId}
+        and status in ('scheduled', 'sending')
+        and (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+      returning id, prospect_uid, sequence_id, step
+    `;
+    const stopped = await sql<{ id: string }>`
+      update outreach_sequences
+      set status = 'stopped'
+      where user_id = ${userId}
+        and status = 'active'
+        and (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+      returning id
+    `;
+    for (const row of cancelled) {
+      await sql`
+        insert into outreach_audit (id, user_id, prospect_uid, action, detail, input_method, sequence_id, provider_ids)
+        values (
+          ${newUid()},
+          ${userId},
+          ${row.prospect_uid},
+          ${"TEST_FLOW_RESET"},
+          ${`cancelled ${row.step} — TEST_FLOW_RESET`},
+          ${"MANUAL"},
+          ${row.sequence_id},
+          ${""}
+        )
+      `;
+    }
+    return { cancelled: cancelled.length, stoppedSequences: stopped.length };
+  });
 }
 
 export async function markTestWorkflowSeen(runId: string): Promise<number> {
   const sql = await getSql();
   const rows = await sql<{ user_id: string }>`
     select distinct user_id from scheduled_followups
-    where prospect_uid = ${"test-sales-flow"} and status in ('scheduled','sending','sent','cancelled')
+    where (prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE})
+      and status in ('scheduled','sending','sent','cancelled')
   `;
   const seq = await sql<{ user_id: string }>`
-    select distinct user_id from outreach_sequences where prospect_uid = ${"test-sales-flow"}
+    select distinct user_id from outreach_sequences
+    where prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE}
   `;
-  const users = new Set([...rows, ...seq].map((r) => r.user_id));
+  const stateUsers = await sql<{ user_id: string }>`
+    select distinct user_id from sales_test_state
+    where prospect_uid = ${TEST_WORKFLOW_UID} or prospect_uid like ${TEST_UID_LIKE}
+  `;
+  const users = new Set([...rows, ...seq, ...stateUsers].map((r) => r.user_id));
   const seenAt = new Date().toISOString();
   for (const userId of users) {
     await saveTestState(userId, { worker_run_id: runId, worker_seen_at: seenAt });

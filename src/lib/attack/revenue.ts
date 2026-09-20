@@ -1,5 +1,6 @@
 import type { Prospect } from "../review-brief.ts";
 import type { OwnerGoal, RevenueLane, RevenueSnapshot } from "./types.ts";
+import { isTestWorkflowUid } from "../mail/test-loop.ts";
 
 export function revenueLane(stage: string): RevenueLane | null {
   if (stage === "New" || stage === "Researching") return "researching";
@@ -37,7 +38,7 @@ export function clientsNeeded(goal: OwnerGoal): number | null {
 }
 
 export function revenueSnapshot(rows: Prospect[], goal: OwnerGoal = { monthly_mrr_target: null, average_retainer_target: null }): RevenueSnapshot {
-  const live = rows.filter((p) => !p.suppressed && !p.is_demo && p.uid !== "test-sales-flow");
+  const live = rows.filter((p) => !p.suppressed && !p.is_demo && !isTestWorkflowUid(p.uid));
   const counts: Omit<RevenueSnapshot, "verified_mrr" | "clients_needed" | "goal"> = {
     researching: 0,
     ready: 0,

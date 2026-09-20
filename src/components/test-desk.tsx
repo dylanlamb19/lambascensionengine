@@ -6,6 +6,7 @@ import {
   chooseTestRecipientFn,
   confirmTestSendFn,
   connectionTestFn,
+  resetTestFlowFn,
   saveTestModeFn,
   syncTestRepliesFn,
   testBookingLinkFn,
@@ -59,6 +60,7 @@ const TRAIL_LABEL: Record<string, string> = {
   test_followup_sent: "follow-up sent",
   reply: "inbound reply detected",
   followups_cancelled: "remaining follow-ups cancelled",
+  TEST_FLOW_RESET: "TEST flow reset",
   FOLLOWUP_CANCEL_FAILED: "FOLLOWUP_CANCEL_FAILED",
   UNKNOWN_DELIVERY: "UNKNOWN_DELIVERY",
 };
@@ -109,6 +111,8 @@ export function TestDesk({
   const [googleUrl, setGoogleUrl] = useState("");
   const [calTestMsg, setCalTestMsg] = useState("");
   const [calTestId, setCalTestId] = useState("");
+  const [resetAsk, setResetAsk] = useState(false);
+  const [resetMsg, setResetMsg] = useState("");
 
   async function refresh() {
     const r = await testSettingsFn();
@@ -128,6 +132,7 @@ export function TestDesk({
       });
       setStep(r.state.step || 1);
       if (r.state.message_id) setSendIds({ messageId: r.state.message_id, threadId: r.state.thread_id || undefined });
+      else setSendIds(null);
       if (r.integration) onIntegration?.(r.integration);
       if (r.testLoop) onTestLoop?.(r.testLoop);
       if (r.testLoop?.followupDueAt) setFollowDue(r.testLoop.followupDueAt);
@@ -222,6 +227,38 @@ export function TestDesk({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setDisableErr(/unauthor/i.test(msg) ? "Your session expired. Sign in again." : "Couldn’t disable Test Mode. Please try again.");
+    }
+    setBusy("");
+  }
+
+  async function resetTestFlow() {
+    if (busy === "reset") return;
+    setBusy("reset");
+    setErr("");
+    setResetMsg("");
+    try {
+      const r = await resetTestFlowFn({ data: { confirm: true } });
+      if (!r.ok) {
+        setErr("reason" in r && r.reason ? String(r.reason) : "Could not reset the test flow.");
+      } else {
+        setPreview(null);
+        setFollowPreview(null);
+        setSendIds(null);
+        setFollowMsg("");
+        setFollowDue("");
+        setReplyMsg("");
+        setBookUrl("");
+        setSlots([]);
+        setBooked("");
+        setStageErr("");
+        setStep(1);
+        setResetAsk(false);
+        const cancelled = "cancelledFollowups" in r ? r.cancelledFollowups : 0;
+        setResetMsg(`Test flow reset. ${cancelled} leftover TEST follow-up(s) cancelled. No email was sent.`);
+        await refresh();
+      }
+    } catch {
+      setErr("Could not reset the test flow.");
     }
     setBusy("");
   }
@@ -466,6 +503,23 @@ export function TestDesk({
       <section className="la-card">
         <h3 className="font-display mb-2 text-lg">Guided Test Sales Flow</h3>
         <p className="mb-3 text-sm text-muted">Step {Math.min(step, 11)} of 11. Each green check below requires real evidence.</p>
+        <div className="mb-4 rounded-lg border border-line bg-surface2 p-3">
+          <p className="text-sm font-semibold">Reset test flow</p>
+          <p className="mt-1 text-sm text-muted">Cancels leftover TEST follow-ups only, keeps Test Mode on, and starts a new run. No email is sent. Real prospects are not touched.</p>
+          {resetAsk ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button className="la-btn la-btn-primary" disabled={busy === "reset"} onClick={() => void resetTestFlow()}>
+                {busy === "reset" ? "Resetting…" : "Confirm reset"}
+              </button>
+              <button className="la-btn la-btn-ghost" disabled={busy === "reset"} onClick={() => setResetAsk(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className="la-btn la-btn-ghost mt-2" disabled={busy === "reset"} onClick={() => { setResetAsk(true); setResetMsg(""); }}>
+              Reset test flow
+            </button>
+          )}
+          {resetMsg ? <p className="mt-2 text-sm">{resetMsg}</p> : null}
+        </div>
 
         <p className="text-sm font-semibold">STEP 1 — Choose an allowlisted test recipient</p>
         <div className="mt-2 flex flex-wrap gap-2">
