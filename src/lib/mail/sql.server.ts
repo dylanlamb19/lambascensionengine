@@ -288,6 +288,18 @@ export async function lastThread(userId: string, prospectUid: string): Promise<s
   return rows[0]?.gmail_thread_id || null;
 }
 
+export async function lastSentIds(userId: string, prospectUid: string): Promise<{ messageId: string; threadId: string } | null> {
+  const sql = await getSql();
+  const rows = await sql<{ gmail_message_id: string | null; gmail_thread_id: string | null }>`
+    select gmail_message_id, gmail_thread_id from email_messages
+    where user_id = ${userId} and prospect_uid = ${prospectUid} and status = 'SENT' and gmail_message_id is not null
+    order by created_at desc limit 1
+  `;
+  const row = rows[0];
+  if (!row?.gmail_message_id) return null;
+  return { messageId: row.gmail_message_id, threadId: row.gmail_thread_id || "" };
+}
+
 export async function salesCounts(userId: string): Promise<{ ready: number; followups: number; replies: number; calls: number }> {
   const sql = await getSql();
   const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false and uid <> ${"test-sales-flow"}`;

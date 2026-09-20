@@ -159,6 +159,13 @@ export async function runDueFollowups(): Promise<{ sent: number; skipped: number
       sequenceId: job.sequence_id,
     });
     snapshot.contentHash = job.content_hash || snapshot.contentHash;
+    if (isTestWorkflowUid(job.prospect_uid)) {
+      await audit(job.user_id, "worker_claimed", `${job.step} claimed by worker`, {
+        prospectUid: job.prospect_uid,
+        method: "AUTOMATION",
+        sequenceId: job.sequence_id,
+      });
+    }
     const decision = decideFollowupSend({
       prospect: prospect
         ? { uid: prospect.uid || job.prospect_uid, name: prospect.name, suppressed: prospect.suppressed, stage: prospect.stage }
@@ -252,8 +259,10 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
       const left = await countScheduledFollowups(userId, t.prospect_uid);
       if (left > 0) {
         await audit(userId, "FOLLOWUP_CANCEL_FAILED", `${left} follow-up(s) still pending after reply`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
+      } else {
+        await audit(userId, "followups_cancelled", "remaining follow-ups cancelled", { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
       }
-      await audit(userId, "reply", `${cls}: follow-ups stopped`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
+      await audit(userId, "reply", `${cls}: inbound reply detected`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
       const prospect = await getProspectByUid(userId, t.prospect_uid);
       if (cls === "UNSUBSCRIBE" && prospect) {
         prospect.suppressed = true;

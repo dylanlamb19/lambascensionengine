@@ -48,6 +48,21 @@ const LABELS: Record<string, string> = {
   calendarConnection: "Calendar connection",
 };
 
+const TRAIL_LABEL: Record<string, string> = {
+  test_workflow_created: "test workflow created",
+  test_draft_created: "draft created",
+  initial_send_approved: "initial email approved",
+  initial_send_result: "initial send result",
+  sent: "initial send result",
+  followup_approved: "follow-up approved",
+  worker_claimed: "worker claimed follow-up",
+  test_followup_sent: "follow-up sent",
+  reply: "inbound reply detected",
+  followups_cancelled: "remaining follow-ups cancelled",
+  FOLLOWUP_CANCEL_FAILED: "FOLLOWUP_CANCEL_FAILED",
+  UNKNOWN_DELIVERY: "UNKNOWN_DELIVERY",
+};
+
 function mark(ok: boolean) {
   return ok
     ? <><span className="la-dot la-dot-inline la-dot-good" />Ready</>
@@ -74,7 +89,8 @@ export function TestDesk({
   const [disableMsg, setDisableMsg] = useState("");
   const [probe, setProbe] = useState<Record<string, { ok: boolean; detail: string; email?: string }> | null>(null);
   const [step, setStep] = useState(1);
-  const [preview, setPreview] = useState<{ subject?: string; body?: string } | null>(null);
+  const [preview, setPreview] = useState<{ recipient?: string; subject?: string; body?: string } | null>(null);
+  const [followPreview, setFollowPreview] = useState<{ recipient?: string; subject?: string; body?: string } | null>(null);
   const [sendIds, setSendIds] = useState<{ messageId?: string; threadId?: string } | null>(null);
   const [followMsg, setFollowMsg] = useState("");
   const [followDue, setFollowDue] = useState("");
@@ -458,7 +474,12 @@ export function TestDesk({
               setBusy("choose");
               void chooseTestRecipientFn({ data: { recipient: e } }).then((r) => {
                 if (!r.ok) setErr(r.reason);
-                else { setPreview(r.preview || null); setStep(2); setErr(""); }
+                else {
+                  setPreview(r.preview || null);
+                  setFollowPreview("followupPreview" in r ? r.followupPreview || null : null);
+                  setStep(2);
+                  setErr("");
+                }
                 setBusy("");
               });
             }}>{e}</button>
@@ -468,6 +489,7 @@ export function TestDesk({
         <p className="mt-4 text-sm font-semibold">STEP 2 — Preview test first email</p>
         {preview ? (
           <div className="mt-2 rounded-lg border border-line bg-surface2 p-3 text-sm">
+            {preview.recipient ? <p>Recipient: {preview.recipient}</p> : null}
             <p>Subject: {preview.subject}</p>
             <pre className="mt-2 whitespace-pre-wrap font-sans">{preview.body}</pre>
           </div>
@@ -495,6 +517,13 @@ export function TestDesk({
 
         <p className="mt-4 text-sm font-semibold">STEP 5 — Approve the test follow-up schedule</p>
         <p className="text-sm text-muted">This freezes one short follow-up (~8 minutes) plus one later follow-up that must cancel if they reply. Real prospect timing is unchanged.</p>
+        {followPreview ? (
+          <div className="mt-2 rounded-lg border border-line bg-surface2 p-3 text-sm">
+            {followPreview.recipient ? <p>Recipient: {followPreview.recipient}</p> : null}
+            <p>Subject: {followPreview.subject}</p>
+            <pre className="mt-2 whitespace-pre-wrap font-sans">{followPreview.body}</pre>
+          </div>
+        ) : null}
         <button className="la-btn la-btn-ghost mt-2" disabled={!sendIds?.messageId} onClick={() => {
           setStageErr("");
           void approveTestFollowupFn().then((r) => {
@@ -573,7 +602,7 @@ export function TestDesk({
         <h3 className="font-display mb-2 text-lg">TEST activity log</h3>
         {data.trail?.length ? data.trail.map((row) => (
           <p key={`${row.at}-${row.action}`} className="text-sm">
-            {row.action} — {row.detail}
+            {TRAIL_LABEL[row.action] || row.action} — {row.detail}
           </p>
         )) : <p className="text-sm text-muted">No test activity yet.</p>}
       </section>

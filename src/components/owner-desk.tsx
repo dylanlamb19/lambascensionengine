@@ -24,7 +24,7 @@ import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
-import { EMPTY_TEST_LOOP, type TestLoopState } from "@/lib/mail/test-loop";
+import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
@@ -215,8 +215,8 @@ function buildTasks(rows: Prospect[]): Task[] {
   };
   const reachBoost = (c: Prospect) =>
     (usefulEmail(c) ? 4 : 0) + (listingPhone(c) ? 2 : 0) + (verifiedWebsite(c) ? 1 : 0);
-  const real = active.filter((c) => !c.is_demo).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
-  const demo = active.filter((c) => c.is_demo).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
+  const real = active.filter((c) => !c.is_demo && !isTestWorkflowUid(c.uid)).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
+  const demo = active.filter((c) => c.is_demo && !isTestWorkflowUid(c.uid)).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
   for (const c of [...real, ...demo]) tasks.push(toTask(c));
   return tasks;
 }
@@ -328,7 +328,7 @@ export function OwnerDesk() {
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration,
   };
-  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo).length;
+  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo && !isTestWorkflowUid(c.uid)).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
   const headline = light === "red" ? "Needs attention" : light === "yellow" ? "Needs your approval" : "Everything is good";
   const blurb =

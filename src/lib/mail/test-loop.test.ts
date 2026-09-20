@@ -170,3 +170,64 @@ test("first contact still requires approval even for the test record", () => {
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.code, "NOT_APPROVED");
 });
+
+test("initial test send uses a stable idempotency key, not a timestamp", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { idempotencyKey } = await import("./send.ts");
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "test-flow.server.ts"), "utf8");
+  assert.match(src, /sequenceId: "initial"/);
+  assert.doesNotMatch(src, /testrun-\$\{Date\.now/);
+  assert.equal(idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"), idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"));
+  assert.notEqual(idempotencyKey("u", TEST_WORKFLOW_UID, "email", "initial"), idempotencyKey("u", TEST_WORKFLOW_UID, "email", `testrun-${Date.now()}`));
+});
+
+test("TEST record is excluded from revenue and Home prospect lists", async () => {
+  const { revenueSnapshot } = await import("../attack/revenue.ts");
+  const snap = revenueSnapshot([
+    {
+      id: 1,
+      uid: TEST_WORKFLOW_UID,
+      name: TEST_RECORD_NAME,
+      vertical: "Internal test",
+      city: "Test Mode",
+      website: "",
+      review_count: 0,
+      google_rating: "UNKNOWN",
+      phone: "UNKNOWN",
+      job_value_est: 0,
+      job_value_kind: "UNKNOWN",
+      score: 0,
+      fit: "possible",
+      stage: "Contacted",
+      is_demo: true,
+    } as never,
+    {
+      id: 2,
+      uid: "company-a",
+      name: "ABC",
+      vertical: "Roofing",
+      city: "Fort Worth",
+      website: "",
+      review_count: 0,
+      google_rating: "UNKNOWN",
+      phone: "UNKNOWN",
+      job_value_est: 0,
+      job_value_kind: "UNKNOWN",
+      score: 0,
+      fit: "possible",
+      stage: "Contacted",
+    } as never,
+  ]);
+  assert.equal(snap.contacted, 1);
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const desk = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/owner-desk.tsx"), "utf8");
+  assert.match(desk, /isTestWorkflowUid\(c\.uid\)/);
+  const ui = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/test-desk.tsx"), "utf8");
+  assert.match(ui, /Recipient: \{preview\.recipient\}/);
+  assert.match(ui, /followPreview/);
+  assert.match(ui, /worker claimed follow-up/);
+});

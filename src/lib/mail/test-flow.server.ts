@@ -286,9 +286,18 @@ export async function chooseTestRecipient(userId: string, recipient: string) {
   }
   const prospect = testProspect(email);
   await upsertProspects(userId, [prospect]);
+  await audit(userId, "test_workflow_created", `TEST • Outreach Automation Verification for ${email}`, { prospectUid: TEST_UID, method: "MANUAL" });
   await audit(userId, "test_draft_created", `Prepared TEST outreach to ${email}`, { prospectUid: TEST_UID, method: "MANUAL" });
   const state = await saveTestState(userId, { recipient: email, prospect_uid: TEST_UID, step: 2, pipeline_stage: prospect.stage });
-  return { ok: true as const, prospect, preview: prospect.outreach?.messages.find((m) => m.kind === "email"), state };
+  const first = prospect.outreach?.messages.find((m) => m.kind === "email");
+  const follow = prospect.outreach?.messages.find((m) => m.kind === "followup1");
+  return {
+    ok: true as const,
+    prospect,
+    preview: first ? { recipient: email, subject: first.subject, body: first.body } : null,
+    followupPreview: follow ? { recipient: email, subject: follow.subject, body: follow.body } : null,
+    state,
+  };
 }
 
 export async function confirmTestSend(userId: string) {
@@ -303,8 +312,10 @@ export async function confirmTestSend(userId: string) {
   if (!allow) {
     return { ok: false as const, reason: "That address is not on your test list. Nothing was sent.", code: "NOT_ALLOWLISTED" as const };
   }
+  if (state.message_id && state.thread_id) {
+    return { ok: true as const, messageId: state.message_id, threadId: state.thread_id, state };
+  }
   await audit(userId, "initial_send_approved", `Confirm send to ${state.recipient}`, { prospectUid: TEST_UID, method: "MANUAL" });
-  const runId = `testrun-${Date.now()}`;
   const copy = testEmailCopy(state.recipient);
   const sent = await sendLive({
     userId,
@@ -315,9 +326,22 @@ export async function confirmTestSend(userId: string) {
     subject: email.subject || copy.subject,
     body: email.body || copy.body,
     firstApproved: true,
-    sequenceId: runId,
+    sequenceId: "initial",
   });
   if (!sent.ok) {
+    if (sent.code === "DUPLICATE") {
+      const { lastSentIds } = await import("./sql.server");
+      const existing = await lastSentIds(userId, TEST_UID);
+      if (existing?.messageId) {
+        const next = await saveTestState(userId, {
+          message_id: existing.messageId,
+          thread_id: existing.threadId,
+          step: 5,
+          pipeline_stage: "Contacted",
+        });
+        return { ok: true as const, messageId: existing.messageId, threadId: existing.threadId, state: next };
+      }
+    }
     return {
       ok: false as const,
       reason: sent.reason,

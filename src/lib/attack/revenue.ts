@@ -37,7 +37,7 @@ export function clientsNeeded(goal: OwnerGoal): number | null {
 }
 
 export function revenueSnapshot(rows: Prospect[], goal: OwnerGoal = { monthly_mrr_target: null, average_retainer_target: null }): RevenueSnapshot {
-  const live = rows.filter((p) => !p.suppressed);
+  const live = rows.filter((p) => !p.suppressed && !p.is_demo && p.uid !== "test-sales-flow");
   const counts: Omit<RevenueSnapshot, "verified_mrr" | "clients_needed" | "goal"> = {
     researching: 0,
     ready: 0,
