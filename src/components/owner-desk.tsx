@@ -23,6 +23,7 @@ import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
+import { calendarHealth, gmailHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
@@ -251,6 +252,7 @@ export function OwnerDesk() {
   const [findLimit, setFindLimit] = useState(20);
   const [findMore, setFindMore] = useState(false);
   const [google, setGoogle] = useState({ gmail: "missing" as "connected" | "missing" | "attention", calendar: "missing" as "connected" | "missing" | "attention", configured: false, gmailEmail: "", error: "" });
+  const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [googleMsg, setGoogleMsg] = useState("");
   const [googleErr, setGoogleErr] = useState("");
   const [googleMissing, setGoogleMissing] = useState<OauthMissing[]>([]);
@@ -316,12 +318,12 @@ export function OwnerDesk() {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
-    discoveryConfigured, googleMissing,
+    discoveryConfigured, googleMissing, integration,
   });
   liveRef.current = {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
-    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing,
+    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration,
   };
   const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
@@ -365,7 +367,10 @@ export function OwnerDesk() {
         if (!cancelled) setSyncErr("");
         try {
           const [g, s] = await Promise.all([googleStatusFn(), salesCountsFn()]);
-          if (!cancelled && g.ok) setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+          if (!cancelled && g.ok) {
+            if (g.integration) applyIntegration(g.integration);
+            else setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+          }
           if (!cancelled && s.ok) setSales({ ready: s.ready, followups: s.followups, replies: s.replies, calls: s.calls });
           try {
             const t = await testSettingsFn();
@@ -433,11 +438,13 @@ export function OwnerDesk() {
     if (!flag) return;
     if (flag === "connected") {
       setGoogleMsg("Google connected. Gmail identity will show once we verify the account.");
-      void googleStatusFn()
-        .then((g) => {
-          if (g.ok) {
-            setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
-            if (g.gmail === "connected") setGoogleMsg(`Gmail connected${g.gmailEmail ? ` · ${g.gmailEmail}` : ""}.`);
+      void refreshIntegration()
+        .then(() => {
+          const live = liveRef.current;
+          if (live.google.gmail === "connected") {
+            setGoogleMsg(`Gmail connected${live.google.gmailEmail ? ` · ${live.google.gmailEmail}` : ""}.`);
+          } else if (live.google.calendar === "connected") {
+            setGoogleMsg("Google Calendar connected.");
           }
         })
         .catch(() => { /* keep last status */ });
@@ -447,6 +454,8 @@ export function OwnerDesk() {
       setGoogleErr("Google sign-in didn’t finish. Nothing was connected. Press Connect Gmail to try again.");
     }
     window.history.replaceState({}, "", window.location.pathname || "/");
+    // refreshIntegration is a stable function declaration; this effect is a one-shot OAuth return.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -456,12 +465,13 @@ export function OwnerDesk() {
       if (e.data.status === "connected") {
         setGoogleErr("");
         setGoogleMsg("Google connected. Checking Gmail identity…");
-        void googleStatusFn()
-          .then((g) => {
-            if (g.ok) {
-              setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
-              if (g.gmail === "connected") setGoogleMsg(`Gmail connected${g.gmailEmail ? ` · ${g.gmailEmail}` : ""}.`);
-              else if (g.calendar === "connected") setGoogleMsg("Google Calendar connected.");
+        void refreshIntegration()
+          .then(() => {
+            const live = liveRef.current;
+            if (live.google.gmail === "connected") {
+              setGoogleMsg(`Gmail connected${live.google.gmailEmail ? ` · ${live.google.gmailEmail}` : ""}.`);
+            } else if (live.google.calendar === "connected") {
+              setGoogleMsg("Google Calendar connected.");
             }
           })
           .catch(() => { /* keep last status */ });
@@ -470,15 +480,7 @@ export function OwnerDesk() {
       }
     }
     function onFocus() {
-      void googleStatusFn()
-        .then((g) => {
-          if (!g.ok) return;
-          if (g.gmail === "connected" || g.calendar === "connected") {
-            setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
-            if (g.gmail === "connected") setGoogleMsg(`Gmail connected${g.gmailEmail ? ` · ${g.gmailEmail}` : ""}.`);
-          }
-        })
-        .catch(() => { /* ignore */ });
+      void refreshIntegration().catch(() => { /* ignore */ });
     }
     window.addEventListener("message", onMsg);
     window.addEventListener("focus", onFocus);
@@ -486,6 +488,8 @@ export function OwnerDesk() {
       window.removeEventListener("message", onMsg);
       window.removeEventListener("focus", onFocus);
     };
+    // refreshIntegration is a stable function declaration used as an event handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -517,6 +521,26 @@ export function OwnerDesk() {
     }, 400);
   }, [rows, hydrated, syncReady, userId]);
 
+  function applyIntegration(status: IntegrationStatus) {
+    setIntegration(status);
+    setGoogle({
+      gmail: gmailHealth(status),
+      calendar: calendarHealth(status),
+      configured: status.google_oauth_configured,
+      gmailEmail: status.gmail_identity,
+      error: "",
+    });
+    setTestModeOn(status.test_mode);
+  }
+
+  async function refreshIntegration() {
+    const g = await googleStatusFn();
+    if (g.ok && g.integration) applyIntegration(g.integration);
+    else if (g.ok) {
+      setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+    }
+  }
+
   function deskWorld(): DeskWorld {
     const live = liveRef.current;
     const next = live.nextCall;
@@ -531,8 +555,8 @@ export function OwnerDesk() {
         phone: p.phone,
       })),
       tasks: live.tasks.map((t) => ({ title: t.title, plain: t.plain, uid: t.company_uid, id: t.id, retry: t.retry })),
-      gmail: live.google.gmail,
-      calendarStatus: live.google.calendar,
+      gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
+      calendarStatus: live.integration ? calendarHealth(live.integration) : live.google.calendar,
       calendarUnreadable: Boolean(live.calReason) && live.calConnected,
       calendarReason: live.calReason,
       calendarRange: rangeFor(live.calView, live.calAnchor).label,
@@ -558,6 +582,7 @@ export function OwnerDesk() {
       testMode: live.testModeOn,
       discoveryConfigured: live.discoveryConfigured,
       missingIntegrations: live.googleMissing,
+      integration: live.integration || undefined,
     };
   }
 
@@ -1241,8 +1266,8 @@ export function OwnerDesk() {
         recipient: usefulEmail(p)?.value || "",
         decisionMaker: (p.contacts || []).find((c) => c.name && c.name !== "UNKNOWN")?.name || "",
       })),
-      gmail: live.google.gmail,
-      calendar: live.google.calendar,
+      gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
+      calendar: live.integration ? calendarHealth(live.integration) : live.google.calendar,
       testMode: live.testModeOn,
       allowlist: live.allowlist,
       sales: live.sales,
@@ -1275,6 +1300,7 @@ export function OwnerDesk() {
       gallery: live.gallery,
       gallerySummary: summarizeGallery(live.gallery?.items || [], live.gallery?.currentId),
       designSnapshot: safeSnapshot(designDocRef.current, detectViewport()),
+      integration: live.integration || undefined,
     };
   }
 
@@ -1628,14 +1654,14 @@ export function OwnerDesk() {
     const ev = announceToAra({ type: auto.type, text: auto.text, view, dedupeKey: `${view}:${auto.text}` });
     if (ev) utter(ev.text, announceSource(ev.type), ev.dedupeKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, discoveryConfigured, findMsg, googleMissing, hydrated]);
+  }, [view, discoveryConfigured, findMsg, googleMissing, hydrated, integration]);
 
   useEffect(() => {
     if (voiceMode !== "conversation") return;
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing]);
 
   useEffect(() => {
     if (!userId) return;
@@ -1651,14 +1677,12 @@ export function OwnerDesk() {
             googleOAuthClientId: "Google OAuth Client ID",
             googleOAuthClientSecret: "Google OAuth Client Secret",
             appSecret: "APP_SECRET",
-            outreachJobSecret: "OUTREACH_JOB_SECRET",
-            gmailConnection: "Gmail connection",
-            calendarConnection: "Calendar connection",
           };
           setGoogleMissing(Object.entries(labels).map(([k, name]) => ({
             name,
             ready: integ[k] === "ready" || integ[k] === true,
           })));
+          if (t.integration) applyIntegration(t.integration);
         }
       })
       .catch(() => { /* keep last known allowlist */ });
@@ -2276,6 +2300,7 @@ export function OwnerDesk() {
               setTestModeOn(on);
               setAllowlist(list);
             }}
+            onIntegration={applyIntegration}
           />
         ) : null}
         {view === "home" ? (

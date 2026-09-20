@@ -289,6 +289,7 @@ export type AraDeskContext = {
   gallery?: GalleryState | null;
   gallerySummary?: string;
   designSnapshot?: SafeDesignSnapshot | null;
+  integration?: import("../mail/integration-status.ts").IntegrationStatus;
 };
 
 export type ToolPlan =

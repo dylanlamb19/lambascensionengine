@@ -1,11 +1,9 @@
 import { env } from "@/lib/env.server";
-import { googleOAuthConfigured } from "@/lib/google/oauth";
-import { gmailProfile } from "@/lib/google/gmail";
-import { probeFreeBusy, offeredSlots, createEvent, CALENDAR_UNREADABLE } from "@/lib/google/calendar";
+import { googleOAuthSetup } from "@/lib/google/oauth";
+import { offeredSlots, createEvent, CALENDAR_UNREADABLE } from "@/lib/google/calendar";
 import { slotIsOffered } from "./booking";
 import { accessFor, sendLive, syncRepliesForUser } from "./live.server";
 import {
-  googleStatus,
   loadSettings,
   saveTestSettings,
   loadTestState,
@@ -32,51 +30,46 @@ import {
 } from "./test-mode";
 import { workerLight } from "./heartbeat";
 import type { Prospect } from "@/lib/review-brief";
+import { loadIntegrationStatus } from "./integration-status.server";
+import type { IntegrationStatus } from "./integration-status";
 
 export const TEST_UID = "test-sales-flow";
 
-export function integrationReadiness(user: { gmail: string; calendar: string }) {
-  const appSecret = secretPresent(env("APP_SECRET"), ["dev-preview-only-not-for-production", "changeme"]);
+export function integrationReadiness(status: IntegrationStatus) {
+  const setup = googleOAuthSetup();
+  const byName = (name: string) => setup.find((row) => row.name === name)?.ready === true;
   return {
-    googleOAuthClientId: light(secretPresent(env("GOOGLE_OAUTH_CLIENT_ID"))),
-    googleOAuthClientSecret: light(secretPresent(env("GOOGLE_OAUTH_CLIENT_SECRET"))),
-    appSecret: light(appSecret),
+    googleOAuthClientId: light(byName("Google OAuth Client ID")),
+    googleOAuthClientSecret: light(byName("Google OAuth Client Secret")),
+    appSecret: light(byName("APP_SECRET")),
     outreachJobSecret: light(secretPresent(env("OUTREACH_JOB_SECRET"))),
-    gmailConnection: light(user.gmail === "connected"),
-    calendarConnection: light(user.calendar === "connected"),
-    backgroundWorker: light(secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET"))),
-    oauthConfigured: googleOAuthConfigured(),
+    gmailConnection: light(status.gmail_connected),
+    calendarConnection: light(status.calendar_connected),
+    backgroundWorker: light(status.worker_configured),
+    oauthConfigured: status.google_oauth_configured,
   };
 }
 
 export async function connectionTest(userId: string) {
+  const integration = await loadIntegrationStatus(userId, { probeLive: true });
   const session = { ok: true as const, detail: "You are signed in." };
-  const gmailTokens = await accessFor(userId, "gmail");
-  let gmailToken = { ok: false as boolean, detail: "Gmail is not connected." };
-  let gmailIdentity = { ok: false as boolean, detail: "Gmail account identity was not read.", email: "" };
-  if (gmailTokens) {
-    gmailToken = { ok: true, detail: "Gmail token is valid." };
-    const prof = await gmailProfile(gmailTokens.access_token);
-    if (prof.ok) gmailIdentity = { ok: true, detail: `Gmail account: ${prof.email}`, email: prof.email };
-    else gmailIdentity = { ok: false, detail: prof.reason, email: "" };
-  }
-  const calTokens = await accessFor(userId, "calendar");
-  let calendarToken = { ok: false as boolean, detail: "Calendar is not connected." };
-  let calendarFreeBusy = { ok: false as boolean, detail: "Calendar free/busy was not read." };
-  if (calTokens) {
-    calendarToken = { ok: true, detail: "Calendar token is valid." };
-    const probe = await probeFreeBusy(calTokens.access_token);
-    calendarFreeBusy = probe.ok
-      ? { ok: true, detail: "Calendar free/busy can be read." }
-      : { ok: false, detail: probe.reason };
-  }
-  const beat = await loadWorkerHeartbeat();
-  const worker = workerLight({
-    secretPresent: secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET")),
-    lastCompletedAt: beat.lastCompletedAt,
-    now: Date.now(),
-  });
-  return { session, gmailToken, gmailIdentity, calendarToken, calendarFreeBusy, worker: { ok: worker.state === "running", detail: worker.detail } };
+  const gmailToken = integration.gmail_token_valid
+    ? { ok: true as boolean, detail: "Gmail token is valid." }
+    : { ok: false as boolean, detail: integration.gmail_connected ? "Gmail token needs attention." : "Gmail is not connected." };
+  const gmailIdentity = integration.gmail_identity
+    ? { ok: true as boolean, detail: `Gmail account: ${integration.gmail_identity}`, email: integration.gmail_identity }
+    : { ok: false as boolean, detail: "Gmail account identity was not read.", email: "" };
+  const calendarToken = integration.calendar_connected
+    ? { ok: true as boolean, detail: "Calendar token is valid." }
+    : { ok: false as boolean, detail: "Calendar is not connected." };
+  const calendarFreeBusy = integration.calendar_freebusy_valid
+    ? { ok: true as boolean, detail: "Calendar free/busy can be read." }
+    : { ok: false as boolean, detail: integration.calendar_connected ? "Calendar free/busy was not read." : "Calendar is not connected." };
+  const worker = {
+    ok: integration.worker_state === "running",
+    detail: integration.worker_detail,
+  };
+  return { session, gmailToken, gmailIdentity, calendarToken, calendarFreeBusy, worker, integration };
 }
 
 function testProspect(email: string): Prospect {
@@ -164,7 +157,7 @@ function testProspect(email: string): Prospect {
 
 export async function testSettingsView(userId: string) {
   const settings = await loadSettings(userId);
-  const status = await googleStatus(userId);
+  const integration = await loadIntegrationStatus(userId);
   const state = await loadTestState(userId);
   const beat = await loadWorkerHeartbeat();
   const worker = workerLight({
@@ -177,10 +170,11 @@ export async function testSettingsView(userId: string) {
     testMode: settings.testMode,
     allowlist: settings.allowlist,
     caps: { maxFirst: settings.testMode ? 2 : settings.maxFirst, maxFollowups: settings.testMode ? 3 : settings.maxFollowups },
-    integrations: integrationReadiness({ gmail: status.gmail, calendar: status.calendar }),
+    integrations: integrationReadiness(integration),
+    integration,
     worker,
-    gmailEmail: status.gmailEmail,
-    calendarEmail: status.calendarEmail,
+    gmailEmail: integration.gmail_identity,
+    calendarEmail: integration.calendar_identity,
     checks: scoreLiveChecks({
       messageId: state.message_id,
       threadId: state.thread_id,

@@ -5,6 +5,7 @@ import { currentTask, currentTaskUid, labeledActionsFor, screenNameOf } from "./
 import { visibleOrder } from "./layout.ts";
 import { summarizeTheme } from "../visual/theme.ts";
 import { findClientsBlockerSpeech, settingsBlockerSpeech } from "./read-screen.ts";
+import { integrationSpeech, oauthOnlyGaps } from "../mail/integration-status.ts";
 
 export type ScreenFactKind = "VERIFIED" | "UNKNOWN" | "ESTIMATE" | "ERROR";
 
@@ -56,12 +57,27 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
   const company = world.prospects.find((p) => p.uid === uid);
   const actions = labeledActionsFor(state, world);
   const facts: ScreenFact[] = [];
-  if (world.testMode !== false) facts.push({ kind: "VERIFIED", text: "Test Mode is on. Emails only go to the allowlist." });
+  const integration = world.integration;
+  if (integration) {
+    facts.push({
+      kind: "VERIFIED",
+      text: integration.test_mode
+        ? "Test Mode is on. Emails only go to the allowlist."
+        : "Test Mode is off. Live outreach rules apply. First-contact approval still required.",
+    });
+  } else if (world.testMode !== false) facts.push({ kind: "VERIFIED", text: "Test Mode is on. Emails only go to the allowlist." });
   else facts.push({ kind: "VERIFIED", text: "Test Mode is off. Live outreach rules apply. First-contact approval still required." });
-  if (world.gmail === "missing") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
-  if (world.gmail === "attention") facts.push({ kind: "ERROR", text: "Gmail needs attention." });
-  if (world.calendarStatus === "missing") facts.push({ kind: "ERROR", text: "Google Calendar isn’t connected." });
-  if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
+  if (integration) {
+    if (!integration.gmail_connected) facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+    else if (!integration.gmail_token_valid) facts.push({ kind: "ERROR", text: "Gmail needs attention." });
+    // Calendar-not-connected is NOT an ERROR on every screen — it is independent of Gmail.
+  } else {
+    if (world.gmail === "missing") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+    if (world.gmail === "attention") facts.push({ kind: "ERROR", text: "Gmail needs attention." });
+  }
+  if (!integration) {
+    if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
+  }
   if (world.calendarUnreadable) facts.push({ kind: "ERROR", text: world.calendarReason || "Calendar could not be read." });
 
   let lookingAt = `You’re looking at ${purposeOf(screen)}`;
@@ -170,19 +186,30 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     }
   } else if (screen === "SETTINGS") {
     lookingAt = "You’re in Settings.";
-    const missing = (world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name);
-    if (missing.length) {
-      important = settingsBlockerSpeech(missing);
-      next = "Whoever hosts Lamb Ascension needs to add the missing values. Gmail and Calendar can’t connect until that’s done.";
-      facts.push({ kind: "ERROR", text: important });
+    if (integration) {
+      const speech = integrationSpeech(integration, oauthOnlyGaps((world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name)));
+      important = speech.settingsImportant;
+      next = speech.settingsNext;
+      for (const fact of speech.facts) {
+        if (!facts.some((f) => f.text === fact.text)) facts.push(fact);
+      }
     } else {
-      important = [
-        world.gmail === "connected" ? "Gmail is connected." : "Gmail isn’t connected.",
-        world.calendarStatus === "connected" ? "Google Calendar is connected." : "Google Calendar isn’t connected yet, so calendar and booking features won’t work until that’s set up.",
-      ].join(" ");
-      next = "Connect anything that’s missing. The rest of the app can still be used.";
-      if (world.gmail !== "connected") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
-      if (world.calendarStatus !== "connected") facts.push({ kind: "ERROR", text: "Google Calendar isn’t connected." });
+      const oauthMissing = oauthOnlyGaps((world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name));
+      if (oauthMissing.length && world.gmail !== "connected") {
+        important = settingsBlockerSpeech(oauthMissing);
+        next = "Whoever hosts Lamb Ascension needs to add the missing values. Gmail and Calendar can’t connect until that’s done.";
+        facts.push({ kind: "ERROR", text: important });
+      } else {
+        important = [
+          world.gmail === "connected" ? "Gmail is connected." : "Gmail isn’t connected.",
+          world.calendarStatus === "connected" ? "Google Calendar is connected." : "Google Calendar still needs to be connected.",
+        ].join(" ");
+        next = world.calendarStatus === "connected"
+          ? "Gmail and Calendar are ready."
+          : "Connect Google Calendar when you’re ready. Gmail can already send if it is connected.";
+        if (world.gmail !== "connected") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+        if (world.calendarStatus !== "connected") facts.push({ kind: "UNKNOWN", text: "Google Calendar isn’t connected yet." });
+      }
     }
   } else if (screen === "CALL" || screen === "PREP") {
     lookingAt = `You’re looking at ${screen === "PREP" ? "call prep" : "the call opener"}${company ? ` for ${company.name}` : ""}.`;

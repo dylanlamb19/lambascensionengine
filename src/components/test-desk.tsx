@@ -15,6 +15,7 @@ import {
 import type { LiveCheck } from "@/lib/mail/test-mode";
 import { startGoogleOAuth, isGoogleOauthMessage, type OauthMissing } from "@/lib/google/launch";
 import { FLAGS } from "@/lib/flags";
+import type { IntegrationStatus } from "@/lib/mail/integration-status";
 import {
   clearOpenAiKeyFn,
   designDirectorStatusFn,
@@ -30,6 +31,7 @@ type View = {
   worker?: { state: string; detail: string };
   gmailEmail: string;
   checks: LiveCheck[];
+  integration?: IntegrationStatus;
 };
 
 const LABELS: Record<string, string> = {
@@ -50,9 +52,11 @@ function mark(ok: boolean) {
 export function TestDesk({
   onBack,
   onTestModeChange,
+  onIntegration,
 }: {
   onBack: () => void;
   onTestModeChange?: (on: boolean, allowlist: string[]) => void;
+  onIntegration?: (status: IntegrationStatus) => void;
 }) {
   const [data, setData] = useState<View | null>(null);
   const [err, setErr] = useState("");
@@ -90,13 +94,15 @@ export function TestDesk({
         worker: r.worker,
         gmailEmail: r.gmailEmail,
         checks: r.checks,
+        integration: r.integration,
       });
       setStep(r.state.step || 1);
       if (r.state.message_id) setSendIds({ messageId: r.state.message_id, threadId: r.state.thread_id || undefined });
+      if (r.integration) onIntegration?.(r.integration);
     }
   }
 
-  useEffect(() => { void refresh().catch(() => setErr("Could not load Test Mode settings.")); }, []);
+  useEffect(() => { void refresh().catch(() => setErr("Could not load Test Mode settings.")); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     function onMsg(e: MessageEvent) {
       if (e.origin !== window.location.origin) return;
@@ -111,6 +117,7 @@ export function TestDesk({
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     if (!FLAGS.DESIGN_DIRECTOR) return;
@@ -342,6 +349,7 @@ export function TestDesk({
               calendarFreeBusy: r.calendarFreeBusy,
               worker: r.worker,
             });
+            if (r.integration) onIntegration?.(r.integration);
             setBusy("");
           }).catch(() => { setErr("Connection test did not finish. No email was sent."); setBusy(""); });
         }}>{busy === "probe" ? "Checking…" : "Run Connection Test"}</button>

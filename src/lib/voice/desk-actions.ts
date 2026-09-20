@@ -227,6 +227,7 @@ export type DeskWorld = {
   testMode?: boolean;
   discoveryConfigured?: boolean | null;
   missingIntegrations?: { name: string; ready: boolean }[];
+  integration?: import("../mail/integration-status.ts").IntegrationStatus;
 };
 
 export type DeskEffect =

@@ -10,10 +10,19 @@ function recipientOf(p: { contacts?: { email?: string }[]; name: string }): stri
 export const googleStatusFn = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
-    const { googleStatus } = await import("./sql.server");
-    const { googleOAuthConfigured } = await import("../google/oauth");
-    const status = await googleStatus(context.userId);
-    return { ok: true as const, configured: googleOAuthConfigured(), ...status };
+    const { loadIntegrationStatus } = await import("./integration-status.server");
+    const { gmailHealth, calendarHealth } = await import("./integration-status");
+    const integration = await loadIntegrationStatus(context.userId);
+    return {
+      ok: true as const,
+      configured: integration.google_oauth_configured,
+      gmail: gmailHealth(integration),
+      calendar: calendarHealth(integration),
+      gmailEmail: integration.gmail_identity,
+      calendarEmail: integration.calendar_identity,
+      error: "",
+      integration,
+    };
   });
 
 export const googleStartFn = createServerFn({ method: "POST" })
