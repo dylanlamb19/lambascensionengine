@@ -6,6 +6,7 @@ import { visibleOrder } from "./layout.ts";
 import { summarizeTheme } from "../visual/theme.ts";
 import { findClientsBlockerSpeech, settingsBlockerSpeech } from "./read-screen.ts";
 import { integrationSpeech, oauthOnlyGaps } from "../mail/integration-status.ts";
+import { testLoopSpeech } from "../mail/test-loop.ts";
 
 export type ScreenFactKind = "VERIFIED" | "UNKNOWN" | "ESTIMATE" | "ERROR";
 
@@ -80,6 +81,12 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
   }
   if (world.calendarUnreadable) facts.push({ kind: "ERROR", text: world.calendarReason || "Calendar could not be read." });
+  if (screen === "SETTINGS" && world.testLoop) {
+    const loop = testLoopSpeech(world.testLoop);
+    facts.push({ kind: "VERIFIED", text: loop.followupAnswer });
+    facts.push({ kind: "VERIFIED", text: loop.replyAnswer });
+    facts.push({ kind: "VERIFIED", text: loop.pendingAnswer });
+  }
 
   let lookingAt = `You’re looking at ${purposeOf(screen)}`;
   let important = "I only describe what is actually on this screen.";

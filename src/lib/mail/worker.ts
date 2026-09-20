@@ -43,6 +43,7 @@ export function decideFollowupSend(opts: {
   gmailConnected: boolean;
   testMode?: boolean;
   allowlist?: string[];
+  skipHours?: boolean;
 }): { action: "send" | "reschedule" | "cancel"; dueAt?: Date; reason: string } {
   if (!opts.sequenceActive || opts.prospect.suppressed || opts.prospect.stage === "Do Not Contact") {
     return { action: "cancel", reason: "Sequence stopped. Follow-up was not sent." };
@@ -64,6 +65,7 @@ export function decideFollowupSend(opts: {
     threadId: opts.snapshot.gmailThreadId,
     testMode: opts.testMode,
     allowlist: opts.allowlist,
+    skipHours: opts.skipHours,
   });
   if (!gate.ok && gate.code === "OUTSIDE_HOURS") {
     return { action: "reschedule", dueAt: nextWorkingInstant(opts.now, opts.hours || DEFAULT_HOURS), reason: "Outside working hours. Waiting until the next work window." };

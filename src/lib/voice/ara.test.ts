@@ -18,6 +18,7 @@ import { publicAraSessionPayload } from "./ara-token.ts";
 import { executeIfUntrustedSource, toolsInvokedByUntrustedText } from "./untrusted-tools.ts";
 import { makeVoiceAudit, auditHasAudio } from "./audit.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
+import { EMPTY_TEST_LOOP } from "../mail/test-loop.ts";
 import { planToAction } from "./desk-actions.ts";
 
 const desk: AraDeskContext = {
@@ -246,6 +247,30 @@ describe("Ara session payload / outage / key leakage", () => {
     assert.match(text, /Available tools on this screen/);
     assert.doesNotMatch(text, /cannot click|no direct UI|DOM access|My tools are limited/i);
     assert.match(text, /navigate_pipeline/);
+  });
+
+  it("Ara answers test-loop questions from live server state", () => {
+    const silent = buildAraInstructions(desk);
+    assert.doesNotMatch(silent, /The test follow-up was sent/);
+    const text = buildAraInstructions({
+      ...desk,
+      testLoop: {
+        ...EMPTY_TEST_LOOP,
+        recipient: "me@test.com",
+        allowlisted: true,
+        initialSent: true,
+        followupScheduled: true,
+        followupSent: true,
+        pendingFollowups: 0,
+        replyDetected: true,
+        replyCount: 1,
+        sequenceStopped: true,
+      },
+    });
+    assert.match(text, /Yes\. The test follow-up was sent/);
+    assert.match(text, /Yes\. A reply was detected on the test thread/);
+    assert.match(text, /No remaining follow-ups are scheduled for that test thread/);
+    assert.match(text, /not a real prospect/i);
   });
 
   it("Ara has executable Home visual design tools", () => {

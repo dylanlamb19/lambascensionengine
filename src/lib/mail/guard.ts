@@ -59,6 +59,7 @@ export function canSend(opts: {
   now: Date;
   hours?: HoursConfig;
   threadId?: string | null;
+  skipHours?: boolean;
   testMode?: boolean;
   allowlist?: string[];
 }): { ok: true } | { ok: false; code: GuardFail } {
@@ -82,7 +83,7 @@ export function canSend(opts: {
     if (!opts.threadId) return { ok: false, code: "NO_THREAD" };
   }
   const hours = opts.hours || DEFAULT_HOURS;
-  if (opts.method === "AUTOMATION" && !withinWorkingHours(opts.now, hours)) {
+  if (opts.method === "AUTOMATION" && !opts.skipHours && !withinWorkingHours(opts.now, hours)) {
     return { ok: false, code: "OUTSIDE_HOURS" };
   }
   if (opts.kind === "email" && opts.usage.first >= opts.caps.maxFirst) return { ok: false, code: "RATE_LIMIT" };

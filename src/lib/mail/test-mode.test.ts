@@ -214,6 +214,8 @@ test("Disable Test Mode UI requires exact DISABLE and shows a result", async () 
   assert.match(src, /onTestModeChange/);
   assert.match(src, /Disabling…/);
   assert.match(src, /Live outreach rules now apply/);
+  assert.match(src, /Close this page/);
+  assert.match(src, /Confirm send/);
 });
 
 test("live checks stay red until real evidence exists", () => {

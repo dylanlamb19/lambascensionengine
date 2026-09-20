@@ -17,6 +17,7 @@ import type { LiveCheck } from "@/lib/mail/test-mode";
 import { startGoogleOAuth, isGoogleOauthMessage, type OauthMissing } from "@/lib/google/launch";
 import { FLAGS } from "@/lib/flags";
 import type { IntegrationStatus } from "@/lib/mail/integration-status";
+import type { TestLoopState } from "@/lib/mail/test-loop";
 import {
   clearOpenAiKeyFn,
   designDirectorStatusFn,
@@ -34,6 +35,8 @@ type View = {
   calendarEmail?: string;
   checks: LiveCheck[];
   integration?: IntegrationStatus;
+  testLoop?: TestLoopState;
+  trail?: { at: string; action: string; detail: string }[];
 };
 
 const LABELS: Record<string, string> = {
@@ -55,10 +58,12 @@ export function TestDesk({
   onBack,
   onTestModeChange,
   onIntegration,
+  onTestLoop,
 }: {
   onBack: () => void;
   onTestModeChange?: (on: boolean, allowlist: string[]) => void;
   onIntegration?: (status: IntegrationStatus) => void;
+  onTestLoop?: (loop: TestLoopState) => void;
 }) {
   const [data, setData] = useState<View | null>(null);
   const [err, setErr] = useState("");
@@ -72,6 +77,8 @@ export function TestDesk({
   const [preview, setPreview] = useState<{ subject?: string; body?: string } | null>(null);
   const [sendIds, setSendIds] = useState<{ messageId?: string; threadId?: string } | null>(null);
   const [followMsg, setFollowMsg] = useState("");
+  const [followDue, setFollowDue] = useState("");
+  const [stageErr, setStageErr] = useState("");
   const [replyMsg, setReplyMsg] = useState("");
   const [bookUrl, setBookUrl] = useState("");
   const [slots, setSlots] = useState<{ start: string; end: string; label: string }[]>([]);
@@ -100,10 +107,14 @@ export function TestDesk({
         calendarEmail: r.calendarEmail,
         checks: r.checks,
         integration: r.integration,
+        testLoop: r.testLoop,
+        trail: r.trail,
       });
       setStep(r.state.step || 1);
       if (r.state.message_id) setSendIds({ messageId: r.state.message_id, threadId: r.state.thread_id || undefined });
       if (r.integration) onIntegration?.(r.integration);
+      if (r.testLoop) onTestLoop?.(r.testLoop);
+      if (r.testLoop?.followupDueAt) setFollowDue(r.testLoop.followupDueAt);
     }
   }
 
@@ -463,11 +474,15 @@ export function TestDesk({
         ) : <p className="text-sm text-muted">Choose a recipient to see the preview.</p>}
 
         <p className="mt-4 text-sm font-semibold">STEP 3 — Confirm send</p>
+        <p className="text-sm text-muted">Review the exact recipient, subject, and body above. Only this button sends. “yes” / “okay” will not send.</p>
         <button className="la-btn la-btn-primary mt-2" disabled={busy === "send" || !preview} onClick={() => {
           setBusy("send");
+          setStageErr("");
           void confirmTestSendFn().then((r) => {
-            if (!r.ok) setErr(r.reason);
-            else { setSendIds({ messageId: r.messageId, threadId: r.threadId }); setStep(4); setErr(""); }
+            if (!r.ok) {
+              setErr(r.reason);
+              setStageErr("code" in r && r.code ? String(r.code) : "INITIAL_SEND_FAILED");
+            } else { setSendIds({ messageId: r.messageId, threadId: r.threadId }); setStep(4); setErr(""); }
             setBusy("");
             void refresh();
           });
@@ -478,33 +493,55 @@ export function TestDesk({
           <p className="text-sm">Message ID: {sendIds.messageId}<br />Thread ID: {sendIds.threadId || "missing"}</p>
         ) : <p className="text-sm text-muted">Waiting for a confirmed send.</p>}
 
-        <p className="mt-4 text-sm font-semibold">STEP 5 — Approve one test follow-up</p>
+        <p className="mt-4 text-sm font-semibold">STEP 5 — Approve the test follow-up schedule</p>
+        <p className="text-sm text-muted">This freezes one short follow-up (~8 minutes) plus one later follow-up that must cancel if they reply. Real prospect timing is unchanged.</p>
         <button className="la-btn la-btn-ghost mt-2" disabled={!sendIds?.messageId} onClick={() => {
+          setStageErr("");
           void approveTestFollowupFn().then((r) => {
-            if (!r.ok) setErr(r.reason);
-            else { setFollowMsg(`${r.pending} follow-up scheduled. It will only send to the allowlisted address.`); setStep(6); }
+            if (!r.ok) {
+              setErr(r.reason);
+              setStageErr("code" in r && r.code ? String(r.code) : "FOLLOWUP_SCHEDULE_FAILED");
+            } else {
+              const due = "dueAt" in r ? r.dueAt : "";
+              setFollowDue(due || "");
+              setFollowMsg(`${r.pending} follow-up(s) scheduled. The short one sends only to the allowlisted address, even if you close this page.`);
+              setStep(6);
+            }
             void refresh();
           });
         }}>Approve test follow-up</button>
         {followMsg ? <p className="mt-2 text-sm">{followMsg}</p> : null}
+        {followDue ? <p className="mt-1 text-sm">Short follow-up due: {new Date(followDue).toLocaleString()}</p> : null}
 
-        <p className="mt-4 text-sm font-semibold">STEP 6 — Reply from the recipient inbox</p>
-        <p className="text-sm text-muted">Open the test inbox, reply to the thread with any short message, then come back.</p>
+        <p className="mt-4 text-sm font-semibold">STEP 6 — Close this page</p>
+        <p className="text-sm text-muted">Leave LambAscensionEngine. Do not reply yet. The GitHub Actions worker should send the short follow-up automatically.</p>
 
-        <p className="mt-4 text-sm font-semibold">STEP 7 — Sync replies</p>
+        <p className="mt-4 text-sm font-semibold">STEP 7 — After the follow-up arrives, reply “Test reply.”</p>
+        <p className="text-sm text-muted">Reply from the allowlisted inbox to the same thread, then you can close the browser again.</p>
+
+        <p className="mt-4 text-sm font-semibold">STEP 8 — Worker detects the reply</p>
+        <p className="text-sm text-muted">The next worker tick syncs Gmail first, stores the reply, and cancels remaining follow-ups. You can also press Sync replies after reopening.</p>
         <button className="la-btn la-btn-ghost mt-2" onClick={() => {
+          setStageErr("");
           void syncTestRepliesFn().then((r) => {
-            setReplyMsg(`${r.replies} new reply(ies). Follow-ups left: ${r.followupsLeft}.`);
-            setStep(8);
+            if (!r.ok) {
+              setErr(r.reason);
+              setStageErr("code" in r && r.code ? String(r.code) : "REPLY_SYNC_FAILED");
+              if ("followupsLeft" in r) setReplyMsg(`Follow-ups left: ${r.followupsLeft}.`);
+            } else {
+              setReplyMsg(`${r.replies} new reply(ies). Follow-ups left: ${r.followupsLeft}.`);
+              setStep(9);
+            }
             void refresh();
           });
         }}>Sync replies</button>
         {replyMsg ? <p className="mt-2 text-sm">{replyMsg}</p> : null}
+        {stageErr ? <p className="mt-2 text-sm">{stageErr}</p> : null}
 
-        <p className="mt-4 text-sm font-semibold">STEP 8 — Pending follow-up cancelled</p>
-        <p className="text-sm text-muted">This turns green only if a follow-up existed and is gone after a real reply.</p>
+        <p className="mt-4 text-sm font-semibold">STEP 9 — Remaining follow-ups cancelled</p>
+        <p className="text-sm text-muted">This turns green only if a follow-up existed and is gone after a real reply. Ask Ara: “Did they reply?” and “Are any more follow-ups scheduled?”</p>
 
-        <p className="mt-4 text-sm font-semibold">STEP 9 — Generate a test booking link</p>
+        <p className="mt-4 text-sm font-semibold">STEP 10 — Optional: generate a test booking link</p>
         <button className="la-btn la-btn-ghost mt-2" onClick={() => {
           void testBookingLinkFn({ data: { origin: window.location.origin } }).then((r) => {
             if (!r.ok) setErr(r.reason);
@@ -514,7 +551,7 @@ export function TestDesk({
         }}>Create booking link</button>
         {bookUrl ? <p className="mt-2 break-all text-sm">{bookUrl}</p> : null}
 
-        <p className="mt-4 text-sm font-semibold">STEP 10 — Book one offered time</p>
+        <p className="mt-4 text-sm font-semibold">STEP 11 — Optional: book one offered time</p>
         <div className="mt-2 flex flex-wrap gap-2">
           {slots.map((s) => (
             <button key={s.start} className="la-btn la-btn-primary" onClick={() => {
@@ -530,6 +567,15 @@ export function TestDesk({
 
         <p className="mt-4 text-sm font-semibold">STEP 11 — Verify calendar + pipeline</p>
         <p className="text-sm text-muted">Pipeline sync is green only when the test record is Call Booked and a real event id exists.</p>
+      </section>
+
+      <section className="la-card">
+        <h3 className="font-display mb-2 text-lg">TEST activity log</h3>
+        {data.trail?.length ? data.trail.map((row) => (
+          <p key={`${row.at}-${row.action}`} className="text-sm">
+            {row.action} — {row.detail}
+          </p>
+        )) : <p className="text-sm text-muted">No test activity yet.</p>}
       </section>
 
       <section className="la-card">

@@ -266,6 +266,7 @@ export type AraDeskContext = {
   testMode: boolean;
   allowlist: string[];
   sales?: { ready: number; followups: number; replies: number; calls: number };
+  testLoop?: import("../mail/test-loop.ts").TestLoopState;
   availableActions: string[];
   confirmationOpen: boolean;
   evidenceOpen: boolean;

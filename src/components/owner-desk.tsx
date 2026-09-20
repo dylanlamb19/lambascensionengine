@@ -24,6 +24,7 @@ import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
+import { EMPTY_TEST_LOOP, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
@@ -262,6 +263,7 @@ export function OwnerDesk() {
   const [testModeOn, setTestModeOn] = useState(true);
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [sales, setSales] = useState({ ready: 0, followups: 0, replies: 0, calls: 0 });
+  const [testLoop, setTestLoop] = useState<TestLoopState>(EMPTY_TEST_LOOP);
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -316,17 +318,17 @@ export function OwnerDesk() {
 
   const tasks = useMemo(() => buildTasks(rows), [rows]);
   const liveRef = useRef({
-    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
+    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
     discoveryConfigured, googleMissing, integration,
   });
   liveRef.current = {
-    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
+    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration,
   };
-  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed).length;
+  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
   const headline = light === "red" ? "Needs attention" : light === "yellow" ? "Needs your approval" : "Everything is good";
   const blurb =
@@ -378,6 +380,7 @@ export function OwnerDesk() {
             if (!cancelled && t.ok) {
               setTestModeOn(t.testMode);
               setAllowlist(t.allowlist || []);
+              if (t.testLoop) setTestLoop(t.testLoop);
             }
           } catch { /* keep default on */ }
           try {
@@ -592,6 +595,7 @@ export function OwnerDesk() {
       discoveryConfigured: live.discoveryConfigured,
       missingIntegrations: live.googleMissing,
       integration: live.integration || undefined,
+      testLoop: live.testLoop,
     };
   }
 
@@ -1280,6 +1284,7 @@ export function OwnerDesk() {
       testMode: live.testModeOn,
       allowlist: live.allowlist,
       sales: live.sales,
+      testLoop: live.testLoop,
       availableActions: ctx.availableActions,
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -1719,7 +1724,7 @@ export function OwnerDesk() {
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing]);
 
   useEffect(() => {
     if (!userId) return;
@@ -1730,6 +1735,7 @@ export function OwnerDesk() {
             setTestModeOn(t.testMode);
             setAllowlist(t.allowlist || []);
           }
+          if (t.testLoop) setTestLoop(t.testLoop);
           const integ = (t.integrations || {}) as Record<string, "ready" | "missing" | boolean>;
           const labels: Record<string, string> = {
             googleOAuthClientId: "Google OAuth Client ID",
@@ -2350,6 +2356,7 @@ export function OwnerDesk() {
               setAllowlist(list);
             }}
             onIntegration={applyIntegration}
+            onTestLoop={setTestLoop}
           />
         ) : null}
         {view === "home" ? (

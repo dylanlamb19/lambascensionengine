@@ -1,6 +1,7 @@
 import type { AraDeskContext } from "./tools.ts";
 import { realtimeToolSchemas } from "./tools.ts";
 import { INTEGRATIONS_LOADING_INSTRUCTION, integrationInstructionBlock } from "../mail/integration-status.ts";
+import { testLoopSpeech } from "../mail/test-loop.ts";
 
 export const ARA_VOICE = "ara";
 export const ARA_MODEL = "grok-voice-latest";
@@ -150,6 +151,14 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
   if (companies) lines.push(`Company list: ${companies}`);
   if (ctx.sales) {
     lines.push(`Sales: ${ctx.sales.ready} ready to contact, ${ctx.sales.followups} follow-ups, ${ctx.sales.replies} replies, ${ctx.sales.calls} calls booked.`);
+  }
+  if (ctx.testLoop) {
+    const loop = testLoopSpeech(ctx.testLoop);
+    lines.push(loop.summary);
+    lines.push(`If Dylan asks whether the test follow-up sent, answer from followup_sent: "${loop.followupAnswer}"`);
+    lines.push(`If Dylan asks whether they replied, answer from reply_detected: "${loop.replyAnswer}"`);
+    lines.push(`If Dylan asks whether more follow-ups are scheduled for the test thread, answer from pending_followups: "${loop.pendingAnswer}"`);
+    lines.push("Never treat TEST • Outreach Automation Verification as a real prospect or sales metric.");
   }
   if (open) {
     lines.push(`Open company: ${open.name} (prospect_uid ${open.uid}), stage ${open.stage}. Do not invent revenue, ad spend, emails, or phone numbers.`);

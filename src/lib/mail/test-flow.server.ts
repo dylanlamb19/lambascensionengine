@@ -17,6 +17,7 @@ import {
   saveCalendarEvent,
   audit,
   loadWorkerHeartbeat,
+  loadTestLoop,
 } from "./sql.server";
 import { getProspectByUid, upsertProspects } from "@/lib/prospects/repo.server";
 import {
@@ -32,8 +33,19 @@ import { workerLight } from "./heartbeat";
 import type { Prospect } from "@/lib/review-brief";
 import { loadIntegrationStatus } from "./integration-status.server";
 import type { IntegrationStatus } from "./integration-status";
+import {
+  EMPTY_TEST_LOOP,
+  TEST_FOLLOWUP_REMAINING_MS,
+  TEST_FOLLOWUP_SHORT_MS,
+  TEST_RECORD_NAME,
+  TEST_UID,
+  TEST_WORKFLOW_UID,
+  testEmailCopy,
+  testLoopSpeech,
+  type TestLoopState,
+} from "./test-loop";
 
-export const TEST_UID = "test-sales-flow";
+export { TEST_UID, TEST_WORKFLOW_UID };
 
 export function integrationReadiness(status: IntegrationStatus) {
   const setup = googleOAuthSetup();
@@ -82,10 +94,11 @@ export async function connectionTest(userId: string) {
 
 function testProspect(email: string): Prospect {
   const now = new Date().toISOString();
+  const copy = testEmailCopy(email);
   return {
     id: 900001,
     uid: TEST_UID,
-    name: "TEST — Live Sales",
+    name: TEST_RECORD_NAME,
     vertical: "Internal test",
     city: "Test Mode",
     website: "",
@@ -98,8 +111,9 @@ function testProspect(email: string): Prospect {
     fit: "possible",
     fit_plain: "This is a Test Mode send to an allowlisted inbox — not a sales prospect.",
     stage: "Approved for Outreach",
-    stage_plain: "Test send — waiting for your confirmation",
+    stage_plain: "TEST record — waiting for your confirmation. Not a real prospect.",
     research_status: "none",
+    is_demo: true,
     findings: [],
     contacts: [{
       name: "Test recipient",
@@ -125,7 +139,7 @@ function testProspect(email: string): Prospect {
       estimated_cents: 0,
       brief: {
         who: "Allowlisted test inbox",
-        why: "Confirm Gmail send, threading, replies, and booking without emailing a real prospect.",
+        why: "Confirm Gmail send, threading, replies, and follow-up stop without emailing a real prospect.",
         decision_maker: email,
         help: "This is a system test, not a sales pitch.",
         angle: "Live connection test",
@@ -134,8 +148,8 @@ function testProspect(email: string): Prospect {
       messages: [
         {
           kind: "email",
-          subject: "[TEST] Lamb Ascension live send check",
-          body: `This is a TEST email from Lamb Ascension Test Mode.\n\nIt was sent only because ${email} is on the owner’s test allowlist.\n\nPlease reply to this thread with any short message so reply detection can be verified.\n\nIf you did not expect this, you can ignore it.`,
+          subject: copy.subject,
+          body: copy.body,
           state: "READY FOR REVIEW",
           angle: "test",
           angle_why: "Allowlisted live test",
@@ -143,8 +157,17 @@ function testProspect(email: string): Prospect {
         },
         {
           kind: "followup1",
-          subject: "Re: [TEST] Lamb Ascension live send check",
-          body: "TEST follow-up 1. Reply to the original thread if you have not already. This is not a sales email.",
+          subject: `Re: ${copy.subject}`,
+          body: copy.followup1,
+          state: "DRAFT",
+          angle: "test",
+          angle_why: "Allowlisted live test",
+          evidence_used: ["test_mode"],
+        },
+        {
+          kind: "followup2",
+          subject: `Re: ${copy.subject}`,
+          body: copy.followup2,
           state: "DRAFT",
           angle: "test",
           angle_why: "Allowlisted live test",
@@ -159,7 +182,23 @@ function testProspect(email: string): Prospect {
         next_question: "Did the calendar event appear?",
       },
     },
-    history: [{ at: now, action: "test_mode", detail: `Prepared test send to ${email}` }],
+    history: [{ at: now, action: "test_draft_created", detail: `Prepared test send to ${email}` }],
+  };
+}
+
+function asTestLoop(row: Awaited<ReturnType<typeof loadTestLoop>>): TestLoopState {
+  return {
+    ...EMPTY_TEST_LOOP,
+    recipient: row.recipient,
+    allowlisted: row.allowlisted,
+    initialSent: row.initialSent,
+    followupScheduled: row.followupScheduled,
+    followupDueAt: row.followupDueAt,
+    followupSent: row.followupSent,
+    pendingFollowups: row.pendingFollowups,
+    replyDetected: row.replyCount > 0,
+    replyCount: row.replyCount,
+    sequenceStopped: row.sequenceStopped,
   };
 }
 
@@ -168,6 +207,8 @@ export async function testSettingsView(userId: string) {
   const integration = await loadIntegrationStatus(userId);
   const state = await loadTestState(userId);
   const beat = await loadWorkerHeartbeat();
+  const loopRow = await loadTestLoop(userId);
+  const testLoop = asTestLoop(loopRow);
   const worker = workerLight({
     secretPresent: secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET")),
     lastCompletedAt: beat.lastCompletedAt,
@@ -187,9 +228,9 @@ export async function testSettingsView(userId: string) {
     checks: scoreLiveChecks({
       messageId: state.message_id,
       threadId: state.thread_id,
-      replyCount: state.reply_count,
+      replyCount: loopRow.replyCount || state.reply_count,
       followupsBeforeReply: state.followups_before,
-      followupsAfterSync: state.followups_after,
+      followupsAfterSync: loopRow.pendingFollowups,
       sequenceId: state.sequence_id,
       slotsOffered: state.slots_offered,
       eventId: state.event_id,
@@ -199,6 +240,9 @@ export async function testSettingsView(userId: string) {
       secretPresent: secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET")),
     }),
     state,
+    testLoop,
+    speech: testLoopSpeech(testLoop),
+    trail: loopRow.trail,
   };
 }
 
@@ -242,6 +286,7 @@ export async function chooseTestRecipient(userId: string, recipient: string) {
   }
   const prospect = testProspect(email);
   await upsertProspects(userId, [prospect]);
+  await audit(userId, "test_draft_created", `Prepared TEST outreach to ${email}`, { prospectUid: TEST_UID, method: "MANUAL" });
   const state = await saveTestState(userId, { recipient: email, prospect_uid: TEST_UID, step: 2, pipeline_stage: prospect.stage });
   return { ok: true as const, prospect, preview: prospect.outreach?.messages.find((m) => m.kind === "email"), state };
 }
@@ -249,24 +294,41 @@ export async function chooseTestRecipient(userId: string, recipient: string) {
 export async function confirmTestSend(userId: string) {
   const settings = await loadSettings(userId);
   const state = await loadTestState(userId);
-  if (!settings.testMode) return { ok: false as const, reason: "Test Mode is off." };
+  if (!settings.testMode) return { ok: false as const, reason: "Test Mode is off.", code: "INITIAL_SEND_FAILED" as const };
   const prospect = await getProspectByUid(userId, state.prospect_uid || TEST_UID);
-  if (!prospect) return { ok: false as const, reason: "Choose a test recipient first." };
+  if (!prospect) return { ok: false as const, reason: "Choose a test recipient first.", code: "INITIAL_SEND_FAILED" as const };
   const email = prospect.outreach?.messages.find((m) => m.kind === "email");
-  if (!email) return { ok: false as const, reason: "There is no test email to send." };
+  if (!email) return { ok: false as const, reason: "There is no test email to send.", code: "INITIAL_SEND_FAILED" as const };
+  const allow = settings.allowlist.includes((state.recipient || "").toLowerCase());
+  if (!allow) {
+    return { ok: false as const, reason: "That address is not on your test list. Nothing was sent.", code: "NOT_ALLOWLISTED" as const };
+  }
+  await audit(userId, "initial_send_approved", `Confirm send to ${state.recipient}`, { prospectUid: TEST_UID, method: "MANUAL" });
+  const runId = `testrun-${Date.now()}`;
+  const copy = testEmailCopy(state.recipient);
   const sent = await sendLive({
     userId,
     prospect,
     kind: "email",
     method: "MANUAL",
     to: state.recipient,
-    subject: email.subject || "[TEST] Lamb Ascension live send check",
-    body: email.body,
+    subject: email.subject || copy.subject,
+    body: email.body || copy.body,
     firstApproved: true,
+    sequenceId: runId,
   });
-  if (!sent.ok) return sent;
+  if (!sent.ok) {
+    return {
+      ok: false as const,
+      reason: sent.reason,
+      code: sent.code === "UNKNOWN_DELIVERY" ? "UNKNOWN_DELIVERY" as const : sent.code === "NOT_ALLOWLISTED" ? "NOT_ALLOWLISTED" as const : "INITIAL_SEND_FAILED" as const,
+    };
+  }
+  if (!sent.threadId) {
+    return { ok: false as const, reason: "Gmail did not return a thread id. Follow-ups will not be scheduled.", code: "THREAD_MATCH_FAILED" as const };
+  }
   prospect.stage = "Contacted";
-  prospect.stage_plain = "Test email sent — waiting on a reply";
+  prospect.stage_plain = "TEST email sent — waiting on the worker follow-up. Not a real prospect.";
   if (prospect.outreach) {
     prospect.outreach.messages = prospect.outreach.messages.map((m) => m.kind === "email" ? { ...m, state: "SENT" } : m);
   }
@@ -277,41 +339,96 @@ export async function confirmTestSend(userId: string) {
     step: 5,
     pipeline_stage: prospect.stage,
   });
+  await audit(userId, "initial_send_result", `sent message=${sent.messageId}`, {
+    prospectUid: TEST_UID,
+    method: "MANUAL",
+    providerIds: sent.messageId,
+  });
   return { ok: true as const, messageId: sent.messageId, threadId: sent.threadId, state: next };
 }
 
 export async function approveTestFollowup(userId: string) {
   const state = await loadTestState(userId);
   const prospect = await getProspectByUid(userId, state.prospect_uid || TEST_UID);
-  if (!prospect || !state.message_id) return { ok: false as const, reason: "Send the test email first." };
+  if (!prospect || !state.message_id) {
+    return { ok: false as const, reason: "Send the test email first.", code: "FOLLOWUP_SCHEDULE_FAILED" as const };
+  }
+  const copy = testEmailCopy(state.recipient);
   const f1 = prospect.outreach?.messages.find((m) => m.kind === "followup1");
+  const f2 = prospect.outreach?.messages.find((m) => m.kind === "followup2");
   const threadId = (await lastThread(userId, TEST_UID)) || state.thread_id;
-  const id = await saveSequence(userId, TEST_UID, "MANUAL", [
-    {
-      step: "followup1",
-      dueAt: Date.now() + 3 * 86400000,
-      idempotencyKey: `${userId}:${TEST_UID}:followup1`,
-      body: f1?.body || "TEST follow-up 1.",
-      subject: f1?.subject || "Re: [TEST] Lamb Ascension live send check",
-      recipient: state.recipient,
-      threadId,
-    },
-  ]);
+  if (!threadId) {
+    return { ok: false as const, reason: "No Gmail thread to attach the follow-up to.", code: "THREAD_MATCH_FAILED" as const };
+  }
+  const now = Date.now();
+  const dueShort = now + TEST_FOLLOWUP_SHORT_MS;
+  const dueLater = now + TEST_FOLLOWUP_REMAINING_MS;
+  const stamp = String(now);
+  let id: string;
+  try {
+    id = await saveSequence(userId, TEST_UID, "MANUAL", [
+      {
+        step: "followup1",
+        dueAt: dueShort,
+        idempotencyKey: `${userId}:${TEST_UID}:followup1:${stamp}`,
+        body: f1?.body || copy.followup1,
+        subject: f1?.subject || `Re: ${copy.subject}`,
+        recipient: state.recipient,
+        threadId,
+      },
+      {
+        step: "followup2",
+        dueAt: dueLater,
+        idempotencyKey: `${userId}:${TEST_UID}:followup2:${stamp}`,
+        body: f2?.body || copy.followup2,
+        subject: f2?.subject || `Re: ${copy.subject}`,
+        recipient: state.recipient,
+        threadId,
+      },
+    ]);
+  } catch {
+    return { ok: false as const, reason: "Could not freeze the test follow-up schedule.", code: "FOLLOWUP_SCHEDULE_FAILED" as const };
+  }
   const pending = await countScheduledFollowups(userId, TEST_UID);
   const next = await saveTestState(userId, { sequence_id: id, followups_before: pending, step: 6 });
-  return { ok: true as const, sequenceId: id, pending, state: next };
+  await audit(userId, "followup_approved", `short due ${new Date(dueShort).toISOString()}; remaining due ${new Date(dueLater).toISOString()}`, {
+    prospectUid: TEST_UID,
+    method: "MANUAL",
+    sequenceId: id,
+  });
+  return {
+    ok: true as const,
+    sequenceId: id,
+    pending,
+    dueAt: new Date(dueShort).toISOString(),
+    remainingDueAt: new Date(dueLater).toISOString(),
+    state: next,
+  };
 }
 
 export async function syncTestReplies(userId: string) {
   const state = await loadTestState(userId);
-  const result = await syncRepliesForUser(userId);
-  const pending = await countScheduledFollowups(userId, state.prospect_uid || TEST_UID);
-  const next = await saveTestState(userId, {
-    reply_count: result.replies,
-    followups_after: pending,
-    step: 9,
-  });
-  return { ok: true as const, replies: result.replies, followupsLeft: pending, state: next };
+  try {
+    const result = await syncRepliesForUser(userId);
+    const pending = await countScheduledFollowups(userId, state.prospect_uid || TEST_UID);
+    if (result.replies > 0 && pending > 0) {
+      return {
+        ok: false as const,
+        reason: "A reply was stored but pending follow-ups were not cancelled.",
+        code: "FOLLOWUP_CANCEL_FAILED" as const,
+        replies: result.replies,
+        followupsLeft: pending,
+      };
+    }
+    const next = await saveTestState(userId, {
+      reply_count: result.replies,
+      followups_after: pending,
+      step: 9,
+    });
+    return { ok: true as const, replies: result.replies, followupsLeft: pending, state: next };
+  } catch {
+    return { ok: false as const, reason: "Gmail reply sync failed. Nothing else was sent.", code: "REPLY_SYNC_FAILED" as const };
+  }
 }
 
 export async function testBookingLink(userId: string, origin: string) {

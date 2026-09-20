@@ -290,10 +290,10 @@ export async function lastThread(userId: string, prospectUid: string): Promise<s
 
 export async function salesCounts(userId: string): Promise<{ ready: number; followups: number; replies: number; calls: number }> {
   const sql = await getSql();
-  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false`;
-  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled'`;
-  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId}`;
-  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked'`;
+  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false and uid <> ${"test-sales-flow"}`;
+  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled' and prospect_uid <> ${"test-sales-flow"}`;
+  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId} and r.prospect_uid <> ${"test-sales-flow"}`;
+  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked' and prospect_uid <> ${"test-sales-flow"}`;
   return {
     ready: Number(ready[0]?.n || 0),
     followups: Number(followups[0]?.n || 0),
@@ -680,6 +680,63 @@ export async function loadWorkerHeartbeat(): Promise<{
     lastResult: r?.last_result || "",
     runId: r?.run_id || null,
     source: r?.source || "",
+  };
+}
+
+export async function loadTestLoop(userId: string): Promise<{
+  recipient: string;
+  allowlisted: boolean;
+  initialSent: boolean;
+  followupScheduled: boolean;
+  followupDueAt: string | null;
+  followupSent: boolean;
+  pendingFollowups: number;
+  replyCount: number;
+  sequenceStopped: boolean;
+  trail: { at: string; action: string; detail: string }[];
+}> {
+  const { isAllowlisted } = await import("./test-mode");
+  const { TEST_WORKFLOW_UID } = await import("./test-loop");
+  const settings = await loadSettings(userId);
+  const state = await loadTestState(userId);
+  const sql = await getSql();
+  const uid = state.prospect_uid || TEST_WORKFLOW_UID;
+  const sentFirst = await sql<{ n: number }>`
+    select count(*)::int as n from email_messages
+    where user_id = ${userId} and prospect_uid = ${uid} and kind = 'email' and status = 'SENT'
+  `;
+  const sentFollow = await sql<{ n: number }>`
+    select count(*)::int as n from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'sent'
+  `;
+  const pending = await sql<{ n: number }>`
+    select count(*)::int as n from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status in ('scheduled','sending')
+  `;
+  const due = await sql<{ due_at: string | Date | null }>`
+    select min(due_at) as due_at from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'scheduled'
+  `;
+  const replies = await sql<{ n: number }>`
+    select count(*)::int as n from reply_events
+    where user_id = ${userId} and prospect_uid = ${uid}
+  `;
+  const stopped = await sql<{ n: number }>`
+    select count(*)::int as n from outreach_sequences
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'stopped'
+  `;
+  const recipient = state.recipient || "";
+  return {
+    recipient,
+    allowlisted: Boolean(recipient) && isAllowlisted(recipient, settings.allowlist),
+    initialSent: Number(sentFirst[0]?.n || 0) > 0 || Boolean(state.message_id),
+    followupScheduled: Number(pending[0]?.n || 0) > 0 || Number(sentFollow[0]?.n || 0) > 0 || Boolean(state.sequence_id),
+    followupDueAt: due[0]?.due_at ? new Date(due[0].due_at).toISOString() : null,
+    followupSent: Number(sentFollow[0]?.n || 0) > 0,
+    pendingFollowups: Number(pending[0]?.n || 0),
+    replyCount: Number(replies[0]?.n || 0),
+    sequenceStopped: Number(stopped[0]?.n || 0) > 0,
+    trail: await timeline(userId, uid),
   };
 }
 

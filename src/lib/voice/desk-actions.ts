@@ -228,6 +228,7 @@ export type DeskWorld = {
   discoveryConfigured?: boolean | null;
   missingIntegrations?: { name: string; ready: boolean }[];
   integration?: import("../mail/integration-status.ts").IntegrationStatus;
+  testLoop?: import("../mail/test-loop.ts").TestLoopState;
 };
 
 export type DeskEffect =
