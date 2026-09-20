@@ -23,7 +23,7 @@ import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
-import { calendarHealth, gmailHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
+import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
@@ -219,8 +219,8 @@ function buildTasks(rows: Prospect[]): Task[] {
   return tasks;
 }
 
-function healthClass(s: "connected" | "missing" | "attention") {
-  return s === "connected" ? "la-dot-good" : s === "attention" ? "la-dot-warn" : "la-dot-bad";
+function healthClass(s: ConnectionHealth) {
+  return s === "connected" ? "la-dot-good" : s === "attention" || s === "unknown" ? "la-dot-warn" : "la-dot-bad";
 }
 
 export function OwnerDesk() {
@@ -251,7 +251,7 @@ export function OwnerDesk() {
   const [findMsg, setFindMsg] = useState("");
   const [findLimit, setFindLimit] = useState(20);
   const [findMore, setFindMore] = useState(false);
-  const [google, setGoogle] = useState({ gmail: "missing" as "connected" | "missing" | "attention", calendar: "missing" as "connected" | "missing" | "attention", configured: false, gmailEmail: "", error: "" });
+  const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
   const [googleMsg, setGoogleMsg] = useState("");
   const [googleErr, setGoogleErr] = useState("");
@@ -531,6 +531,13 @@ export function OwnerDesk() {
       error: "",
     });
     setTestModeOn(status.test_mode);
+    if (status.gmail_connected) {
+      setVoiceReply((prev) => {
+        if (!prev) return prev;
+        if (/Gmail isn’t connected/i.test(prev) && !/token is valid/i.test(prev)) return "";
+        return prev;
+      });
+    }
   }
 
   async function refreshIntegration() {
@@ -1399,6 +1406,10 @@ export function OwnerDesk() {
     unlockAraOutput();
     araSpeech().unlock();
     try {
+      if (!liveRef.current.integration) {
+        try { await refreshIntegration(); } catch { /* keep UNKNOWN until it arrives */ }
+        if (araGen.current !== gen) return;
+      }
       let perm = micPermission;
       if (perm === "UNKNOWN" || perm === "REQUESTING" || perm === "GRANTED") {
         setMicPermission("REQUESTING");
@@ -1648,6 +1659,7 @@ export function OwnerDesk() {
 
   useEffect(() => {
     if (!hydrated) return;
+    if (!integration) return;
     const ctx = buildScreenContext(currentDesk(), deskWorld());
     const auto = autoAnnounceFromScreen(ctx);
     if (!auto) return;
@@ -1655,6 +1667,22 @@ export function OwnerDesk() {
     if (ev) utter(ev.text, announceSource(ev.type), ev.dedupeKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, discoveryConfigured, findMsg, googleMissing, hydrated, integration]);
+
+  useEffect(() => {
+    const badge = google.gmail;
+    const araGmail = integration ? gmailHealth(integration) : google.gmail;
+    if (badge === "unknown" || araGmail === "unknown") return;
+    if (badge !== araGmail) {
+      console.warn("INTEGRATION_STATE_MISMATCH", { badge, ara: araGmail, gmail_connected: integration?.gmail_connected ?? null });
+    }
+    const world = deskWorld();
+    const ctx = buildScreenContext(currentDesk(), world);
+    const factSaysMissing = ctx.facts.some((f) => /Gmail isn’t connected/i.test(f.text));
+    if (badge === "connected" && factSaysMissing) {
+      console.warn("INTEGRATION_STATE_MISMATCH", { badge, fact: "Gmail isn’t connected." });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [google.gmail, integration, view]);
 
   useEffect(() => {
     if (voiceMode !== "conversation") return;
@@ -2070,8 +2098,8 @@ export function OwnerDesk() {
       return (
         <section key={id} data-home-widget="connections" className="la-card mb-6">
           <h2 className="font-display text-xl">Connections</h2>
-          <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? `Gmail connected${google.gmailEmail ? ` · ${google.gmailEmail}` : ""}` : google.gmail === "attention" ? "Gmail needs attention" : "Gmail not connected"}</p>
-          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? "Calendar connected" : google.calendar === "attention" ? "Calendar needs attention" : "Calendar not connected"}</p>
+          <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? `Gmail connected${google.gmailEmail ? ` · ${google.gmailEmail}` : ""}` : google.gmail === "attention" ? "Gmail needs attention" : google.gmail === "unknown" ? "Checking Gmail…" : "Gmail not connected"}</p>
+          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? "Calendar connected" : google.calendar === "attention" ? "Calendar needs attention" : google.calendar === "unknown" ? "Checking Calendar…" : "Calendar not connected"}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
             <button type="button" className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>

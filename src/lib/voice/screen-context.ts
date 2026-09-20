@@ -58,6 +58,7 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
   const actions = labeledActionsFor(state, world);
   const facts: ScreenFact[] = [];
   const integration = world.integration;
+  const gmailKnown = Boolean(integration) || (world.gmail && world.gmail !== "unknown");
   if (integration) {
     facts.push({
       kind: "VERIFIED",
@@ -71,11 +72,11 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     if (!integration.gmail_connected) facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
     else if (!integration.gmail_token_valid) facts.push({ kind: "ERROR", text: "Gmail needs attention." });
     // Calendar-not-connected is NOT an ERROR on every screen — it is independent of Gmail.
-  } else {
+  } else if (gmailKnown) {
     if (world.gmail === "missing") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
     if (world.gmail === "attention") facts.push({ kind: "ERROR", text: "Gmail needs attention." });
   }
-  if (!integration) {
+  if (!integration && gmailKnown) {
     if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
   }
   if (world.calendarUnreadable) facts.push({ kind: "ERROR", text: world.calendarReason || "Calendar could not be read." });
@@ -193,6 +194,9 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
       for (const fact of speech.facts) {
         if (!facts.some((f) => f.text === fact.text)) facts.push(fact);
       }
+    } else if (!gmailKnown) {
+      important = "I’m checking your integrations.";
+      next = "I’ll have Gmail and Calendar status in a moment.";
     } else {
       const oauthMissing = oauthOnlyGaps((world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name));
       if (oauthMissing.length && world.gmail !== "connected") {

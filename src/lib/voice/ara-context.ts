@@ -1,6 +1,6 @@
 import type { AraDeskContext } from "./tools.ts";
 import { realtimeToolSchemas } from "./tools.ts";
-import { integrationInstructionBlock } from "../mail/integration-status.ts";
+import { INTEGRATIONS_LOADING_INSTRUCTION, integrationInstructionBlock } from "../mail/integration-status.ts";
 
 export const ARA_VOICE = "ara";
 export const ARA_MODEL = "grok-voice-latest";
@@ -137,10 +137,10 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     `Evidence open: ${ctx.evidenceOpen ? "yes" : "no"}.`,
     `Available tools on this screen: ${ctx.availableActions.join(", ") || "none"}.`,
     `Visible buttons: ${(ctx.screenActions || []).map((a) => `${a.label} → ${a.tool}`).join("; ") || "none"}.`,
-    `Gmail: ${ctx.gmail}. gmail_connected: ${ctx.gmail === "connected" ? "true" : "false"}. Calendar: ${ctx.calendar}. Test Mode: ${ctx.testMode ? "ON" : "off"}.`,
+    `Gmail: ${ctx.gmail}. gmail_connected: ${ctx.integration ? (ctx.integration.gmail_connected ? "true" : "false") : ctx.gmail === "connected" ? "true" : ctx.gmail === "missing" ? "false" : "unknown"}. Calendar: ${ctx.calendar}. Test Mode: ${ctx.testMode ? "ON" : "off"}.`,
     ctx.integration
       ? integrationInstructionBlock(ctx.integration)
-      : "If Gmail is connected, never say it is missing. Calendar is independent of Gmail.",
+      : INTEGRATIONS_LOADING_INSTRUCTION,
     `Home visual theme: ${ctx.visualSummary || "Default Lamb Ascension theme."}.`,
     `Pipeline: ${pipeline || "empty"}.`,
     "Resolve this/them/next from the current screen. If two companies match, ask which one. Never guess.",

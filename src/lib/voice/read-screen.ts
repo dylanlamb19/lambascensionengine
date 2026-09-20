@@ -36,7 +36,8 @@ export function readScreen(ctx: CurrentScreenContext, mode: ReadMode): string {
 }
 
 export function autoAnnounceFromScreen(ctx: CurrentScreenContext): { text: string; type: "BLOCKER" | "ERROR" } | null {
-  const errors = errorFacts(ctx.facts || []);
+  if (/I’m checking your integrations/i.test(ctx.important || "")) return null;
+  const errors = errorFacts(ctx.facts || []).filter((f) => !/I’m checking your integrations/i.test(f.text));
   const places = errors.find((f) => /Places is not configured/i.test(f.text));
   if (ctx.screen === "FIND_CLIENTS" && places) {
     return { text: places.text, type: "BLOCKER" };

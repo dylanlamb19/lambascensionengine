@@ -261,8 +261,8 @@ export type AraDeskContext = {
   taskTitle: string | null;
   tasks: { title: string; plain: string }[];
   prospects: AraProspectSnap[];
-  gmail: "connected" | "missing" | "attention";
-  calendar: "connected" | "missing" | "attention";
+  gmail: import("../mail/integration-status.ts").ConnectionHealth;
+  calendar: import("../mail/integration-status.ts").ConnectionHealth;
   testMode: boolean;
   allowlist: string[];
   sales?: { ready: number; followups: number; replies: number; calls: number };

@@ -9,10 +9,12 @@ import { type AraDeskContext } from "../voice/tools.ts";
 import {
   calendarHealth,
   gmailHealth,
+  INTEGRATIONS_LOADING_INSTRUCTION,
   integrationInstructionBlock,
   integrationSpeech,
   oauthCredentialGaps,
   oauthOnlyGaps,
+  resolvedGmailHealth,
   type IntegrationStatus,
 } from "./integration-status.ts";
 
@@ -72,8 +74,9 @@ function deskFrom(status: IntegrationStatus): AraDeskContext {
 test("TEST 1 — Gmail connected, Calendar disconnected: Ara does not say Gmail is missing", () => {
   const speech = integrationSpeech(currentProduction);
   assert.equal(speech.gmailAnswer, "Yes. Gmail is connected and the token is valid.");
-  assert.match(speech.setupRemaining, /Gmail is connected/);
+  assert.doesNotMatch(speech.setupRemaining, /Gmail still needs to be connected|Gmail isn’t connected/);
   assert.match(speech.setupRemaining, /Google Calendar still needs to be connected/);
+  assert.match(speech.setupRemaining, /outreach worker hasn’t completed an observed run yet/);
   assert.doesNotMatch(speech.settingsImportant, /Google isn’t configured yet/);
   assert.doesNotMatch(speech.settingsImportant, /Gmail isn’t connected/);
   assert.match(speech.settingsImportant, /Gmail is connected and the token is valid/);
@@ -131,6 +134,7 @@ test("TEST 5 — Calendar remains disconnected; only Calendar is not connected",
 test("TEST 6 — worker has no observed run: yellow, Gmail stays green", () => {
   const speech = integrationSpeech(currentProduction);
   assert.match(speech.setupRemaining, /outreach worker hasn’t completed an observed run yet/);
+  assert.doesNotMatch(speech.setupRemaining, /Gmail isn’t connected/);
   assert.equal(gmailHealth(currentProduction), "connected");
   assert.equal(currentProduction.worker_state, "configured");
   assert.equal(currentProduction.worker_last_success, null);
@@ -198,3 +202,106 @@ test("OAuth callback still persists tokens and owner desk refetches readiness", 
   assert.doesNotMatch(desk, /gmailConnection:\s*"Gmail connection"/);
   assert.match(desk, /onIntegration=\{applyIntegration\}/);
 });
+
+test("not-loaded-yet is UNKNOWN, never disconnected", () => {
+  assert.equal(resolvedGmailHealth(null), "unknown");
+  assert.equal(resolvedGmailHealth(undefined), "unknown");
+  assert.equal(resolvedGmailHealth(currentProduction), "connected");
+});
+
+test("Home loading state must not auto-announce Gmail isn’t connected", () => {
+  const loading: DeskWorld = {
+    prospects: [],
+    tasks: [],
+    gmail: "unknown",
+    calendarStatus: "unknown",
+    testMode: true,
+  };
+  const ctx = buildScreenContext(emptyDesk({ view: "home" }), loading);
+  assert.doesNotMatch(ctx.facts.map((f) => f.text).join(" | "), /Gmail isn’t connected/);
+  assert.equal(autoAnnounceFromScreen(ctx), null);
+  const settingsLoading = buildScreenContext(emptyDesk({ view: "settings" }), loading);
+  assert.match(settingsLoading.important, /checking your integrations/i);
+  assert.doesNotMatch(settingsLoading.important, /Gmail isn’t connected/);
+  assert.equal(autoAnnounceFromScreen(settingsLoading), null);
+});
+
+test("legacy default gmail=missing without integration is the stale-Home race; unknown is the fix", () => {
+  const staleDefault: DeskWorld = {
+    prospects: [],
+    tasks: [],
+    gmail: "missing",
+    calendarStatus: "missing",
+    testMode: true,
+  };
+  const staleHome = buildScreenContext(emptyDesk({ view: "home" }), staleDefault);
+  assert.match(staleHome.facts.map((f) => f.text).join(" | "), /Gmail isn’t connected/);
+  const auto = autoAnnounceFromScreen(staleHome);
+  assert.ok(auto);
+  assert.match(auto?.text || "", /Gmail isn’t connected/);
+
+  const unknownHome = buildScreenContext(emptyDesk({ view: "home" }), {
+    ...staleDefault,
+    gmail: "unknown",
+    calendarStatus: "unknown",
+  });
+  assert.doesNotMatch(unknownHome.facts.map((f) => f.text).join(" | "), /Gmail isn’t connected/);
+  assert.equal(autoAnnounceFromScreen(unknownHome), null);
+});
+
+test("after IntegrationStatus resolves connected, Home still does not say Gmail isn’t connected", () => {
+  const ctx = buildScreenContext(emptyDesk({ view: "home" }), worldFrom(currentProduction));
+  assert.doesNotMatch(ctx.facts.map((f) => f.text).join(" | "), /Gmail isn’t connected/);
+  assert.equal(autoAnnounceFromScreen(ctx), null);
+  assert.equal(speechSetup(), "Google Calendar still needs to be connected, and the outreach worker hasn’t completed an observed run yet.");
+});
+
+function speechSetup(): string {
+  return integrationSpeech(currentProduction).setupRemaining;
+}
+
+test("Ara session without IntegrationStatus is told UNKNOWN, not gmail_connected false", () => {
+  const ctx = buildScreenContext(emptyDesk({ view: "home" }), {
+    prospects: [],
+    tasks: [],
+    gmail: "unknown",
+    calendarStatus: "unknown",
+    testMode: true,
+  });
+  const desk: AraDeskContext = {
+    view: "home",
+    openUid: null,
+    companyName: null,
+    taskTitle: null,
+    tasks: [],
+    prospects: [],
+    gmail: "unknown",
+    calendar: "unknown",
+    testMode: true,
+    allowlist: [],
+    availableActions: [],
+    confirmationOpen: false,
+    evidenceOpen: false,
+    pipelineStage: null,
+    screen: ctx.screen,
+    lookingAt: ctx.lookingAt,
+    important: ctx.important,
+    nextFocus: ctx.next,
+    screenFacts: ctx.facts,
+  };
+  const instructions = buildAraInstructions(desk);
+  assert.match(instructions, /gmail_connected: unknown/);
+  assert.match(instructions, /UNKNOWN/);
+  assert.match(instructions, /Do not say Gmail isn’t connected/);
+  assert.doesNotMatch(instructions, /gmail_connected: false/);
+  assert.ok(INTEGRATIONS_LOADING_INSTRUCTION.length > 20);
+});
+
+test("owner desk defaults Gmail to unknown and waits for IntegrationStatus before auto-announce", () => {
+  const desk = readFileSync(new URL("../../components/owner-desk.tsx", import.meta.url), "utf8");
+  assert.match(desk, /gmail: "unknown" as ConnectionHealth/);
+  assert.match(desk, /if \(!integration\) return;/);
+  assert.match(desk, /INTEGRATION_STATE_MISMATCH/);
+  assert.match(desk, /if \(!liveRef\.current\.integration\)/);
+});
+

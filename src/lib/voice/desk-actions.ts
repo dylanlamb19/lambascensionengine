@@ -216,8 +216,8 @@ export type VisibleCalEvent = {
 export type DeskWorld = {
   prospects: { uid: string; name: string; score: number; stage_plain?: string; website?: string; phone?: string }[];
   tasks: { title: string; plain: string; uid?: string; id?: string; retry?: boolean }[];
-  gmail?: "connected" | "missing" | "attention";
-  calendarStatus?: "connected" | "missing" | "attention";
+  gmail?: import("../mail/integration-status.ts").ConnectionHealth;
+  calendarStatus?: import("../mail/integration-status.ts").ConnectionHealth;
   calendarUnreadable?: boolean;
   calendarReason?: string;
   calendarRange?: string;

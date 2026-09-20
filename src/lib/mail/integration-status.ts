@@ -2,9 +2,12 @@
  * One authoritative integration readiness model.
  * Ara, Settings, Home, Connection Test, and screen reading all derive from this.
  * Connection (Gmail vs Calendar) is independent of OAuth credential configuration.
+ *
+ * Client loading is tri-state. "Not loaded yet" is unknown — never false.
  */
 
 export type WorkerState = "running" | "configured" | "missing";
+export type ConnectionHealth = "unknown" | "connected" | "missing" | "attention";
 
 export type IntegrationStatus = {
   google_oauth_configured: boolean;
@@ -30,15 +33,26 @@ export type IntegrationSpeech = {
   facts: Array<{ kind: "VERIFIED" | "UNKNOWN" | "ESTIMATE" | "ERROR"; text: string }>;
 };
 
-export function gmailHealth(s: IntegrationStatus): "connected" | "missing" | "attention" {
+export function gmailHealth(s: IntegrationStatus): Exclude<ConnectionHealth, "unknown"> {
   if (!s.gmail_connected) return "missing";
   if (!s.gmail_token_valid) return "attention";
   return "connected";
 }
 
-export function calendarHealth(s: IntegrationStatus): "connected" | "missing" | "attention" {
+export function calendarHealth(s: IntegrationStatus): Exclude<ConnectionHealth, "unknown"> {
   if (!s.calendar_connected) return "missing";
   return "connected";
+}
+
+/** Client-side: null/undefined status is UNKNOWN, never disconnected. */
+export function resolvedGmailHealth(s: IntegrationStatus | null | undefined): ConnectionHealth {
+  if (!s) return "unknown";
+  return gmailHealth(s);
+}
+
+export function resolvedCalendarHealth(s: IntegrationStatus | null | undefined): ConnectionHealth {
+  if (!s) return "unknown";
+  return calendarHealth(s);
 }
 
 export function oauthCredentialGaps(setup: { name: string; ready: boolean }[]): string[] {
@@ -98,14 +112,9 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
   if (workerNeedsObservedRun(s)) remaining.push("the outreach worker hasn’t completed an observed run yet");
   else if (!s.worker_configured) remaining.push("the outreach worker still needs to be configured");
 
-  let setupRemaining: string;
-  if (s.gmail_connected && remaining.length) {
-    setupRemaining = `Gmail is connected. ${remaining.map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part)).join(", and ")}.`;
-  } else if (!remaining.length) {
-    setupRemaining = "Gmail and Google Calendar are connected. Nothing else is waiting on setup.";
-  } else {
-    setupRemaining = remaining.map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part)).join(", and ") + ".";
-  }
+  const setupRemaining = !remaining.length
+    ? "Gmail and Google Calendar are connected. Nothing else is waiting on setup."
+    : remaining.map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part)).join(", and ") + ".";
 
   const settingsImportant = oauthBlocker
     || [gmailConnectedLine(s), calendarLine(s)].join(" ");
@@ -164,3 +173,6 @@ export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: str
     "Ara voice availability is a separate issue from Gmail and Calendar.",
   ].join("\n");
 }
+
+export const INTEGRATIONS_LOADING_INSTRUCTION =
+  "INTEGRATION TRUTH: status is UNKNOWN because the server IntegrationStatus has not loaded yet. Do not say Gmail isn’t connected. Do not say Google isn’t configured. Do not guess. Wait for the next context update, or say you are checking integrations.";
