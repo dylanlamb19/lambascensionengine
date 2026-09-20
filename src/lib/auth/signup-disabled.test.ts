@@ -8,7 +8,7 @@ import {
 } from "./email-password.ts";
 
 describe("single-owner desk — public registration is impossible", () => {
-  it("Better Auth email/password has disableSignUp", () => {
+  it("5. public signup remains disabled", () => {
     assert.equal(emailAndPasswordConfig.disableSignUp, true);
     assert.equal(EMAIL_PASSWORD_SIGN_UP_DISABLED, true);
     assert.equal(
@@ -48,5 +48,6 @@ describe("single-owner desk — public registration is impossible", () => {
     const src = readFileSync(new URL("../../../src/routes/api/auth/$.ts", import.meta.url), "utf8");
     assert.match(src, /createFileRoute\("\/api\/auth\/\$"\)/);
     assert.match(src, /auth\.handler/);
+    assert.match(src, /ensureDbReady/);
   });
 });
