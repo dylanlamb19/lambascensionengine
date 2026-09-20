@@ -22,7 +22,7 @@ import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/ide
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
@@ -62,6 +62,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
+import { OWNER_TZ_DEFAULT, type LastOwnerEvent } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -294,6 +295,8 @@ export function OwnerDesk() {
   const [calLoading, setCalLoading] = useState(false);
   const [calConnected, setCalConnected] = useState(false);
   const [nextCall, setNextCall] = useState<{ prospect_uid: string; start_at: string; title: string } | null>(null);
+  const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
+  const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
   const [layout, setLayout] = useState<HomeLayout>(DEFAULT_HOME_LAYOUT);
   const [visual, setVisual] = useState<VisualTheme>(DEFAULT_VISUAL_THEME);
   const [chrome, setChrome] = useState<DesignChrome>(DEFAULT_CHROME);
@@ -321,12 +324,12 @@ export function OwnerDesk() {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
-    discoveryConfigured, googleMissing, integration,
+    discoveryConfigured, googleMissing, integration, lastOwnerEvent,
   });
   liveRef.current = {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
-    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration,
+    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent,
   };
   const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo && !isTestWorkflowUid(c.uid)).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
@@ -1307,6 +1310,8 @@ export function OwnerDesk() {
         companyName: e.companyName,
       })),
       selectedEventId: live.calEventId,
+      lastOwnerEvent: lastOwnerEventRef.current || live.lastOwnerEvent || null,
+      timezone: OWNER_TZ_DEFAULT,
       visual: live.visual,
       visualSummary: summarizeTheme(live.visual),
       adultMode: live.visual.adultMode,
@@ -1362,6 +1367,93 @@ export function OwnerDesk() {
         };
       } catch {
         return { ok: false, reason: "Calendar could not be read. Nothing was booked." };
+      }
+    }
+    if (result.plan.type === "owner_calendar_event") {
+      const plan = result.plan;
+      const fpKey = `${plan.title}|${plan.when || ""}|${plan.durationMinutes || 30}`;
+      if (gateRef.current.seen(`create_owner_calendar_event:${fpKey}`, 20_000) && lastOwnerEventRef.current) {
+        const last = lastOwnerEventRef.current;
+        return {
+          ok: true,
+          created: true,
+          alreadyExisted: true,
+          eventId: last.id,
+          title: last.title,
+          whenLabel: last.whenLabel,
+          start: last.start,
+          end: last.end,
+          attendees: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+          spoken: `Done — I added ‘${last.title}’ to your calendar for ${last.whenLabel}.`,
+        };
+      }
+      try {
+        const r = await createOwnerCalendarEventFn({
+          data: {
+            title: plan.title,
+            when: plan.when,
+            date: plan.date,
+            time: plan.time,
+            durationMinutes: plan.durationMinutes,
+            description: plan.description,
+            location: plan.location,
+            requestId: plan.requestId,
+          },
+        });
+        if (!r.ok) {
+          return {
+            ok: false,
+            created: false,
+            need: "need" in r ? r.need : undefined,
+            question: "question" in r ? r.question : undefined,
+            reason: "reason" in r ? r.reason : undefined,
+            spoken: r.spoken,
+            attendees: 0,
+            prospect: false,
+            sales: false,
+            emailSent: false,
+          };
+        }
+        const last: LastOwnerEvent = {
+          id: r.eventId,
+          title: r.title,
+          whenLabel: r.whenLabel,
+          start: r.start,
+          end: r.end,
+          fingerprint: r.fingerprint,
+        };
+        lastOwnerEventRef.current = last;
+        setLastOwnerEvent(last);
+        return {
+          ok: true,
+          created: true,
+          alreadyExisted: r.alreadyExisted,
+          eventId: r.eventId,
+          title: r.title,
+          whenLabel: r.whenLabel,
+          start: r.start,
+          end: r.end,
+          fingerprint: r.fingerprint,
+          attendees: 0,
+          guests: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+          spoken: r.spoken,
+        };
+      } catch {
+        return {
+          ok: false,
+          created: false,
+          spoken: "I couldn't create that event, so nothing was added.",
+          attendees: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+        };
       }
     }
     return result.output;
@@ -1724,7 +1816,7 @@ export function OwnerDesk() {
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent]);
 
   useEffect(() => {
     if (!userId) return;

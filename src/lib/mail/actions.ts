@@ -350,6 +350,131 @@ export const calendarTestEventFn = createServerFn({ method: "POST" })
     };
   });
 
+export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: {
+    title: string;
+    when?: string;
+    date?: string;
+    time?: string;
+    durationMinutes?: number;
+    description?: string;
+    location?: string;
+    requestId?: string;
+  }) => data)
+  .handler(async ({ data, context }) => {
+    const { createHash } = await import("node:crypto");
+    const { loadSettings, audit } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { createEvent, findMatchingEvent } = await import("../google/calendar");
+    const {
+      resolveOwnerWhen,
+      sanitizeOwnerTitle,
+      ownerEventFingerprint,
+      ownerEventSuccessSpeech,
+      ownerEventFailureSpeech,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+
+    const title = sanitizeOwnerTitle(data.title || "");
+    if (!title) {
+      return {
+        ok: false as const,
+        created: false as const,
+        need: "when" as const,
+        question: "What should I call that calendar event?",
+        spoken: "What should I call that calendar event?",
+      };
+    }
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const resolved = resolveOwnerWhen({
+      when: data.when,
+      date: data.date,
+      time: data.time,
+      durationMinutes: data.durationMinutes,
+      timezone,
+      now: new Date(),
+    });
+    if (!resolved.ok) {
+      return {
+        ok: false as const,
+        created: false as const,
+        need: resolved.need,
+        question: resolved.question,
+        spoken: resolved.question,
+      };
+    }
+
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        created: false as const,
+        reason: "Calendar isn’t connected, so nothing was added.",
+        spoken: ownerEventFailureSpeech(),
+        code: "CALENDAR_NOT_AUTHORIZED" as const,
+      };
+    }
+
+    const fingerprint = ownerEventFingerprint({
+      title,
+      startIso: resolved.start.toISOString(),
+      durationMinutes: resolved.durationMinutes,
+    });
+    const eventId = createHash("sha256").update(`${context.userId}:${fingerprint}`).digest("hex").slice(0, 32);
+
+    const created = await createEvent(tokens.access_token, {
+      title,
+      start: resolved.start,
+      end: resolved.end,
+      description: (data.description || "").slice(0, 1000),
+      location: (data.location || "").slice(0, 200) || undefined,
+      timeZone: timezone,
+      eventId,
+      reminderMinutes: [0],
+    });
+
+    let id = created.ok ? created.id : "";
+    let alreadyExisted = created.ok ? Boolean(created.alreadyExisted) : false;
+    if (!created.ok) {
+      const existing = await findMatchingEvent(tokens.access_token, { title, start: resolved.start });
+      if (existing) {
+        id = existing.id;
+        alreadyExisted = true;
+      } else {
+        await audit(context.userId, "create_owner_calendar_event", `failed:${title}`, { method: "VOICE" });
+        return {
+          ok: false as const,
+          created: false as const,
+          reason: created.error,
+          spoken: ownerEventFailureSpeech(),
+          code: created.code,
+        };
+      }
+    }
+
+    await audit(context.userId, "create_owner_calendar_event", alreadyExisted ? `exists:${title}` : `created:${title}`, { method: "VOICE", providerIds: id });
+    const spoken = ownerEventSuccessSpeech(title, resolved.whenLabel);
+    return {
+      ok: true as const,
+      created: true as const,
+      alreadyExisted,
+      eventId: id,
+      title,
+      whenLabel: resolved.whenLabel,
+      start: resolved.start.toISOString(),
+      end: resolved.end.toISOString(),
+      fingerprint,
+      attendees: 0 as const,
+      guests: 0 as const,
+      prospect: false as const,
+      sales: false as const,
+      emailSent: false as const,
+      spoken,
+    };
+  });
+
 export type AgendaEvent = {
   id: string;
   title: string;

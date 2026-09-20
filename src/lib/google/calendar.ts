@@ -7,6 +7,7 @@ import {
   CALENDAR_API_DISABLED_MESSAGE,
   type CalendarFailureCode,
 } from "./calendar-errors.ts";
+import { toOffsetIso } from "../calendar/owner-event.ts";
 
 export const CALENDAR_UNREADABLE =
   "Lamb Ascension couldn’t verify your calendar availability. No time was booked.";
@@ -248,32 +249,85 @@ export async function listBusy(
 
 export async function createEvent(
   accessToken: string,
-  opts: { title: string; start: Date; end: Date; description?: string },
+  opts: {
+    title: string;
+    start: Date;
+    end: Date;
+    description?: string;
+    location?: string;
+    timeZone?: string;
+    eventId?: string;
+    reminderMinutes?: number[];
+  },
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true; id: string } | { ok: false; error: string; code: CalendarFailureCode }> {
-  const res = await fetchImpl("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      summary: opts.title,
-      description: opts.description || "",
-      start: { dateTime: opts.start.toISOString() },
-      end: { dateTime: opts.end.toISOString() },
-    }),
-  });
-  const raw = await res.text().catch(() => "");
-  let json: { id?: string; error?: { message?: string } } = {};
-  try { json = raw ? JSON.parse(raw) as { id?: string; error?: { message?: string } } : {}; } catch { json = {}; }
-  if (!res.ok || !json.id) {
-    const code = classifyGoogleCalendarHttp(res.status, raw);
-    const mapped = code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : code;
-    if (mapped === "CALENDAR_API_DISABLED") return { ok: false, error: CALENDAR_API_DISABLED_MESSAGE, code: mapped };
-    return { ok: false, error: json.error?.message || calendarFailureReason(mapped), code: mapped };
+): Promise<{ ok: true; id: string; alreadyExisted?: boolean; htmlLink?: string } | { ok: false; error: string; code: CalendarFailureCode }> {
+  const startPayload = opts.timeZone
+    ? { dateTime: toOffsetIso(opts.start, opts.timeZone), timeZone: opts.timeZone }
+    : { dateTime: opts.start.toISOString() };
+  const endPayload = opts.timeZone
+    ? { dateTime: toOffsetIso(opts.end, opts.timeZone), timeZone: opts.timeZone }
+    : { dateTime: opts.end.toISOString() };
+  const body: Record<string, unknown> = {
+    summary: opts.title,
+    description: opts.description || "",
+    start: startPayload,
+    end: endPayload,
+  };
+  if (opts.location) body.location = opts.location;
+  if (opts.eventId) body.id = opts.eventId;
+  if (opts.reminderMinutes && opts.reminderMinutes.length) {
+    body.reminders = {
+      useDefault: false,
+      overrides: opts.reminderMinutes.map((minutes) => ({ method: "popup", minutes })),
+    };
   }
-  return { ok: true, id: json.id };
+  try {
+    const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none";
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text().catch(() => "");
+    let json: { id?: string; htmlLink?: string; error?: { message?: string } } = {};
+    try { json = raw ? JSON.parse(raw) as { id?: string; htmlLink?: string; error?: { message?: string } } : {}; } catch { json = {}; }
+    if (res.status === 409 && opts.eventId) {
+      return { ok: true, id: opts.eventId, alreadyExisted: true };
+    }
+    if (!res.ok || !json.id) {
+      const code = classifyGoogleCalendarHttp(res.status, raw);
+      const mapped = code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : code;
+      if (mapped === "CALENDAR_API_DISABLED") return { ok: false, error: CALENDAR_API_DISABLED_MESSAGE, code: mapped };
+      return { ok: false, error: json.error?.message || calendarFailureReason(mapped), code: mapped };
+    }
+    return { ok: true, id: json.id, htmlLink: json.htmlLink };
+  } catch {
+    return { ok: false, error: calendarFailureReason("EVENT_CREATE_FAILED"), code: "EVENT_CREATE_FAILED" };
+  }
+}
+
+export async function findMatchingEvent(
+  accessToken: string,
+  opts: { title: string; start: Date; windowMs?: number },
+  fetchImpl: typeof fetch = fetch,
+): Promise<GoogleCalEvent | null> {
+  const windowMs = opts.windowMs ?? 2 * 60 * 1000;
+  const listed = await listEvents(
+    accessToken,
+    new Date(opts.start.getTime() - windowMs),
+    new Date(opts.start.getTime() + windowMs + 60 * 1000),
+    fetchImpl,
+  );
+  if (!listed.ok) return null;
+  const want = opts.title.trim().toLowerCase();
+  return listed.events.find((e) => {
+    if (e.title.trim().toLowerCase() !== want) return false;
+    const t = new Date(e.start).getTime();
+    return Number.isFinite(t) && Math.abs(t - opts.start.getTime()) <= windowMs;
+  }) || null;
 }
 
 export async function deleteEvent(

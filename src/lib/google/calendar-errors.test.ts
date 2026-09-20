@@ -79,3 +79,34 @@ test("HTTP 200 with only notFound stays fail-closed", async () => {
   assert.equal(busy.ok, false);
   if (!busy.ok) assert.equal(busy.googleReason, "notFound");
 });
+
+test("owner personal createEvent never invites attendees and treats 409 as the same event", async () => {
+  const { createEvent } = await import("./calendar.ts");
+  const bodies: string[] = [];
+  const urls: string[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    urls.push(String(url));
+    bodies.push(String(init?.body || ""));
+    return new Response(JSON.stringify({ error: { message: "The requested identifier already exists." } }), { status: 409 });
+  }) as typeof fetch;
+  const start = new Date("2026-09-21T21:00:00.000Z");
+  const end = new Date("2026-09-21T21:30:00.000Z");
+  const created = await createEvent("tok", {
+    title: "Go to SouthState Bank and withdraw cash",
+    start,
+    end,
+    timeZone: "America/Chicago",
+    eventId: "abc123def456",
+    reminderMinutes: [0],
+  }, fetchImpl);
+  assert.equal(created.ok, true);
+  if (created.ok) {
+    assert.equal(created.id, "abc123def456");
+    assert.equal(created.alreadyExisted, true);
+  }
+  assert.match(urls[0], /sendUpdates=none/);
+  const body = JSON.parse(bodies[0]) as Record<string, unknown>;
+  assert.equal("attendees" in body, false);
+  assert.equal(body.summary, "Go to SouthState Bank and withdraw cash");
+  assert.deepEqual(body.reminders, { useDefault: false, overrides: [{ method: "popup", minutes: 0 }] });
+});

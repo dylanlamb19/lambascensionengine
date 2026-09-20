@@ -11,6 +11,12 @@ import type { DesignOp, SafeDesignSnapshot } from "../design/types.ts";
 import { FLAGS } from "../flags.ts";
 import { readScreen, type ReadMode } from "./read-screen.ts";
 import type { ScreenFact } from "./screen-context.ts";
+import {
+  OWNER_TZ_DEFAULT,
+  resolveOwnerWhen,
+  sanitizeOwnerTitle,
+  type LastOwnerEvent,
+} from "../calendar/owner-event.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
@@ -53,6 +59,8 @@ export const ALLOWED_TOOLS = [
   "get_calendar_availability",
   "get_next_call",
   "schedule_call",
+  "create_owner_calendar_event",
+  "get_last_owner_calendar_event",
   "send_email",
   "next_task",
   "previous_task",
@@ -151,6 +159,11 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   CALENDAR_PREV: "calendar_prev",
   CALENDAR_SET_VIEW: "calendar_set_view",
   OPEN_CALENDAR_EVENT: "open_calendar_event",
+  CREATE_OWNER_CALENDAR_EVENT: "create_owner_calendar_event",
+  ADD_CALENDAR_EVENT: "create_owner_calendar_event",
+  SET_REMINDER: "create_owner_calendar_event",
+  ADD_REMINDER: "create_owner_calendar_event",
+  GET_LAST_OWNER_CALENDAR_EVENT: "get_last_owner_calendar_event",
   REARRANGE_HOME: "rearrange_home",
   HIDE_HOME_WIDGET: "hide_home_widget",
   SHOW_HOME_WIDGET: "show_home_widget",
@@ -283,6 +296,8 @@ export type AraDeskContext = {
   calendarRange?: string;
   calendarEvents?: { id: string; title: string; when: string; prospectUid?: string | null; companyName?: string | null }[];
   selectedEventId?: string | null;
+  lastOwnerEvent?: LastOwnerEvent | null;
+  timezone?: string;
   visual?: VisualTheme | null;
   visualSummary?: string;
   adultMode?: boolean;
@@ -325,6 +340,17 @@ export type ToolPlan =
   | { type: "read_screen"; mode: "page" | "everything" | "warning" | "form" | "options" }
   | { type: "availability" }
   | { type: "next_call" }
+  | {
+      type: "owner_calendar_event";
+      title: string;
+      when?: string;
+      date?: string;
+      time?: string;
+      durationMinutes?: number;
+      description?: string;
+      location?: string;
+      requestId?: string;
+    }
   | { type: "calendar_today" }
   | { type: "calendar_next" }
   | { type: "calendar_prev" }
@@ -404,7 +430,9 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "stop_followups", description: "Stop automated follow-ups for a prospect.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "get_calendar_availability", description: "Read verified open times and the next booked sales call. Fail closed if calendar cannot be read.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_next_call", description: "When is the next booked sales call. Same calendar data the buttons use.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "schedule_call", description: "Prepare a booking. Does not book until the owner says Confirm schedule. Returns REQUIRES_CONFIRMATION.", parameters: { type: "object", properties: uid } },
+    { type: "function", name: "schedule_call", description: "Prepare a PROSPECT sales-call booking. Does not book until the owner says Confirm schedule. Do NOT use this for personal reminders, dentist, gym, lunch, or bank errands.", parameters: { type: "object", properties: uid } },
+    { type: "function", name: "create_owner_calendar_event", description: "Create a PERSONAL event on Dylan’s Google Calendar. Use for reminders, appointments, gym, lunch, errands. Explicit voice commands like ‘add this to my calendar’ or ‘remind me on my calendar at 4 PM’ are authorization — do not ask for Confirm schedule. No attendees, no email, no prospect, no sales metrics. Resolve tomorrow/Friday/next Monday in the owner timezone. If the time is missing, do not invent one — omit the call or pass only the day so the tool can ask. Only report success after the tool returns created=true.", parameters: { type: "object", properties: { title: { type: "string", description: "Short event name. For ‘remind me to go to SouthState Bank and withdraw cash’, use ‘Go to SouthState Bank and withdraw cash’." }, when: { type: "string", description: "Relative phrase in the owner timezone, e.g. ‘tomorrow at 4 PM’, ‘Friday at noon’, ‘next Monday at 9’, ‘tonight at 7’." }, date: { type: "string" }, time: { type: "string" }, duration_minutes: { type: "number" }, description: { type: "string" }, location: { type: "string" }, request_id: { type: "string" } }, required: ["title"] } },
+    { type: "function", name: "get_last_owner_calendar_event", description: "What personal calendar event Ara last created this session. Use when Dylan asks ‘what did you just add?’", parameters: { type: "object", properties: {} } },
     { type: "function", name: "send_email", description: "Prepare a first email. Does NOT send. Returns REQUIRES_CONFIRMATION. Owner must say Confirm send.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "next_task", description: "Move to the next owner task. Same as the Next button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "previous_task", description: "Move to the previous owner task.", parameters: { type: "object", properties: {} } },
@@ -884,6 +912,79 @@ export function executeAllowlistedTool(
   }
   if (tool === "get_next_call") {
     return { ok: true, tool, rejected: false, output: { ok: true }, plan: { type: "next_call" } };
+  }
+  if (tool === "get_last_owner_calendar_event") {
+    const last = ctx.lastOwnerEvent || null;
+    return {
+      ok: true, tool, rejected: false,
+      output: last
+        ? { ok: true, created: true, ...last, spoken: `I added ‘${last.title}’ to your calendar for ${last.whenLabel}.` }
+        : { ok: true, created: false, spoken: "I haven’t added a personal calendar event this session." },
+      plan: { type: "none" },
+    };
+  }
+  if (tool === "create_owner_calendar_event") {
+    const title = sanitizeOwnerTitle(String(args.title || args.summary || args.name || ""));
+    const when = String(args.when || args.at || "").trim();
+    const date = String(args.date || "").trim();
+    const time = String(args.time || "").trim();
+    const durationMinutes = num(args, "duration_minutes", "durationMinutes", "duration");
+    const description = String(args.description || args.notes || "").slice(0, 1000);
+    const location = String(args.location || "").slice(0, 200);
+    const requestId = String(args.request_id || args.requestId || "").trim();
+    if (!title) {
+      return {
+        ok: false, tool, rejected: false,
+        output: { ok: false, created: false, need: "when", question: "What should I call that calendar event?", spoken: "What should I call that calendar event?" },
+        plan: { type: "none" },
+      };
+    }
+    const resolved = resolveOwnerWhen({
+      when: when || undefined,
+      date: date || undefined,
+      time: time || undefined,
+      durationMinutes,
+      timezone: ctx.timezone || OWNER_TZ_DEFAULT,
+    });
+    if (!resolved.ok) {
+      return {
+        ok: false, tool, rejected: false,
+        output: {
+          ok: false,
+          created: false,
+          need: resolved.need,
+          question: resolved.question,
+          spoken: resolved.question,
+          title,
+        },
+        plan: { type: "none" },
+      };
+    }
+    return {
+      ok: true, tool, rejected: false,
+      output: {
+        ok: true,
+        pending: true,
+        created: false,
+        title,
+        when: resolved.whenLabel,
+        durationMinutes: resolved.durationMinutes,
+        attendees: 0,
+        prospect: false,
+        sales: false,
+      },
+      plan: {
+        type: "owner_calendar_event",
+        title,
+        when: when || resolved.whenLabel,
+        date: date || undefined,
+        time: time || undefined,
+        durationMinutes: resolved.durationMinutes,
+        description: description || undefined,
+        location: location || undefined,
+        requestId: requestId || undefined,
+      },
+    };
   }
   if (tool === "set_find_clients_form") {
     const f = findFields(args);
