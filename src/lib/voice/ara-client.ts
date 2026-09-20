@@ -1,6 +1,7 @@
 import { isAllowedTool, type AraDeskContext } from "./tools.ts";
 import { sessionUpdatePayload } from "./ara-context.ts";
-import { voiceFailureReason } from "./voice-failure.ts";
+import { realtimeErrorText, voiceFailureReason } from "./voice-failure.ts";
+import { shouldFailClosedOnRealtimeError } from "./lifecycle.ts";
 import { araSpeech } from "./speech-controller.ts";
 import { micStreamLive, stopMicStream } from "./mic.ts";
 
@@ -242,7 +243,16 @@ export class AraRealtime {
   private async onEvent(ev: Record<string, unknown>) {
     const type = String(ev.type || "");
     if (type === "error") {
-      this.handlers.onError(voiceFailureReason("PROVIDER_ERROR"));
+      if (!shouldFailClosedOnRealtimeError(ev)) {
+        if (this.microphoneLive) this.handlers.onStatus("listening");
+        else if (this.sessionReady) this.handlers.onStatus("ready");
+        return;
+      }
+      const detail = realtimeErrorText(ev).toLowerCase();
+      const code = /auth|token|unauthor|forbidden|invalid api key|not authenticated/.test(detail)
+        ? "VOICE_AUTH_FAILED"
+        : "PROVIDER_ERROR";
+      this.handlers.onError(voiceFailureReason(code));
       this.handlers.onStatus("unavailable");
       return;
     }

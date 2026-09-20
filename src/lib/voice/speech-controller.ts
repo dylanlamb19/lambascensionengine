@@ -1,4 +1,5 @@
 import { unlockAraOutput } from "./audio-out.ts";
+import { voiceFailureReason } from "./voice-failure.ts";
 
 export type SpeechSource =
   | "CONVERSATION"
@@ -335,20 +336,32 @@ export class AraSpeechController {
       const result = await ttsClient()(job.text, job.source);
       if (gen !== this.gen) return;
       if (!result.ok) {
-        this.voiceUnavailable = true;
-        this.playing = false;
-        this.current = null;
-        this.onUnavailable?.(true, result.reason);
-        this.onMicGate?.(false);
-        this.onSpeaking?.(false, null);
-        this.emit();
+        this.failPlayback(result.reason, gen);
         return;
       }
       this.voiceUnavailable = false;
       this.onUnavailable?.(false, "");
-      const { pcm, rate } = decodeTtsAudio(result.pcm, result.rate || 24000);
+      let pcm: Int16Array;
+      let rate: number;
+      try {
+        const decoded = decodeTtsAudio(result.pcm, result.rate || 24000);
+        pcm = decoded.pcm;
+        rate = decoded.rate;
+      } catch {
+        this.failPlayback(voiceFailureReason("VOICE_AUDIO_DECODE_FAILED"), gen);
+        return;
+      }
+      if (!pcm.length) {
+        this.failPlayback(voiceFailureReason("VOICE_BAD_RESPONSE"), gen);
+        return;
+      }
       if (gen !== this.gen) return;
-      this.playPcm(pcm, rate);
+      try {
+        this.playPcm(pcm, rate);
+      } catch {
+        this.failPlayback(voiceFailureReason("VOICE_PLAYBACK_FAILED"), gen);
+        return;
+      }
       const ms = Math.max(80, (pcm.length / (rate || 24000)) * 1000 + 40);
       await wait(ms);
       if (gen !== this.gen) return;
@@ -359,14 +372,20 @@ export class AraSpeechController {
       this.drain();
     } catch {
       if (gen !== this.gen) return;
-      this.voiceUnavailable = true;
-      this.playing = false;
-      this.current = null;
-      this.onUnavailable?.(true, "Ara's voice isn't available right now.");
-      this.onMicGate?.(false);
-      this.onSpeaking?.(false, null);
-      this.emit();
+      this.failPlayback(voiceFailureReason("VOICE_PLAYBACK_FAILED"), gen);
     }
+  }
+
+  private failPlayback(reason: string, gen: number) {
+    if (gen !== this.gen) return;
+    this.voiceUnavailable = true;
+    this.playing = false;
+    this.current = null;
+    this.queue = [];
+    this.onUnavailable?.(true, reason);
+    this.onMicGate?.(false);
+    this.onSpeaking?.(false, null);
+    this.emit();
   }
 
   private ensureCtx(): boolean {

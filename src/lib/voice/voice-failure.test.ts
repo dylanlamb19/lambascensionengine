@@ -19,6 +19,14 @@ test("every reconnect failure category is named", () => {
     "MIC_BLOCKED",
     "AUDIO_OUTPUT_BLOCKED",
     "PROVIDER_ERROR",
+    "VOICE_AUTH_FAILED",
+    "VOICE_RATE_LIMITED",
+    "VOICE_UPSTREAM_4XX",
+    "VOICE_UPSTREAM_5XX",
+    "VOICE_TIMEOUT",
+    "VOICE_BAD_RESPONSE",
+    "VOICE_AUDIO_DECODE_FAILED",
+    "VOICE_PLAYBACK_FAILED",
   ] as const) {
     assert.match(voiceFailureReason(code), new RegExp(code));
   }
