@@ -630,9 +630,9 @@ export async function reserveSendCap(userId: string, kind: "first" | "followup",
   });
 }
 
-export async function startWorkerHeartbeat(runId: string, source: string): Promise<void> {
+export async function startWorkerHeartbeat(runId: string, source: string): Promise<boolean> {
   const sql = await getSql();
-  await sql`
+  const rows = await sql<{ id: string }>`
     insert into outreach_worker_heartbeat (id, last_started_at, run_id, source, last_result, last_error, updated_at)
     values ('global', now(), ${runId}, ${source}, ${"running"}, ${""}, now())
     on conflict (id) do update set
@@ -642,7 +642,11 @@ export async function startWorkerHeartbeat(runId: string, source: string): Promi
       last_result = 'running',
       last_error = '',
       updated_at = now()
+    where outreach_worker_heartbeat.last_result is distinct from 'running'
+       or outreach_worker_heartbeat.last_started_at < now() - interval '4 minutes'
+    returning id
   `;
+  return rows.length > 0;
 }
 
 export async function finishWorkerHeartbeat(runId: string, result: string, error = ""): Promise<void> {

@@ -239,19 +239,30 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
   return { ok: true, replies: n };
 }
 
-export async function tickOutreachWorker(source = "in-process"): Promise<{ runId: string; sawTest: number }> {
+export async function tickOutreachWorker(source = "in-process"): Promise<{
+  runId: string;
+  sawTest: number;
+  sent: number;
+  followupsSkipped: number;
+  rescheduled: number;
+  skippedReason?: string;
+}> {
   const { newUid } = await import("../prospects/ids");
   const runId = newUid();
-  await startWorkerHeartbeat(runId, source);
+  const started = await startWorkerHeartbeat(runId, source);
+  if (!started) {
+    return { runId, sawTest: 0, sent: 0, followupsSkipped: 0, rescheduled: 0, skippedReason: "already-running" };
+  }
   try {
     const users = await listGmailUsers();
     for (const userId of users) {
       await syncRepliesForUser(userId);
     }
-    await runDueFollowups();
+    const due = await runDueFollowups();
     const sawTest = await markTestWorkflowSeen(runId);
-    await finishWorkerHeartbeat(runId, sawTest ? "ok:test-seen" : "ok");
-    return { runId, sawTest };
+    const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled}`;
+    await finishWorkerHeartbeat(runId, sawTest ? `${summary} test-seen` : summary);
+    return { runId, sawTest, sent: due.sent, followupsSkipped: due.skipped, rescheduled: due.rescheduled };
   } catch (err) {
     await finishWorkerHeartbeat(runId, "error", err instanceof Error ? err.message : "worker failed");
     throw err;

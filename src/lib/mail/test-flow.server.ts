@@ -171,6 +171,7 @@ export async function testSettingsView(userId: string) {
   const worker = workerLight({
     secretPresent: secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET")),
     lastCompletedAt: beat.lastCompletedAt,
+    lastResult: beat.lastResult,
     now: Date.now(),
   });
   return {

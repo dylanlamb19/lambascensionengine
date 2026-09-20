@@ -11,9 +11,13 @@ export function workerLight(opts: {
   lastCompletedAt: number | null;
   now: number;
   staleMs?: number;
+  lastResult?: string;
 }): { state: WorkerLightState; detail: string } {
   if (!opts.secretPresent && opts.lastCompletedAt == null) {
     return { state: "missing", detail: "🔴 Worker not configured" };
+  }
+  if ((opts.lastResult || "").startsWith("error")) {
+    return { state: "configured", detail: "🔴 Worker last run failed" };
   }
   if (opts.lastCompletedAt == null) {
     return { state: "configured", detail: "🟡 Worker configured but no run observed yet" };

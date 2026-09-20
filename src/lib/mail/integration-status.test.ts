@@ -97,6 +97,17 @@ test("TEST 1 — Gmail connected, Calendar disconnected: Ara does not say Gmail 
   assert.match(instructions, /gmail_connected: true/);
   assert.match(instructions, /Yes\. Gmail is connected and the token is valid/);
   assert.doesNotMatch(instructions, /Google isn’t configured yet/);
+  assert.match(speech.workerAnswer, /successful run hasn’t been observed yet/);
+  const afterRun = integrationSpeech({
+    ...currentProduction,
+    calendar_connected: true,
+    calendar_token_valid: true,
+    calendar_freebusy_valid: true,
+    worker_state: "running",
+    worker_last_success: new Date(Date.now() - 60_000).toISOString(),
+    worker_detail: "🟢 Worker running — last successful run 1 minute ago",
+  });
+  assert.match(afterRun.workerAnswer, /completed successfully 1 minute ago/);
 });
 
 test("TEST 2 — reload Settings keeps Gmail green / connected in the same model", () => {

@@ -39,6 +39,9 @@ test("worker light: missing / configured / running", () => {
   const running = workerLight({ secretPresent: true, lastCompletedAt: now - 60_000, now });
   assert.equal(running.state, "running");
   assert.match(running.detail, /last successful run 1 minute/);
+  const failed = workerLight({ secretPresent: true, lastCompletedAt: now - 60_000, lastResult: "error", now });
+  assert.equal(failed.state, "configured");
+  assert.match(failed.detail, /failed/);
 });
 
 test("Google free/busy HTTP failure produces zero offered slots and an error", async () => {

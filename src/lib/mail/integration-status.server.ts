@@ -18,6 +18,7 @@ export async function loadIntegrationStatus(
   const worker = workerLight({
     secretPresent: secretPresent(env("OUTREACH_JOB_SECRET") || env("CRON_SECRET")),
     lastCompletedAt: beat.lastCompletedAt,
+    lastResult: beat.lastResult,
     now: Date.now(),
   });
 

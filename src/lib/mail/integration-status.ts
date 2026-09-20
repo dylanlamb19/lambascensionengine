@@ -31,12 +31,20 @@ export type IntegrationSpeech = {
   gmailAnswer: string;
   calendarAnswer: string;
   freeBusyAnswer: string;
+  workerAnswer: string;
   setupRemaining: string;
   settingsImportant: string;
   settingsNext: string;
   oauthBlocker: string | null;
   facts: Array<{ kind: "VERIFIED" | "UNKNOWN" | "ESTIMATE" | "ERROR"; text: string }>;
 };
+
+function minutesFromIso(iso: string | null): number {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 60000));
+}
 
 export function gmailHealth(s: IntegrationStatus): Exclude<ConnectionHealth, "unknown"> {
   if (!s.gmail_connected) return "missing";
@@ -124,6 +132,14 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
       ? "Yes. I can read your Google Calendar availability."
       : s.calendar_freebusy_detail || "Calendar is connected, but availability couldn’t be read.";
 
+  const workerAnswer = !s.worker_configured && !s.worker_last_success
+    ? "No. The outreach worker isn’t configured yet."
+    : !s.worker_last_success
+      ? "It’s configured, but a successful run hasn’t been observed yet."
+      : s.worker_state === "running"
+        ? `Yes. The outreach worker completed successfully ${minutesFromIso(s.worker_last_success)} minute${minutesFromIso(s.worker_last_success) === 1 ? "" : "s"} ago.`
+        : s.worker_detail.replace(/^[🟢🟡🔴✅❌]\s*/u, "") || "The outreach worker is configured.";
+
   const remaining: string[] = [];
   if (!s.gmail_connected) remaining.push("Gmail still needs to be connected");
   if (!s.calendar_connected) remaining.push("Google Calendar still needs to be connected");
@@ -169,7 +185,7 @@ export function integrationSpeech(s: IntegrationStatus, oauthGaps: string[] = []
     text: s.test_mode ? "Test Mode is on. Emails only go to the allowlist." : "Test Mode is off. Live outreach rules apply. First-contact approval still required.",
   });
 
-  return { gmailAnswer, calendarAnswer, freeBusyAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
+  return { gmailAnswer, calendarAnswer, freeBusyAnswer, workerAnswer, setupRemaining, settingsImportant, settingsNext, oauthBlocker, facts };
 }
 
 export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: string[] = []): string {
@@ -190,6 +206,7 @@ export function integrationInstructionBlock(s: IntegrationStatus, oauthGaps: str
     `If Dylan asks whether Gmail is connected, answer: ${speech.gmailAnswer}`,
     `If Dylan asks whether Calendar is connected, answer: ${speech.calendarAnswer}`,
     `If Dylan asks whether you can see when he is free, answer: ${speech.freeBusyAnswer}`,
+    `If Dylan asks whether the worker is running, or whether the outreach worker is running, answer: ${speech.workerAnswer}`,
     `If Dylan asks what still needs setup, answer: ${speech.setupRemaining}`,
     "Never say Gmail is missing when gmail_connected is true.",
     "Never say Calendar is disconnected when calendar_connected is true.",
