@@ -235,6 +235,125 @@ export function composeProspectFilter(current: ProspectViewFilter, incoming: Pro
   return out;
 }
 
+export type FilterIntentMode = "refine" | "replace";
+
+const SEMANTIC_KEYS: (keyof ProspectViewFilter)[] = [
+  "vertical", "city", "fit", "research", "reach", "stage",
+  "hasPhone", "hasEmail", "hasWebsite", "hasDecisionMaker",
+  "source", "excludeTest", "excludeDemo", "addedAfter",
+  "minReviews", "minRating", "prospectUids",
+];
+
+function semanticCount(f: ProspectViewFilter): number {
+  let n = 0;
+  for (const k of SEMANTIC_KEYS) if (f[k] !== undefined) n += 1;
+  return n;
+}
+
+function isSortOnlyFilter(f: ProspectViewFilter): boolean {
+  const copy: ProspectViewFilter = { ...f };
+  delete copy.sort;
+  delete copy.replace;
+  delete copy.limit;
+  delete copy.lastDiscovery;
+  return isFilterEmpty(copy);
+}
+
+function normalizeUtterance(raw: string): string {
+  return (raw || "").toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Last Find Clients set: those / you just found / the five you matched. */
+export function refersToLastSearch(raw: string): boolean {
+  const t = normalizeUtterance(raw);
+  if (!t) return false;
+  if (/\b(you just (found|matched)|just (found|matched)|last search|what you found|what you just)\b/.test(t)) return true;
+  if (/\b(those|these) (roofers|companies|prospects|ones|\d+|five)\b/.test(t)) return true;
+  if (/^(show( me)? (those|these|them)|show those|show these|show them)\b/.test(t)) return true;
+  if (/\bthe (five|\d+) .+ (you |just )?(found|matched)\b/.test(t)) return true;
+  if (/\bfrom those\b/.test(t)) return true;
+  return false;
+}
+
+/** Narrowing the current Pipeline view, not starting a new query. */
+export function refersToCurrentSet(raw: string): boolean {
+  const t = normalizeUtterance(raw);
+  if (!t) return false;
+  if (refersToLastSearch(t)) return true;
+  if (/\b(of those|among (these|those|them)|from (this|that) list|from these)\b/.test(t)) return true;
+  if (/\bwhich of (those|these|them)\b/.test(t)) return true;
+  if (/\b(these|those) ones\b/.test(t)) return true;
+  if (/\bonly (show )?(the )?(ones|good|possible)\b/.test(t)) return true;
+  if (/\bjust the ones\b/.test(t)) return true;
+  if (/\bnow (just |only )?(show )?(me )?(the ones|those|these|the good)\b/.test(t)) return true;
+  if (/\bthe ones (that |with |who |without |still )\b/.test(t)) return true;
+  if (/\bhide the ones\b/.test(t)) return true;
+  if (/\bsort (those|these|them)\b/.test(t)) return true;
+  if (/\bwhich ones\b/.test(t)) return true;
+  return false;
+}
+
+function hasNarrowingConstraint(f: ProspectViewFilter): boolean {
+  return Boolean(
+    f.fit || f.research || f.reach || f.stage
+    || f.hasPhone !== undefined || f.hasEmail !== undefined || f.hasWebsite !== undefined || f.hasDecisionMaker !== undefined
+    || f.excludeTest || f.excludeDemo || f.addedAfter || f.minReviews || f.minRating || f.sort
+    || f.source,
+  );
+}
+
+function isStandalonePayload(f: ProspectViewFilter): boolean {
+  if (f.addedAfter) return true;
+  if (f.vertical?.length || f.city) return true;
+  return semanticCount(f) >= 2;
+}
+
+/**
+ * REFINE_CURRENT_VIEW vs REPLACE_CURRENT_VIEW.
+ * Utterance deixis wins. A fully specified new query replaces leftover filters
+ * even if the model passed compose=true.
+ */
+export function classifyFilterIntent(
+  incoming: ProspectViewFilter,
+  opts?: { utterance?: string; current?: ProspectViewFilter },
+): FilterIntentMode {
+  const t = normalizeUtterance(opts?.utterance || "");
+  if (incoming.replace === true && isFilterEmpty({ ...incoming, replace: undefined })) return "replace";
+  if (t && /^(clear filters|reset (the )?list|show everything( again)?|show all( of them)?( again)?|show all prospects|start over|show (me )?everything)$/.test(t)) {
+    return "replace";
+  }
+  if (t && refersToLastSearch(t) && !hasNarrowingConstraint(incoming)) return "replace";
+  if (t && refersToCurrentSet(t)) return "refine";
+  if (isSortOnlyFilter(incoming) && !incoming.vertical && !incoming.city) return "refine";
+  if (t && !refersToCurrentSet(t) && isStandalonePayload(incoming)) return "replace";
+  if (!t && isStandalonePayload(incoming)) return "replace";
+  if (incoming.replace === true) return "replace";
+  if (incoming.replace === false) return "refine";
+  if (incoming.lastDiscovery && semanticCount(incoming) <= 1) return "refine";
+  if (semanticCount(incoming) <= 1) return "refine";
+  return "replace";
+}
+
+/** Single place that turns an incoming filter into the next Pipeline VIEW. */
+export function resolveProspectFilter(
+  current: ProspectViewFilter,
+  incoming: ProspectViewFilter,
+  opts?: { utterance?: string },
+): { filter: ProspectViewFilter; mode: FilterIntentMode } {
+  const mode = classifyFilterIntent(incoming, { utterance: opts?.utterance, current });
+  const nextIn: ProspectViewFilter = { ...incoming };
+  if (mode === "replace") {
+    nextIn.replace = true;
+    if (!refersToLastSearch(opts?.utterance || "")) {
+      delete nextIn.lastDiscovery;
+      delete nextIn.prospectUids;
+    }
+  } else {
+    nextIn.replace = false;
+  }
+  return { filter: composeProspectFilter(current, nextIn), mode };
+}
+
 function cityMatch(have: string, want: string): boolean {
   const a = have.toLowerCase().trim();
   const b = want.toLowerCase().replace(/,?\s*(texas|tx)\s*$/i, "").trim();
@@ -308,9 +427,19 @@ export function applyProspectFilter(
 
 export function filterChips(f: ProspectViewFilter, last: LastDiscovery | null = null): string[] {
   const chips: string[] = [];
-  if (f.lastDiscovery && last) chips.push(last.query ? `Last search · ${last.query}` : "Last search");
-  for (const v of f.vertical || []) chips.push(v);
-  if (f.city) chips.push(f.city);
+  const lastVert = (last?.vertical || "").toLowerCase().trim();
+  const lastLoc = (last?.location || "").toLowerCase().trim();
+  const lastCoversVertical = Boolean(f.lastDiscovery && last && lastVert);
+  const lastCoversCity = Boolean(f.lastDiscovery && last && lastLoc);
+  if (f.lastDiscovery && last) chips.push(last.query ? `Last search: ${last.query}` : "Last search");
+  for (const v of f.vertical || []) {
+    if (lastCoversVertical && v.toLowerCase() === lastVert) continue;
+    chips.push(v);
+  }
+  if (f.city) {
+    const redundant = lastCoversCity && (cityMatch(lastLoc, f.city) || cityMatch(f.city, lastLoc));
+    if (!redundant) chips.push(f.city);
+  }
   for (const x of f.fit || []) chips.push(x === "GOOD FIT" ? "Good Fit" : x === "POSSIBLE FIT" ? "Possible Fit" : "Need more information");
   for (const r of f.research || []) {
     chips.push(r === "not_started" ? "Needs research" : r === "unavailable" ? "Website research unavailable" : "Researched");
@@ -358,26 +487,19 @@ export function speakFilterResult(
     return `I’m showing ${count} real prospect${count === 1 ? "" : "s"}. Test and demo records are hidden.`;
   }
   const chips = filterChips(f, last);
-  if (!count) return chips.length ? `None match ${chips.join(", ")}.` : "None match that filter.";
+  if (!count) return "I don’t have any prospects matching those filters.";
   return `I found ${count} matching prospect${count === 1 ? "" : "s"}${chips.length ? `: ${chips.join(" · ")}` : ""}.`;
 }
 
 const NAV_LOCK = /\b(calendar|pipeline|settings|evidence|explanation|explain panel|tomorrow|today|this week|this month)\b/;
-const CLEAR_RE = /^(clear filters|reset (the )?list|show everything( again)?|show all( of them)? again|show all prospects|show (me )?everything)$/;
+const CLEAR_RE = /^(clear filters|reset (the )?list|show everything( again)?|show all( of them)?( again)?|show all prospects|start over|show (me )?everything)$/;
 const UNSUPPORTED = /\b(republicans?|democrats?|political party|party affiliation|religion|christian|muslim|lgbt|race|ethnicity)\b/;
 const SIZE_ASK = /\b(big ones|the big|largest|huge|small ones)\b/;
 
-function refersToLast(t: string): boolean {
-  if (/\b(you just (found|matched)|just (found|matched)|last search|what you found|what you just)\b/.test(t)) return true;
-  if (/\b(those|these) (roofers|companies|prospects|ones|\d+|five)\b/.test(t)) return true;
-  if (/^(show( me)? (those|these|them)|show those|show these|show them)\b/.test(t)) return true;
-  if (/\bthe (five|\d+) .+ (you |just )?(found|matched)\b/.test(t)) return true;
-  return false;
-}
-
 function hasListIntent(t: string): boolean {
   if (CLEAR_RE.test(t)) return true;
-  if (refersToLast(t) && /\b(show|filter|open|which|only)\b/.test(t)) return true;
+  if (refersToLastSearch(t) && /\b(show|filter|open|which|only)\b/.test(t)) return true;
+  if (refersToCurrentSet(t) && /\b(show|filter|only|which|hide|sort|just)\b/.test(t)) return true;
   if (/\b(sort|filter|only show|show only|hide test|hide demo|real (businesses|prospects|companies))\b/.test(t)) return true;
   if (/\bshow( me)? (companies|prospects|roofers|roofing|hvac|plumbers?|med spas?|dentists?|lawyers?)\b/.test(t)) return true;
   if (/\b(need(s|ing)? (more )?(research|contact)|with (a )?(phone|website|email)|decision maker|owner is still unknown|good[- ]fit|possible[- ]fit|added today|more than \d+ reviews)\b/.test(t)) {
@@ -390,7 +512,7 @@ export function parseSpokenFilter(raw: string): SpokenFilterResult {
   const t = (raw || "").toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return { kind: "none" };
   if (/\b(find me|look for|search for|run find|find clients)\b/.test(t)) return { kind: "none" };
-  if (NAV_LOCK.test(t) && !refersToLast(t) && !/\b(roof|hvac|plumb|spa|dent|good[- ]fit|phone|research|contact)\b/.test(t)) {
+  if (NAV_LOCK.test(t) && !refersToLastSearch(t) && !/\b(roof|hvac|plumb|spa|dent|good[- ]fit|phone|research|contact|added today|prospects?|companies)\b/.test(t)) {
     return { kind: "none" };
   }
   if (/\b(evidence|explanation|explain panel)\b/.test(t)) return { kind: "none" };
@@ -400,25 +522,24 @@ export function parseSpokenFilter(raw: string): SpokenFilterResult {
   if (SIZE_ASK.test(t) && !/\breviews?\b/.test(t)) {
     return { kind: "ask", ask: "What should I use for size — review count, or another field we actually have?" };
   }
-  if (!hasListIntent(t) && !refersToLast(t)) return { kind: "none" };
+  if (!hasListIntent(t) && !refersToLastSearch(t) && !refersToCurrentSet(t)) return { kind: "none" };
 
   if (CLEAR_RE.test(t) || /^(show all( prospects)?)$/.test(t)) {
     return { kind: "filter", filter: { replace: true } };
   }
 
   const filter: ProspectViewFilter = {};
-  const referring = refersToLast(t);
+  const referringLast = refersToLastSearch(t);
+  const referringSet = refersToCurrentSet(t);
   const hideTest = /\b(hide (test|demo)|only (show )?real|real (businesses|prospects|companies)|all real)\b/.test(t);
-  if (hideTest && /\b(all real|show all|hide test)\b/.test(t) && !referring) {
+  if (hideTest && /\b(all real|show all|hide test)\b/.test(t) && !referringSet) {
     filter.replace = true;
     filter.excludeTest = true;
     filter.excludeDemo = true;
   }
 
-  if (referring) filter.lastDiscovery = true;
-  if (/\bonly (show )?(the )?(ones|good|possible)/.test(t) || /\bwhich ones\b/.test(t) || /\b(those|these) (that |with |who )/.test(t)) {
-    if (!filter.replace) filter.replace = false;
-  }
+  if (referringLast) filter.lastDiscovery = true;
+  if (referringSet) filter.replace = false;
 
   const mapped = mapSpokenVertical(t);
   if (mapped && mapped !== "Other" && /\b(roof|hvac|plumb|sewer|drain|foundat|remod|solar|spa|dent|law|injur|consult|saas|software)/.test(t)) {
@@ -476,10 +597,19 @@ export function parseSpokenFilter(raw: string): SpokenFilterResult {
     filter.sort = "needs_attention";
   }
 
-  if (referring) {
+  if (referringLast) {
     delete filter.replace;
-  } else if (filter.replace == null && (filter.vertical || filter.city) && !/\bonly (the )?ones\b/.test(t)) {
+  }
+
+  const mode = classifyFilterIntent(filter, { utterance: raw });
+  if (mode === "replace") {
     filter.replace = true;
+    if (!referringLast) {
+      delete filter.lastDiscovery;
+      delete filter.prospectUids;
+    }
+  } else {
+    filter.replace = false;
   }
 
   if (isFilterEmpty(filter) && !filter.replace) return { kind: "none" };

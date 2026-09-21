@@ -295,6 +295,48 @@ describe("Ara allowlisted tools", () => {
     const find = executeAllowlistedTool("find_clients", { vertical: "Roofing", location: "Fort Worth", count: 5 }, ctx);
     assert.equal(find.plan.type, "find");
   });
+
+  it("filter_prospects standalone query replaces inherited Needs research even if compose=true", () => {
+    const ctx: AraDeskContext = {
+      ...desk,
+      lastOwnerUtterance: "Show me good fit companies, roofing companies in Fort Worth that need contact info, best ones first.",
+      lastDiscovery: {
+        query: "Roofing in Fort Worth",
+        vertical: "Roofing",
+        location: "Fort Worth",
+        requested: 5,
+        matched: 1,
+        prospectUids: ["uid-fire"],
+        placeIds: ["ChFire"],
+        timestamp: "2026-09-20T12:00:00.000Z",
+      },
+      prospectFilter: { lastDiscovery: true, research: ["not_started", "unavailable"] },
+      prospects: [
+        { ...desk.prospects[0], vertical: "Roofing", city: "Fort Worth", fit_headline: "GOOD FIT", phone: "817", place_id: "ChFire", reach: "NEEDS_CONTACT_INFO", research_status: "complete" },
+        desk.prospects[1],
+      ],
+    };
+    const r = executeAllowlistedTool("filter_prospects", {
+      compose: true,
+      last_discovery: true,
+      vertical: ["Roofing"],
+      city: "Fort Worth",
+      fit: ["GOOD FIT"],
+      reach: ["NEEDS_CONTACT_INFO"],
+      sort: "best_fit",
+    }, ctx);
+    assert.equal(r.ok, true);
+    assert.equal(r.output.places_rerun, false);
+    assert.equal(r.output.intent, "replace");
+    assert.equal(r.output.last_discovery_used, false);
+    assert.equal(r.plan.type, "filter");
+    if (r.plan.type !== "filter") return;
+    assert.equal(r.plan.filter?.research, undefined);
+    assert.equal(r.plan.filter?.lastDiscovery, undefined);
+    assert.equal(r.plan.filter?.replace, true);
+    assert.deepEqual(r.plan.filter?.fit, ["GOOD FIT"]);
+    assert.ok(!(r.output.chips as string[]).some((c) => /needs research/i.test(c)));
+  });
 });
 
 describe("Ara session payload / outage / key leakage", () => {

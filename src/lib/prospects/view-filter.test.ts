@@ -3,10 +3,12 @@ import { test } from "node:test";
 import type { Prospect } from "../review-brief.ts";
 import {
   applyProspectFilter,
+  classifyFilterIntent,
   composeProspectFilter,
   filterChips,
   fromProspect,
   parseSpokenFilter,
+  resolveProspectFilter,
   speakFilterResult,
   toolArgsToFilter,
   validateProspectFilter,
@@ -120,6 +122,8 @@ test("TEST 6: combined structured filter", () => {
   const spoken = parseSpokenFilter("Show me good-fit roofing companies in Fort Worth that need contact info.");
   assert.equal(spoken.kind, "filter");
   if (spoken.kind !== "filter") return;
+  assert.equal(spoken.filter.replace, true);
+  assert.equal(spoken.filter.lastDiscovery, undefined);
   assert.deepEqual(spoken.filter.vertical, ["Roofing"]);
   assert.match(spoken.filter.city || "", /Fort Worth/i);
   assert.deepEqual(spoken.filter.fit, ["GOOD FIT"]);
@@ -209,4 +213,147 @@ test("show me the evidence is not a list filter", () => {
   assert.equal(parseSpokenFilter("Tell me more about them.").kind, "none");
   assert.equal(parseSpokenFilter("Call them.").kind, "none");
   assert.equal(parseSpokenFilter("Open their website.").kind, "none");
+});
+
+test("1. prior Needs Research + new full query clears Needs Research", () => {
+  const prior: ProspectViewFilter = { lastDiscovery: true, research: ["not_started", "unavailable"] };
+  const spoken = parseSpokenFilter("Show me good fit companies, roofing companies in Fort Worth that need contact info, best ones first.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  assert.equal(spoken.filter.replace, true);
+  const next = resolveProspectFilter(prior, spoken.filter, {
+    utterance: "Show me good fit companies, roofing companies in Fort Worth that need contact info, best ones first.",
+  });
+  assert.equal(next.mode, "replace");
+  assert.deepEqual(next.filter.vertical, ["Roofing"]);
+  assert.match(next.filter.city || "", /Fort Worth/i);
+  assert.deepEqual(next.filter.fit, ["GOOD FIT"]);
+  assert.deepEqual(next.filter.reach, ["NEEDS_CONTACT_INFO"]);
+  assert.equal(next.filter.sort, "best_fit");
+  assert.equal(next.filter.research, undefined);
+  assert.equal(next.filter.lastDiscovery, undefined);
+});
+
+test("2. only the good fits composes", () => {
+  const current: ProspectViewFilter = { lastDiscovery: true, research: ["not_started", "unavailable"] };
+  const spoken = parseSpokenFilter("Only the good fits.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  const next = resolveProspectFilter(current, spoken.filter, { utterance: "Only the good fits." });
+  assert.equal(next.mode, "refine");
+  assert.equal(next.filter.lastDiscovery, true);
+  assert.deepEqual(next.filter.research, ["not_started", "unavailable"]);
+  assert.deepEqual(next.filter.fit, ["GOOD FIT"]);
+});
+
+test("3. of those with phone numbers composes", () => {
+  const current: ProspectViewFilter = { lastDiscovery: true, fit: ["GOOD FIT"] };
+  const spoken = parseSpokenFilter("Which of those have phone numbers?");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  const next = resolveProspectFilter(current, spoken.filter, { utterance: "Which of those have phone numbers?" });
+  assert.equal(next.mode, "refine");
+  assert.equal(next.filter.lastDiscovery, true);
+  assert.deepEqual(next.filter.fit, ["GOOD FIT"]);
+  assert.equal(next.filter.hasPhone, true);
+});
+
+test("4. new vertical/location replaces old vertical/location", () => {
+  const current: ProspectViewFilter = { vertical: ["Roofing"], city: "Fort Worth", hasPhone: true, lastDiscovery: true };
+  const spoken = parseSpokenFilter("Show me med spas in Dallas with websites.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  const next = resolveProspectFilter(current, spoken.filter, { utterance: "Show me med spas in Dallas with websites." });
+  assert.equal(next.mode, "replace");
+  assert.match(next.filter.vertical?.[0] || "", /spa/i);
+  assert.match(next.filter.city || "", /Dallas/i);
+  assert.equal(next.filter.hasWebsite, true);
+  assert.equal(next.filter.hasPhone, undefined);
+  assert.equal(next.filter.lastDiscovery, undefined);
+  assert.equal((next.filter.vertical || []).includes("Roofing"), false);
+});
+
+test("5. standalone query drops lastDiscovery", () => {
+  const current: ProspectViewFilter = { lastDiscovery: true, research: ["not_started"] };
+  const spoken = parseSpokenFilter("Show me all good-fit roofers in Fort Worth.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  const next = resolveProspectFilter(current, spoken.filter, { utterance: "Show me all good-fit roofers in Fort Worth." });
+  assert.equal(next.mode, "replace");
+  assert.equal(next.filter.lastDiscovery, undefined);
+  assert.equal(next.filter.research, undefined);
+  assert.deepEqual(next.filter.fit, ["GOOD FIT"]);
+});
+
+test("6. show those roofers retains lastDiscovery", () => {
+  const spoken = parseSpokenFilter("Show those roofers.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  assert.equal(spoken.filter.lastDiscovery, true);
+  const next = resolveProspectFilter({ research: ["not_started"] }, spoken.filter, { utterance: "Show those roofers." });
+  assert.equal(next.filter.lastDiscovery, true);
+  assert.equal(next.filter.research, undefined);
+});
+
+test("7. sort-only follow-up keeps current set", () => {
+  const current: ProspectViewFilter = { lastDiscovery: true, fit: ["GOOD FIT"], research: ["not_started", "unavailable"] };
+  const spoken = parseSpokenFilter("Sort those by best fit.");
+  assert.equal(spoken.kind, "filter");
+  if (spoken.kind !== "filter") return;
+  const next = resolveProspectFilter(current, spoken.filter, { utterance: "Sort those by best fit." });
+  assert.equal(next.mode, "refine");
+  assert.equal(next.filter.lastDiscovery, true);
+  assert.deepEqual(next.filter.fit, ["GOOD FIT"]);
+  assert.deepEqual(next.filter.research, ["not_started", "unavailable"]);
+  assert.equal(next.filter.sort, "best_fit");
+});
+
+test("8. clear filters resets all", () => {
+  for (const phrase of ["Clear filters.", "Show everything.", "Start over."]) {
+    const spoken = parseSpokenFilter(phrase);
+    assert.equal(spoken.kind, "filter");
+    if (spoken.kind !== "filter") continue;
+    const next = resolveProspectFilter({ lastDiscovery: true, fit: ["GOOD FIT"], research: ["not_started"] }, spoken.filter, { utterance: phrase });
+    assert.deepEqual(next.filter, {});
+  }
+});
+
+test("9. redundant Last Search / vertical / city chips are not duplicated visually", () => {
+  const chips = filterChips(
+    { lastDiscovery: true, vertical: ["Roofing"], city: "Fort Worth", fit: ["GOOD FIT"], reach: ["NEEDS_CONTACT_INFO"], sort: "best_fit" },
+    last,
+  );
+  assert.equal(chips.filter((c) => /roofing/i.test(c)).length, 1);
+  assert.equal(chips.some((c) => c === "Roofing"), false);
+  assert.equal(chips.some((c) => c === "Fort Worth"), false);
+  assert.ok(chips.some((c) => /^Last search:/.test(c) && /Roofing/i.test(c) && /Fort Worth/i.test(c)));
+  assert.ok(chips.includes("Good Fit"));
+  assert.ok(chips.includes("Needs Contact Info"));
+  assert.ok(chips.includes("Best fit first"));
+});
+
+test("model compose=true cannot inherit stale research on a standalone query", () => {
+  const current: ProspectViewFilter = { research: ["not_started"], lastDiscovery: true };
+  const { filter: incoming } = toolArgsToFilter({
+    compose: true,
+    last_discovery: true,
+    vertical: ["Roofing"],
+    city: "Fort Worth",
+    fit: ["GOOD FIT"],
+    reach: ["NEEDS_CONTACT_INFO"],
+    sort: "best_fit",
+  });
+  assert.equal(incoming.replace, false);
+  const next = resolveProspectFilter(current, incoming, {
+    utterance: "Show me good fit companies, roofing companies in Fort Worth that need contact info, best ones first.",
+  });
+  assert.equal(next.mode, "replace");
+  assert.equal(next.filter.research, undefined);
+  assert.equal(next.filter.lastDiscovery, undefined);
+  assert.equal(classifyFilterIntent(incoming, { utterance: "Show me good-fit roofing companies in Fort Worth that need contact info." }), "replace");
+});
+
+test("empty matching filter does not claim leftover inherited chips", () => {
+  const spoken = speakFilterResult(0, { vertical: ["Roofing"], fit: ["GOOD FIT"], reach: ["NEEDS_CONTACT_INFO"] });
+  assert.equal(spoken, "I don’t have any prospects matching those filters.");
 });

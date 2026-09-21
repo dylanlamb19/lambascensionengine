@@ -92,7 +92,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "explain this → explain_current_screen (voice only)",
     "show me that explanation → show_explain_panel",
     "fill find form → set_find_clients_form then run_find_clients",
-    "show me those / the five you just found / only roofing / good fit / needs contact / has a phone / clear filters → filter_prospects",
+    "show me those / the five you just found / only the good fits / needs contact / has a phone / clear filters → filter_prospects",
     "draft / open outreach → draft_outreach / open_outreach",
     "stop follow-ups → stop_followups",
     "move / hide / clean Home → rearrange_home",
@@ -167,8 +167,9 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "For Find Clients, set company_type, location, and count, then run_find_clients.",
     "Find Clients discovers REAL Google businesses only. If Places is not configured, say so. Never invent a company name, Place ID, email, or owner.",
     "SHOW / FILTER / SORT the prospect list with filter_prospects. Never call find_clients or run_find_clients for ‘show me those’, ‘show the five you just found’, ‘only good fits’, ‘needs contact info’, ‘has a phone’, ‘sort by best fit’, or ‘clear filters’.",
+    "REFINE vs REPLACE: ‘those / these / the ones / of those / only / just / now show the ones’ narrows the CURRENT view — compose=true, keep last_discovery if it was already on. A fully specified NEW query REPLACES leftover filters — compose=false and last_discovery=false. Example REPLACE: ‘show me good-fit roofing companies in Fort Worth that need contact info, best ones first’ must NOT keep a prior Needs research filter.",
     "‘Those / these / the ones you just found’ → filter_prospects last_discovery=true. That uses the saved Place IDs/UIDs. Do not search Google again. Do not say they are already on the list — SHOW them.",
-    "Follow-up filters compose: after showing the last five, ‘only the good fits’ keeps that set and adds fit=GOOD FIT.",
+    "Follow-up refinements compose: after showing the last five, ‘only the good fits’ keeps that set and adds fit=GOOD FIT. ‘Show me good-fit med spas in Dallas’ is a NEW query and drops roofing / Fort Worth / last_discovery / leftover filters.",
     "filter_prospects only changes the Pipeline view. It never sends email, never changes qualification, never deletes companies.",
     "If Dylan asks for a field we do not have (party, religion, private income), say that information is not on file. Do not infer it.",
     "After filtering, speak the actual result count from the tool output.",
@@ -177,12 +178,12 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
   if (companies) lines.push(`Company list: ${companies}`);
   if (ctx.lastDiscovery && ctx.lastDiscovery.prospectUids?.length) {
     const d = ctx.lastDiscovery;
-    lines.push(`Last Find Clients result (do not re-run Places to show these): query="${d.query}", requested=${d.requested}, matched=${d.matched}, uids=${d.prospectUids.join(",")}. If Dylan says show me those / the five you just found, call filter_prospects with last_discovery=true.`);
+    lines.push(`Last Find Clients result (do not re-run Places to show these): query="${d.query}", requested=${d.requested}, matched=${d.matched}, uids=${d.prospectUids.join(",")}. If Dylan says show me those / the five you just found, call filter_prospects with last_discovery=true. If he starts a new fully specified query (new city, new vertical, or a complete ‘show me X in Y’), do NOT pass last_discovery.`);
   } else {
     lines.push("Last Find Clients result: none this session.");
   }
   if (ctx.prospectFilter && Object.keys(ctx.prospectFilter).length) {
-    lines.push(`Active Pipeline view filter: ${JSON.stringify(ctx.prospectFilter)}. Follow-up ‘only the good fits’ should compose onto this.`);
+    lines.push(`Active Pipeline view filter: ${JSON.stringify(ctx.prospectFilter)}. Follow-up ‘only the good fits’ / ‘of those’ should compose onto this. A new fully specified query replaces it — do not keep filters Dylan did not mention.`);
   }
   if (ctx.sales) {
     lines.push(`Sales: ${ctx.sales.ready} ready to contact, ${ctx.sales.followups} follow-ups, ${ctx.sales.replies} replies, ${ctx.sales.calls} calls booked.`);

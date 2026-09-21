@@ -277,6 +277,7 @@ export function OwnerDesk() {
   const autoResearchRef = useRef(new Set<string>());
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("off");
   const [youSaid, setYouSaid] = useState("");
+  const youSaidRef = useRef("");
   const [voiceReply, setVoiceReply] = useState("");
   const [voiceMuted, setVoiceMuted] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
@@ -336,12 +337,12 @@ export function OwnerDesk() {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
-    discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter,
+    discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter, youSaid,
   });
   liveRef.current = {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
-    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter,
+    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter, youSaid,
   };
   const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo && !isTestWorkflowUid(c.uid)).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
@@ -1354,6 +1355,7 @@ export function OwnerDesk() {
       integration: live.integration || undefined,
       lastDiscovery: live.lastDiscovery || null,
       prospectFilter: live.prospectFilter || {},
+      lastOwnerUtterance: youSaidRef.current || live.youSaid || "",
     };
   }
 
@@ -1626,6 +1628,7 @@ export function OwnerDesk() {
         },
         onUserTranscript: (text, isFinal) => {
           setYouSaid(text);
+          youSaidRef.current = text;
           handleAraOwnerTranscript(text, isFinal);
         },
         onAraTranscript: (text) => {

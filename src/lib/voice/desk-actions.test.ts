@@ -629,4 +629,29 @@ describe("Ara filters the Pipeline view without rediscovery", () => {
     assert.deepEqual(cleared.state.prospectFilter, {});
     assert.match(cleared.state.lastSpoken, /cleared/i);
   });
+
+  it("standalone good-fit roofing query replaces leftover Needs research", () => {
+    const start = applyDeskAction(
+      emptyDesk({ prospectFilter: { lastDiscovery: true, research: ["not_started", "unavailable"] } }),
+      { name: "FILTER_PROSPECTS", filter: { lastDiscovery: true, research: ["not_started", "unavailable"] } },
+      lastWorld,
+    );
+    assert.deepEqual(start.state.prospectFilter.research, ["not_started", "unavailable"]);
+    const decided = spokenToAction(
+      "Show me good fit companies, roofing companies in Fort Worth that need contact info, best ones first.",
+      start.state,
+      lastWorld,
+    );
+    assert.ok("action" in decided);
+    if (!("action" in decided)) return;
+    assert.equal(decided.action.name, "FILTER_PROSPECTS");
+    const applied = applyDeskAction(start.state, decided.action, lastWorld);
+    assert.equal(applied.state.view, "pipe");
+    assert.equal(applied.state.prospectFilter.research, undefined);
+    assert.equal(applied.state.prospectFilter.lastDiscovery, undefined);
+    assert.deepEqual(applied.state.prospectFilter.fit, ["GOOD FIT"]);
+    assert.deepEqual(applied.state.prospectFilter.reach, ["NEEDS_CONTACT_INFO"]);
+    assert.equal(applied.state.prospectFilter.sort, "best_fit");
+    assert.doesNotMatch(applied.state.lastSpoken, /needs research/i);
+  });
 });
