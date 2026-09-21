@@ -50,6 +50,8 @@ describe("Calendar screen + explain", () => {
     assert.equal(parseSpokenCommand("Ara, can you hear me?").intent, "UNKNOWN");
     assert.equal(parseSpokenCommand("That is not the name I wanted you to name that call.").intent, "UNKNOWN");
     assert.equal(parseSpokenCommand("Open my Calendar.").intent, "NAVIGATE_CALENDAR");
+    assert.equal("none" in spokenToAction("Add a call to my calendar for 11 AM tomorrow.", emptyDesk(), world), true);
+    assert.equal("none" in spokenToAction("Ara, can you hear me?", emptyDesk(), world), true);
     const r = say(emptyDesk(), "Open my calendar.");
     assert.equal(r.state.view, "calendar");
   });
@@ -155,6 +157,14 @@ describe("Calendar screen + explain", () => {
     if (open.plan.type === "navigate") assert.equal(open.plan.view, "calendar");
     const blocked = executeAllowlistedTool("navigate_calendar", {}, { ...desk, lastOwnerUtterance: "Can you hear me?" });
     assert.equal(blocked.plan.type, "none");
+    const pendingBlocked = executeAllowlistedTool("navigate_calendar", {}, {
+      ...desk,
+      lastOwnerUtterance: "Open my calendar",
+      pendingOwnerCalendar: true,
+    });
+    assert.equal(pendingBlocked.plan.type, "none");
+    const hearView = executeAllowlistedTool("calendar_set_view", { view: "week" }, { ...desk, lastOwnerUtterance: "Can you hear me?" });
+    assert.equal(hearView.plan.type, "none");
     const next = executeAllowlistedTool("calendar_next", {}, desk);
     assert.equal(next.plan.type, "calendar_next");
   });

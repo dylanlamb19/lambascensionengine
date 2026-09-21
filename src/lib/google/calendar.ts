@@ -135,18 +135,16 @@ export async function listEvents(
       calendarId: calendarId || "primary",
     };
   }
-  const ids: string[] = [];
+  const ids: string[] = ["primary"];
   const preferred = (calendarId || "").trim();
-  if (preferred && preferred !== "primary") ids.push(preferred);
-  ids.push("primary");
+  if (preferred && preferred !== "primary" && !ids.includes(preferred)) ids.push(preferred);
 
   let lastFail: Extract<Awaited<ReturnType<typeof listEventsOnCalendar>>, { ok: false }> | null = null;
   for (const id of ids) {
     const hit = await listEventsOnCalendar(accessToken, from, to, id, fetchImpl);
     if (hit.ok) return hit;
     lastFail = hit;
-    const retryNext = hit.httpStatus === 404 || hit.googleReason === "notFound";
-    if (!retryNext) return hit;
+    if (hit.httpStatus === 401 || hit.code === "CALENDAR_LIST_AUTH_FAILED") return hit;
   }
   return lastFail || {
     ok: false,

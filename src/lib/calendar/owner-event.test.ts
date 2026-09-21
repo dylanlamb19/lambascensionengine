@@ -14,6 +14,8 @@ import {
   isGenericOwnerTitle,
   shouldSilenceAraForOwnerCalendar,
   shouldKeepPendingOwnerCalendar,
+  shouldAllowCalendarNavigation,
+  shouldAllowCalendarViewChange,
   ownerEventFailureSpeech,
   ownerEventFingerprint,
   ownerEventSpeechFromState,
@@ -303,6 +305,13 @@ describe("generic call name ask and prospect-call manage", () => {
     assert.equal(isExplicitCalendarNavigate("Ara, can you hear me?"), false);
     assert.equal(isExplicitCalendarNavigate("Open my Calendar"), true);
     assert.equal(isExplicitCalendarNavigate("Pull up my calendar"), true);
+    assert.equal(shouldAllowCalendarNavigation("Ara, can you hear me?", pending), false);
+    assert.equal(shouldAllowCalendarNavigation("Add a call to my calendar for 11 AM tomorrow"), false);
+    assert.equal(shouldAllowCalendarNavigation("Open my Calendar"), true);
+    assert.equal(shouldAllowCalendarNavigation("Open my Calendar", pending), false);
+    assert.equal(shouldAllowCalendarViewChange("Can you hear me?"), false);
+    assert.equal(shouldAllowCalendarViewChange("Show me tomorrow"), true);
+    assert.equal(shouldAllowCalendarViewChange("What do I have tomorrow?"), false);
   });
 
   it("parses cancel / move / when-is for a named prospect call", () => {

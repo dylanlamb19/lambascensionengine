@@ -215,9 +215,44 @@ test("listEvents classifies 401 as CALENDAR_LIST_AUTH_FAILED", async () => {
   }
 });
 
+test("listEvents prefers primary and still reads events when the email calendar id is refused", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const urls: string[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL) => {
+    urls.push(String(url));
+    if (decodeURIComponent(String(url)).includes("owner@example.com")) {
+      return new Response(JSON.stringify({ error: { status: "PERMISSION_DENIED" } }), { status: 403 });
+    }
+    return new Response(JSON.stringify({
+      items: [{
+        id: "evt-primary",
+        summary: "Dentist",
+        status: "confirmed",
+        start: { dateTime: "2026-09-21T19:00:00-05:00" },
+        end: { dateTime: "2026-09-21T19:30:00-05:00" },
+      }],
+    }), { status: 200 });
+  }) as typeof fetch;
+  const listed = await listEvents(
+    "tok",
+    new Date("2026-09-20T05:00:00Z"),
+    new Date("2026-09-27T05:00:00Z"),
+    fetchImpl,
+    "owner@example.com",
+  );
+  assert.equal(listed.ok, true);
+  if (listed.ok) {
+    assert.equal(listed.events[0]?.id, "evt-primary");
+    assert.equal(listed.calendarId, "primary");
+  }
+  assert.ok(urls.some((u) => u.includes("calendars/primary/")));
+  assert.equal(urls.some((u) => decodeURIComponent(u).includes("owner@example.com")), false);
+});
+
 test("inverted date range is CALENDAR_LIST_BAD_RANGE", async () => {
   const { listEvents } = await import("./calendar.ts");
   const listed = await listEvents("tok", new Date("2026-09-27T00:00:00Z"), new Date("2026-09-20T00:00:00Z"));
   assert.equal(listed.ok, false);
   if (!listed.ok) assert.equal(listed.code, "CALENDAR_LIST_BAD_RANGE");
 });
+

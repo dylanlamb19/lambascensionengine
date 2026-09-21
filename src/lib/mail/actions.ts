@@ -339,15 +339,24 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
       if (!listed.ok) {
         return { ok: false as const, connected: listed.connected, reason: listed.reason, code: listed.code, events: [] as AgendaEvent[] };
       }
-      const sales = await listCallsInRange(context.userId, from, to);
+      let sales: Awaited<ReturnType<typeof listCallsInRange>> = [];
+      try {
+        sales = await listCallsInRange(context.userId, from, to);
+      } catch {
+        sales = [];
+      }
       const byGoogle = new Map(sales.filter((s) => s.google_event_id).map((s) => [s.google_event_id as string, s]));
       const events: AgendaEvent[] = [];
       for (const ev of listed.events) {
         const sale = byGoogle.get(ev.id);
         let companyName: string | null = null;
         if (sale?.prospect_uid) {
-          const p = await getProspectByUid(context.userId, sale.prospect_uid);
-          companyName = p?.name || null;
+          try {
+            const p = await getProspectByUid(context.userId, sale.prospect_uid);
+            companyName = p?.name || null;
+          } catch {
+            companyName = null;
+          }
         }
         events.push({
           id: ev.id,
@@ -363,7 +372,13 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
       }
       for (const sale of sales) {
         if (sale.google_event_id && listed.events.some((e) => e.id === sale.google_event_id)) continue;
-        const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
+        let companyName: string | null = null;
+        try {
+          const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
+          companyName = p?.name || null;
+        } catch {
+          companyName = null;
+        }
         events.push({
           id: sale.id,
           title: sale.title,
@@ -371,7 +386,7 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
           end: sale.end_at,
           status: sale.status,
           prospectUid: sale.prospect_uid,
-          companyName: p?.name || null,
+          companyName,
           kind: "sales_call",
           htmlLink: null,
         });

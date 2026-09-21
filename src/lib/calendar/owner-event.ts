@@ -525,6 +525,32 @@ export function shouldKeepPendingOwnerCalendar(raw: string, pending?: PendingOwn
   return false;
 }
 
+export function shouldAllowCalendarNavigation(raw: string, pending?: boolean | PendingOwnerCal | null): boolean {
+  const isPending = typeof pending === "boolean" ? pending : Boolean(pending && !pendingOwnerCalExpired(pending));
+  if (isPending) return false;
+  if (isConversationalAside(raw) || isOwnerCalendarCorrection(raw)) return false;
+  if (isPersonalCalendarCommand(raw)) return false;
+  return isExplicitCalendarNavigate(raw);
+}
+
+const CAL_VIEW_COMMAND_RE = /^(show( me)?|open|go to|pull up) (tomorrow|today)$|^(show( me)? (the |this )?(week|month|day)|go to next week|show( me)? next week|^next week$|go back to today|show( me)? today|do i have anything at)/i;
+
+export function isCalendarViewCommand(raw: string): boolean {
+  if (isExplicitCalendarNavigate(raw)) return true;
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (isPersonalCalendarCommand(raw) || isOwnerCalendarManageCommand(raw)) return false;
+  return CAL_VIEW_COMMAND_RE.test(t);
+}
+
+export function shouldAllowCalendarViewChange(raw: string, pending?: boolean | PendingOwnerCal | null): boolean {
+  const isPending = typeof pending === "boolean" ? pending : Boolean(pending && !pendingOwnerCalExpired(pending));
+  if (isPending) return false;
+  if (isConversationalAside(raw) || isOwnerCalendarCorrection(raw)) return false;
+  return isCalendarViewCommand(raw);
+}
+
+
 export function expandRangeToOwnerDays(from: Date, to: Date, timeZone = OWNER_TZ_DEFAULT): { from: Date; to: Date } {
   const startYmd = ymdInTimezone(from, timeZone);
   const [y, m, d] = startYmd.split("-").map(Number);

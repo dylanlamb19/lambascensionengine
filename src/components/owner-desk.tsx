@@ -65,7 +65,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatLong, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isExplicitCalendarNavigate, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldAllowCalendarNavigation, shouldAllowCalendarViewChange, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -1494,6 +1494,7 @@ export function OwnerDesk() {
       lastDiscovery: live.lastDiscovery || null,
       prospectFilter: live.prospectFilter || {},
       lastOwnerUtterance: youSaidRef.current || live.youSaid || "",
+      pendingOwnerCalendar: Boolean(pendingOwnerCalRef.current && !pendingOwnerCalExpired(pendingOwnerCalRef.current)),
     };
   }
 
@@ -2007,6 +2008,9 @@ export function OwnerDesk() {
           if (isOwnerCalendarRefusalSpeech(text)) {
             araRef.current?.cancelResponse();
           }
+          if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
+            araRef.current?.cancelResponse();
+          }
         },
         onToolCall: async (name, args) => {
           if (isClientOwnedStopTool(name)) {
@@ -2025,7 +2029,14 @@ export function OwnerDesk() {
             return hydrateAraOutput(name, result);
           }
           const action = planToAction(result.plan);
-          if (action) dispatchRef.current(action);
+          if (action) {
+            const pending = pendingOwnerCalRef.current;
+            const spoken = youSaidRef.current || "";
+            const blockNav = action.name === "NAVIGATE_CALENDAR" && !shouldAllowCalendarNavigation(spoken, pending);
+            const blockView = (action.name === "CALENDAR_TODAY" || action.name === "CALENDAR_NEXT" || action.name === "CALENDAR_PREV" || action.name === "CALENDAR_SET_VIEW")
+              && !shouldAllowCalendarViewChange(spoken, pending);
+            if (!blockNav && !blockView) dispatchRef.current(action);
+          }
           const uid = planProspectUid(result.plan, liveRef.current.openUid);
           const rec = makeVoiceAudit({
             tool: name,
@@ -2389,7 +2400,11 @@ export function OwnerDesk() {
           utter("Okay. Stopped.", "STOP");
           return;
         }
-        if (decided.action.name === "NAVIGATE_CALENDAR" && !isExplicitCalendarNavigate(text)) {
+        if (decided.action.name === "NAVIGATE_CALENDAR" && !shouldAllowCalendarNavigation(text, pendingOwnerCalRef.current)) {
+          return;
+        }
+        if ((decided.action.name === "CALENDAR_TODAY" || decided.action.name === "CALENDAR_NEXT" || decided.action.name === "CALENDAR_PREV" || decided.action.name === "CALENDAR_SET_VIEW")
+          && !shouldAllowCalendarViewChange(text, pendingOwnerCalRef.current)) {
           return;
         }
         dispatchAction(decided.action);

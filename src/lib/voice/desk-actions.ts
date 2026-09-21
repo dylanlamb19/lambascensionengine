@@ -4,6 +4,7 @@ import type { ToolPlan } from "./tools.ts";
 import { mapSpokenVertical } from "../discovery/places.ts";
 import { currentTask, currentTaskUid, labeledActionsFor, matchSpokenLabel } from "./screen-actions.ts";
 import { addDays, hourOf, shiftAnchor, ymdInTz, type CalView } from "../calendar/range.ts";
+import { shouldAllowCalendarNavigation, shouldAllowCalendarViewChange } from "../calendar/owner-event.ts";
 import { buildScreenContext, explainScreen } from "./screen-context.ts";
 import { readScreen } from "./read-screen.ts";
 import {
@@ -1233,7 +1234,9 @@ export function spokenToAction(text: string, state: DeskState, world: DeskWorld)
   }
   if ("match" in hit && hit.match) {
     const uid = currentTaskUid(state, world);
-    return { action: { name: hit.match.action, uid } };
+    const action = { name: hit.match.action, uid } as AppAction;
+    if (action.name === "NAVIGATE_CALENDAR" && !shouldAllowCalendarNavigation(text)) return { none: true };
+    return { action };
   }
   const parsed = parseSpokenCommand(text);
   if (parsed.intent === "UNKNOWN" || parsed.confidence < 0.45) return { none: true };
@@ -1248,6 +1251,10 @@ export function spokenToAction(text: string, state: DeskState, world: DeskWorld)
   }
   const mapped = intentToAction(parsed, uid, { taskOpen: state.taskIx != null && (state.view === "home" || state.view === "pipe" || state.view === "detail") });
   if (!mapped) return { none: true };
+  if (mapped.name === "NAVIGATE_CALENDAR" && !shouldAllowCalendarNavigation(text)) return { none: true };
+  if ((mapped.name === "CALENDAR_TODAY" || mapped.name === "CALENDAR_NEXT" || mapped.name === "CALENDAR_PREV" || mapped.name === "CALENDAR_SET_VIEW") && !shouldAllowCalendarViewChange(text)) {
+    return { none: true };
+  }
   if (!mapped.uid) mapped.uid = uid;
   return { action: mapped };
 }

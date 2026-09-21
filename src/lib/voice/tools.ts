@@ -20,7 +20,8 @@ import {
   isGenericOwnerTitle,
   ownerGenericNameQuestion,
   ownerAmbiguousProspectSpeech,
-  isExplicitCalendarNavigate,
+  shouldAllowCalendarNavigation,
+  shouldAllowCalendarViewChange,
   type LastOwnerEvent,
 } from "../calendar/owner-event.ts";
 import { matchProspectsBySpokenName } from "../prospects/dedupe.ts";
@@ -352,6 +353,7 @@ export type AraDeskContext = {
   lastDiscovery?: import("../prospects/last-discovery.ts").LastDiscovery | null;
   prospectFilter?: import("../prospects/view-filter.ts").ProspectViewFilter;
   lastOwnerUtterance?: string;
+  pendingOwnerCalendar?: boolean;
 };
 
 export type ToolPlan =
@@ -701,7 +703,7 @@ export function executeAllowlistedTool(
     return { ok: true, tool, rejected: false, output: { view: "settings", changed: true }, plan: { type: "navigate", view: "settings" } };
   }
   if (tool === "navigate_calendar") {
-    if (!isExplicitCalendarNavigate(ctx.lastOwnerUtterance || "")) {
+    if (!shouldAllowCalendarNavigation(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {
       return {
         ok: true, tool, rejected: false,
         output: { view: ctx.view, changed: false, ignored: true, reason: "not_explicit_navigate" },
@@ -711,15 +713,27 @@ export function executeAllowlistedTool(
     return { ok: true, tool, rejected: false, output: { view: "calendar", changed: true }, plan: { type: "navigate", view: "calendar" } };
   }
   if (tool === "calendar_today") {
+    if (!shouldAllowCalendarViewChange(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {
+      return { ok: true, tool, rejected: false, output: { changed: false, ignored: true }, plan: { type: "none" } };
+    }
     return { ok: true, tool, rejected: false, output: { changed: true }, plan: { type: "calendar_today" } };
   }
   if (tool === "calendar_next") {
+    if (!shouldAllowCalendarViewChange(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {
+      return { ok: true, tool, rejected: false, output: { changed: false, ignored: true }, plan: { type: "none" } };
+    }
     return { ok: true, tool, rejected: false, output: { changed: true }, plan: { type: "calendar_next" } };
   }
   if (tool === "calendar_prev") {
+    if (!shouldAllowCalendarViewChange(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {
+      return { ok: true, tool, rejected: false, output: { changed: false, ignored: true }, plan: { type: "none" } };
+    }
     return { ok: true, tool, rejected: false, output: { changed: true }, plan: { type: "calendar_prev" } };
   }
   if (tool === "calendar_set_view") {
+    if (!shouldAllowCalendarViewChange(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {
+      return { ok: true, tool, rejected: false, output: { changed: false, ignored: true }, plan: { type: "none" } };
+    }
     const view = String(args.view || "week").toLowerCase();
     const calView = view === "day" || view === "month" ? view : "week";
     const day = String(args.day || args.when || "").toLowerCase();
