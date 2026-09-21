@@ -92,6 +92,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "explain this → explain_current_screen (voice only)",
     "show me that explanation → show_explain_panel",
     "fill find form → set_find_clients_form then run_find_clients",
+    "show me those / the five you just found / only roofing / good fit / needs contact / has a phone / clear filters → filter_prospects",
     "draft / open outreach → draft_outreach / open_outreach",
     "stop follow-ups → stop_followups",
     "move / hide / clean Home → rearrange_home",
@@ -165,9 +166,24 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "When the owner names a company, look it up in the company list and pass prospect_uid.",
     "For Find Clients, set company_type, location, and count, then run_find_clients.",
     "Find Clients discovers REAL Google businesses only. If Places is not configured, say so. Never invent a company name, Place ID, email, or owner.",
+    "SHOW / FILTER / SORT the prospect list with filter_prospects. Never call find_clients or run_find_clients for ‘show me those’, ‘show the five you just found’, ‘only good fits’, ‘needs contact info’, ‘has a phone’, ‘sort by best fit’, or ‘clear filters’.",
+    "‘Those / these / the ones you just found’ → filter_prospects last_discovery=true. That uses the saved Place IDs/UIDs. Do not search Google again. Do not say they are already on the list — SHOW them.",
+    "Follow-up filters compose: after showing the last five, ‘only the good fits’ keeps that set and adds fit=GOOD FIT.",
+    "filter_prospects only changes the Pipeline view. It never sends email, never changes qualification, never deletes companies.",
+    "If Dylan asks for a field we do not have (party, religion, private income), say that information is not on file. Do not infer it.",
+    "After filtering, speak the actual result count from the tool output.",
     "When Dylan asks what a saved company does, why they might be a good prospect, who to contact, or how to reach them, answer ONLY from persisted listing/research fields on that prospect (vertical, category, website_note, readiness_why, contact_summary, opportunity_summary). If a field is UNKNOWN or missing, say so. Do not guess.",
   ];
   if (companies) lines.push(`Company list: ${companies}`);
+  if (ctx.lastDiscovery && ctx.lastDiscovery.prospectUids?.length) {
+    const d = ctx.lastDiscovery;
+    lines.push(`Last Find Clients result (do not re-run Places to show these): query="${d.query}", requested=${d.requested}, matched=${d.matched}, uids=${d.prospectUids.join(",")}. If Dylan says show me those / the five you just found, call filter_prospects with last_discovery=true.`);
+  } else {
+    lines.push("Last Find Clients result: none this session.");
+  }
+  if (ctx.prospectFilter && Object.keys(ctx.prospectFilter).length) {
+    lines.push(`Active Pipeline view filter: ${JSON.stringify(ctx.prospectFilter)}. Follow-up ‘only the good fits’ should compose onto this.`);
+  }
   if (ctx.sales) {
     lines.push(`Sales: ${ctx.sales.ready} ready to contact, ${ctx.sales.followups} follow-ups, ${ctx.sales.replies} replies, ${ctx.sales.calls} calls booked.`);
   }

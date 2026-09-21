@@ -29,6 +29,15 @@ import {
   type GalleryState,
   type ImageCommand,
 } from "../visual/gallery.ts";
+import {
+  applyProspectFilter,
+  asFilterable,
+  composeProspectFilter,
+  speakFilterResult,
+  type FilterableProspect,
+  type ProspectViewFilter,
+} from "../prospects/view-filter.ts";
+import type { LastDiscovery } from "../prospects/last-discovery.ts";
 
 /**
  * Allowlisted Owner Mode actions. Ara and the buttons call the same names.
@@ -75,6 +84,7 @@ export const APP_ACTIONS = [
   "GO_BACK",
   "RUN_FIND_CLIENTS",
   "SET_FIND_FORM",
+  "FILTER_PROSPECTS",
   "RESEARCH_FURTHER",
   "READ_CALL_OPENER",
   "MAKE_EMAIL_SHORTER",
@@ -101,6 +111,9 @@ export type AppAction = {
   findVertical?: string;
   findLocation?: string;
   findCount?: number;
+  filter?: ProspectViewFilter;
+  filterUnknown?: string;
+  filterAsk?: string;
   silent?: boolean;
   calendarView?: CalView;
   eventId?: string;
@@ -157,6 +170,7 @@ export const ACTION_TO_TOOL: Record<AppActionName, string> = {
   GO_BACK: "go_back",
   RUN_FIND_CLIENTS: "run_find_clients",
   SET_FIND_FORM: "set_find_clients_form",
+  FILTER_PROSPECTS: "filter_prospects",
   RESEARCH_FURTHER: "research_further",
   READ_CALL_OPENER: "get_next_call",
   MAKE_EMAIL_SHORTER: "draft_outreach",
@@ -190,6 +204,7 @@ export type DeskState = {
   vert: string;
   city: string;
   findLimit: number;
+  prospectFilter: ProspectViewFilter;
   stack: NavFrame[];
   explainOpen: boolean;
   lastSpoken: string;
@@ -214,7 +229,7 @@ export type VisibleCalEvent = {
 };
 
 export type DeskWorld = {
-  prospects: { uid: string; name: string; score: number; stage_plain?: string; website?: string; phone?: string }[];
+  prospects: Array<Partial<FilterableProspect> & { uid: string; name: string; score?: number; stage_plain?: string; website?: string; phone?: string }>;
   tasks: { title: string; plain: string; uid?: string; id?: string; retry?: boolean }[];
   gmail?: import("../mail/integration-status.ts").ConnectionHealth;
   calendarStatus?: import("../mail/integration-status.ts").ConnectionHealth;
@@ -229,6 +244,7 @@ export type DeskWorld = {
   missingIntegrations?: { name: string; ready: boolean }[];
   integration?: import("../mail/integration-status.ts").IntegrationStatus;
   testLoop?: import("../mail/test-loop.ts").TestLoopState;
+  lastDiscovery?: LastDiscovery | null;
 };
 
 export type DeskEffect =
@@ -265,6 +281,7 @@ export function emptyDesk(partial?: Partial<DeskState>): DeskState {
     vert: "Roofing",
     city: "Fort Worth",
     findLimit: 20,
+    prospectFilter: {},
     stack: [],
     explainOpen: false,
     lastSpoken: "",
@@ -663,6 +680,26 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
         },
         { type: "run_find", vertical, location, count },
       );
+    }
+    case "FILTER_PROSPECTS": {
+      if (action.filterUnknown) {
+        return withAction({ lastSpoken: spoken(action.filterUnknown) });
+      }
+      if (action.filterAsk) {
+        return withAction({ lastSpoken: spoken(action.filterAsk) });
+      }
+      const incoming = action.filter && Object.keys(action.filter).length ? action.filter : { replace: true };
+      const nextFilter = composeProspectFilter(state.prospectFilter || {}, incoming);
+      const rows = (world.prospects || []).map(asFilterable);
+      const hits = applyProspectFilter(rows, nextFilter, world.lastDiscovery || null);
+      const said = speakFilterResult(hits.length, nextFilter, world.lastDiscovery || null);
+      return withAction({
+        view: "pipe",
+        prospectFilter: nextFilter,
+        evidence: false,
+        stack: push(state, "pipe"),
+        lastSpoken: spoken(said),
+      });
     }
     case "OPEN_OUTREACH":
     case "DRAFT_OUTREACH":
@@ -1081,7 +1118,7 @@ const NO_TARGET: AppActionName[] = [
   "CALENDAR_TODAY", "CALENDAR_NEXT", "CALENDAR_PREV", "CALENDAR_SET_VIEW",
   "OPEN_FIND_CLIENTS", "OPEN_ADD_CLIENT",
   "START_TASKS", "NEXT_TASK", "PREVIOUS_TASK", "GO_BACK", "GET_DAILY_TASKS", "AVAILABILITY", "NEXT_CALL",
-  "CANCEL", "STOP_LISTENING", "RUN_FIND_CLIENTS", "SET_FIND_FORM",
+  "CANCEL", "STOP_LISTENING", "RUN_FIND_CLIENTS", "SET_FIND_FORM", "FILTER_PROSPECTS",
   "REVIEW_CURRENT_TASK", "RETRY_CURRENT_TASK", "SKIP_CURRENT_TASK", "ACKNOWLEDGE_TASK", "EXPLAIN", "CLOSE_EXPLAIN",
   "LAYOUT", "VISUAL", "IMAGE", "SCROLL_PAGE",
 ];
@@ -1129,6 +1166,13 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
         };
       }
       return { name: "OPEN_FIND_CLIENTS" };
+    case "FILTER_PROSPECTS":
+      return {
+        name: "FILTER_PROSPECTS",
+        filter: parsed.filter,
+        filterAsk: parsed.filterAsk,
+        filterUnknown: parsed.filterUnknown,
+      };
     case "OPEN_PROSPECT": return { name: "OPEN_PROSPECT", uid };
     case "OPEN_REVIEW": return { name: onTask ? "REVIEW_CURRENT_TASK" : "OPEN_REVIEW", uid };
     case "SHOW_EVIDENCE": return { name: "SHOW_EVIDENCE", uid };
@@ -1203,7 +1247,7 @@ export function spokenToAction(text: string, state: DeskState, world: DeskWorld)
     if (res.needAsk && res.uids.length !== 1) return { ask: "Which company do you mean?" };
     uid = res.uids[0] ?? uid;
   } else if (parsed.companyQuery === "__strongest__") {
-    const top = [...world.prospects].sort((a, b) => b.score - a.score)[0];
+    const top = [...world.prospects].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
     uid = top?.uid || uid;
   }
   const mapped = intentToAction(parsed, uid, { taskOpen: state.taskIx != null && (state.view === "home" || state.view === "pipe" || state.view === "detail") });
@@ -1231,6 +1275,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "start_tasks": return { name: "START_TASKS" };
     case "find": return { name: "RUN_FIND_CLIENTS", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
     case "fill_find": return { name: "SET_FIND_FORM", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
+    case "filter": return { name: "FILTER_PROSPECTS", filter: plan.filter, filterAsk: plan.ask, filterUnknown: plan.unknown };
     case "research": return { name: "RESEARCH_FURTHER", uid: plan.uid };
     case "open_website": return { name: "OPEN_WEBSITE", uid: plan.uid };
     case "dial": return { name: "CALL_PROSPECT", uid: plan.uid };
@@ -1292,7 +1337,10 @@ export function actionDedupeKey(action: AppAction): string {
     action.uid || "",
     action.findVertical || "",
     action.findLocation || "",
-    String(action.findCount || ""),
+    action.findCount || "",
+    JSON.stringify(action.filter || {}),
+    action.filterAsk || "",
+    action.filterUnknown || "",
   ].join(":");
 }
 

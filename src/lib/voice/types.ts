@@ -28,6 +28,7 @@ export type IntentName =
   | "OPEN_OUTREACH"
   | "DRAFT_OUTREACH"
   | "FIND_CLIENTS"
+  | "FILTER_PROSPECTS"
   | "RESEARCH_FURTHER"
   | "FIND_CONTACT"
   | "OPEN_WEBSITE"
@@ -71,6 +72,9 @@ export type ParsedIntent = {
   findLocation?: string;
   findCount?: number;
   hour?: number;
+  filter?: import("../prospects/view-filter.ts").ProspectViewFilter;
+  filterAsk?: string;
+  filterUnknown?: string;
 };
 
 export type VoiceContext = {

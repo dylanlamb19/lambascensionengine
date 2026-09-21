@@ -130,12 +130,20 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     if (co?.website) facts.push({ kind: "VERIFIED", text: `Website on file: ${co.website}.` });
     if (co?.phone) facts.push({ kind: "VERIFIED", text: `Listing phone: ${co.phone}.` });
   } else if (screen === "PIPELINE") {
-    lookingAt = "You’re looking at your prospect pipeline.";
+    lookingAt = state.prospectFilter && Object.keys(state.prospectFilter).length
+      ? "You’re looking at a filtered Pipeline view."
+      : "You’re looking at your prospect pipeline.";
     const named = world.prospects.slice(0, 6).map((p) => `${p.name}${p.stage_plain ? ` (${p.stage_plain})` : ""}`);
     important = named.length
       ? `These are the companies Lamb Ascension is working through. ${named.join("; ")}.`
       : "There are no companies in the pipeline yet.";
-    next = "Open a company to review it, or go find more clients.";
+    next = "Open a company to review it, ask me to filter this list, or go find more clients.";
+    if (world.lastDiscovery?.prospectUids?.length) {
+      facts.push({
+        kind: "VERIFIED",
+        text: `Last Find Clients search: ${world.lastDiscovery.query || "saved search"} (${world.lastDiscovery.matched} companies). Show-me-those uses this list — it does not search Google again.`,
+      });
+    }
   } else if (screen === "REVIEW" && company) {
     lookingAt = `You’re reviewing ${company.name}.`;
     important = state.evidence

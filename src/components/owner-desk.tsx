@@ -21,6 +21,8 @@ import { matchExisting } from "@/lib/prospects/dedupe";
 import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/identity";
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { contactSummary, ownerQualify } from "@/lib/prospects/qualify";
+import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilterEmpty, type ProspectViewFilter } from "@/lib/prospects/view-filter";
+import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
@@ -255,6 +257,8 @@ export function OwnerDesk() {
   const [findMsg, setFindMsg] = useState("");
   const [findLimit, setFindLimit] = useState(8);
   const [findMore, setFindMore] = useState(false);
+  const [lastDiscovery, setLastDiscovery] = useState<LastDiscovery | null>(() => loadLastDiscovery());
+  const [prospectFilter, setProspectFilter] = useState<ProspectViewFilter>({});
   const [radiusMiles, setRadiusMiles] = useState(25);
   const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
@@ -324,16 +328,20 @@ export function OwnerDesk() {
   const pickNsfwRef = useRef(false);
 
   const tasks = useMemo(() => buildTasks(rows), [rows]);
+  const visibleRows = useMemo(
+    () => applyProspectFilter(rows.map(fromProspect), prospectFilter, lastDiscovery),
+    [rows, prospectFilter, lastDiscovery],
+  );
   const liveRef = useRef({
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
-    discoveryConfigured, googleMissing, integration, lastOwnerEvent,
+    discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter,
   });
   liveRef.current = {
     rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
-    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent,
+    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent, lastDiscovery, prospectFilter,
   };
   const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo && !isTestWorkflowUid(c.uid)).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
@@ -565,14 +573,7 @@ export function OwnerDesk() {
     const next = live.nextCall;
     const companyFor = (uid: string) => live.rows.find((p) => p.uid === uid);
     return {
-      prospects: live.rows.map((p) => ({
-        uid: p.uid || "",
-        name: p.name,
-        score: p.score,
-        stage_plain: p.stage_plain,
-        website: p.website,
-        phone: p.phone,
-      })),
+      prospects: live.rows.map((p) => fromProspect(p)),
       tasks: live.tasks.map((t) => ({ title: t.title, plain: t.plain, uid: t.company_uid, id: t.id, retry: t.retry })),
       gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
       calendarStatus: live.integration ? calendarHealth(live.integration) : live.google.calendar,
@@ -603,6 +604,7 @@ export function OwnerDesk() {
       missingIntegrations: live.googleMissing,
       integration: live.integration || undefined,
       testLoop: live.testLoop,
+      lastDiscovery: live.lastDiscovery || null,
     };
   }
 
@@ -617,6 +619,7 @@ export function OwnerDesk() {
       vert: live.vert,
       city: live.city,
       findLimit: live.findLimit,
+      prospectFilter: live.prospectFilter || {},
       stack: live.stack,
       explainOpen: Boolean(live.explain),
       lastSpoken: live.voiceReply,
@@ -639,6 +642,7 @@ export function OwnerDesk() {
     setVert(next.vert);
     setCity(next.city);
     setFindLimit(next.findLimit);
+    setProspectFilter(next.prospectFilter || {});
     setStack(next.stack);
     setCalView(next.calView);
     setCalAnchor(next.calAnchor);
@@ -673,7 +677,7 @@ export function OwnerDesk() {
       saveGalleryLocal(next.gallery);
     }
     if (next.lastSpoken && next.lastAction !== "CLOSE_EXPLAIN") {
-      const nav = /^(NAVIGATE_|OPEN_FIND|OPEN_ADD|GO_BACK|START_TASKS|CALENDAR_)/.test(next.lastAction || "");
+      const nav = /^(NAVIGATE_|OPEN_FIND|OPEN_ADD|GO_BACK|START_TASKS|CALENDAR_|FILTER_PROSPECTS)/.test(next.lastAction || "");
       const explain = next.lastAction === "EXPLAIN";
       const read = /^READ_/.test(next.lastAction || "");
       setVoiceReply(next.lastSpoken);
@@ -1300,6 +1304,11 @@ export function OwnerDesk() {
         contact_summary: contactSummary(p),
         opportunity_summary: opportunities(p).map((o) => o.title).join("; "),
         fit_headline: ownerQualify(p).headline,
+        is_demo: Boolean(p.is_demo),
+        is_test: isTestWorkflowUid(p.uid),
+        discovered_at: p.discovered_at || "",
+        google_rating: p.google_rating,
+        provider: p.provider || "",
       })),
       gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
       calendar: live.integration ? calendarHealth(live.integration) : live.google.calendar,
@@ -1343,6 +1352,8 @@ export function OwnerDesk() {
       gallerySummary: summarizeGallery(live.gallery?.items || [], live.gallery?.currentId),
       designSnapshot: safeSnapshot(designDocRef.current, detectViewport()),
       integration: live.integration || undefined,
+      lastDiscovery: live.lastDiscovery || null,
+      prospectFilter: live.prospectFilter || {},
     };
   }
 
@@ -2156,6 +2167,14 @@ export function OwnerDesk() {
       }
       setRows(result.prospects);
       saveCompanies(result.prospects);
+      if (result.lastDiscovery) {
+        setLastDiscovery(result.lastDiscovery);
+        saveLastDiscovery(result.lastDiscovery);
+        setProspectFilter({
+          lastDiscovery: true,
+          prospectUids: result.lastDiscovery.prospectUids,
+        });
+      }
       setFindMsg(result.reason);
       setView("pipe");
       say(result.reason);
@@ -2656,15 +2675,34 @@ export function OwnerDesk() {
         {view === "pipe" ? (
           <section className="la-card">
             <p className="la-kicker">Pipeline</p>
-            <h2 className="font-display mb-3 mt-2 text-2xl">Pipeline</h2>
-            {rows.length ? rows.map((c) => (
-              <button key={c.uid || c.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
-                <span>
-                  <b className="la-list-name">{c.name}</b>
-                  <span className="mt-0.5 block text-sm text-muted">{ownerQualify(c).headline} · {reachLabel(reachKind(c))} · {c.stage_plain}</span>
-                </span>
-              </button>
-            )) : <p className="la-empty">No companies yet. Find Clients or add one you already know.</p>}
+            <h2 className="font-display mb-2 mt-2 text-2xl">Pipeline</h2>
+            <p className="mb-3 text-sm text-muted">{filterSummary(visibleRows.length, prospectFilter, lastDiscovery)}</p>
+            {!isFilterEmpty(prospectFilter) ? (
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                {filterChips(prospectFilter, lastDiscovery).map((chip) => (
+                  <span key={chip} className="la-chip">{chip}</span>
+                ))}
+                <button
+                  type="button"
+                  className="la-btn la-btn-quiet"
+                  onClick={() => dispatchAction({ name: "FILTER_PROSPECTS", filter: { replace: true } })}
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) : null}
+            {visibleRows.length ? visibleRows.map((c) => {
+              const full = rows.find((r) => r.uid === c.uid);
+              if (!full) return null;
+              return (
+                <button key={c.uid || full.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
+                  <span>
+                    <b className="la-list-name">{c.name}</b>
+                    <span className="mt-0.5 block text-sm text-muted">{c.fitHeadline} · {reachLabel(c.reach)} · {full.stage_plain}</span>
+                  </span>
+                </button>
+              );
+            }) : <p className="la-empty">{rows.length ? "Nothing matches these filters." : "No companies yet. Find Clients or add one you already know."}</p>}
           </section>
         ) : null}
 

@@ -2,6 +2,7 @@ import type { IntentName, ParsedIntent, Risk, VoiceContext } from "./types.ts";
 import { HIGH_INTENTS, MEDIUM_INTENTS } from "./types.ts";
 import { parseSpokenHour } from "../calendar/range.ts";
 import { isPersonalCalendarCommand } from "../calendar/owner-event.ts";
+import { parseSpokenFilter } from "../prospects/view-filter.ts";
 
 function riskOf(intent: IntentName): Risk {
   if (HIGH_INTENTS.includes(intent)) return "HIGH";
@@ -288,6 +289,16 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   }
   if (hit(t, /try again|retry it|^retry$|run the research again|research again|research more/)) {
     return { ...base, intent: "RESEARCH_FURTHER", risk: "LOW", confidence: 0.95 };
+  }
+  const listFilter = parseSpokenFilter(stripped);
+  if (listFilter.kind === "filter") {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.97, filter: listFilter.filter };
+  }
+  if (listFilter.kind === "unknown") {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.99, filterUnknown: listFilter.reason };
+  }
+  if (listFilter.kind === "ask") {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.99, filterAsk: listFilter.ask };
   }
   if (hit(t, /press review|^review$|review this|review it|review this one|open (the )?review/)) {
     return { ...base, intent: "OPEN_REVIEW", risk: "LOW", confidence: 0.96 };

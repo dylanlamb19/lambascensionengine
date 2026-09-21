@@ -267,6 +267,34 @@ describe("Ara allowlisted tools", () => {
     assert.equal(send.output.sent, false);
     assert.equal(desk.testMode, true);
   });
+
+  it("filter_prospects uses last discovery and never re-runs Places", () => {
+    const ctx: AraDeskContext = {
+      ...desk,
+      lastDiscovery: {
+        query: "Roofing in Fort Worth",
+        vertical: "Roofing",
+        location: "Fort Worth",
+        requested: 5,
+        matched: 1,
+        prospectUids: ["uid-fire"],
+        placeIds: ["ChFire"],
+        timestamp: "2026-09-20T12:00:00.000Z",
+      },
+      prospects: [
+        { ...desk.prospects[0], vertical: "Roofing", city: "Fort Worth", fit_headline: "GOOD FIT", phone: "817", place_id: "ChFire" },
+        desk.prospects[1],
+      ],
+    };
+    const r = executeAllowlistedTool("filter_prospects", { last_discovery: true }, ctx);
+    assert.equal(r.ok, true);
+    assert.equal(r.plan.type, "filter");
+    assert.equal(r.output.places_rerun, false);
+    assert.equal(r.output.last_discovery_used, true);
+    assert.equal(r.output.count, 1);
+    const find = executeAllowlistedTool("find_clients", { vertical: "Roofing", location: "Fort Worth", count: 5 }, ctx);
+    assert.equal(find.plan.type, "find");
+  });
 });
 
 describe("Ara session payload / outage / key leakage", () => {

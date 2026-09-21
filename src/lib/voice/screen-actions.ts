@@ -135,6 +135,7 @@ export function labeledActionsFor(state: DeskState, world: DeskWorld): ScreenAct
   if (screen === "PIPELINE") {
     out.unshift(
       act("OPEN_PROSPECT", "open_prospect", "OPEN_PROSPECT", "Review", ["review", "open this one", "open prospect"]),
+      act("FILTER_PROSPECTS", "filter_prospects", "FILTER_PROSPECTS", "Clear filters", ["clear filters", "show everything", "show all prospects", "reset the list"]),
       act("NEXT_TASK", "next_task", "NEXT_TASK", "Next", ["next", "open the next"]),
     );
   }

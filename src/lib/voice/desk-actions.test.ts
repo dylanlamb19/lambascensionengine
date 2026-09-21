@@ -555,3 +555,78 @@ describe("Ara operates Owner Mode via allowlisted actions", () => {
     assert.match(String(tool.output.spoken), /Google isn’t configured yet/);
   });
 });
+
+describe("Ara filters the Pipeline view without rediscovery", () => {
+  const lastWorld: DeskWorld = {
+    ...world,
+    lastDiscovery: {
+      query: "Roofing in Fort Worth, Texas",
+      vertical: "Roofing",
+      location: "Fort Worth, Texas",
+      requested: 5,
+      matched: 2,
+      prospectUids: ["uid-fire", "uid-saas"],
+      placeIds: ["ChFire", "ChSaas"],
+      timestamp: "2026-09-20T12:00:00.000Z",
+    },
+    prospects: [
+      {
+        uid: "uid-fire",
+        name: "Firefighter Roofing",
+        score: 88,
+        vertical: "Roofing",
+        city: "Fort Worth",
+        fitHeadline: "GOOD FIT",
+        research: "not_started",
+        reach: "NEEDS_CONTACT_INFO",
+        hasPhone: true,
+        hasWebsite: true,
+        source: "google_places",
+      },
+      {
+        uid: "uid-saas",
+        name: "Northstar SaaS",
+        score: 70,
+        vertical: "SaaS / software",
+        city: "Dallas",
+        fitHeadline: "POSSIBLE FIT",
+        research: "done",
+        reach: "READY_TO_CONTACT",
+        hasPhone: false,
+        hasWebsite: true,
+        source: "google_places",
+      },
+    ],
+  };
+
+  it("show me the five you just matched filters last discovery and does not run Find Clients", () => {
+    const decided = spokenToAction("Show me the five roofing companies you just matched in Fort Worth.", emptyDesk(), lastWorld);
+    assert.ok("action" in decided);
+    if (!("action" in decided)) return;
+    assert.equal(decided.action.name, "FILTER_PROSPECTS");
+    assert.equal(decided.action.filter?.lastDiscovery, true);
+    const applied = applyDeskAction(emptyDesk(), decided.action, lastWorld);
+    assert.equal(applied.effect.type, "none");
+    assert.equal(applied.state.view, "pipe");
+    assert.equal(applied.state.prospectFilter.lastDiscovery, true);
+    assert.match(applied.state.lastSpoken, /Firefighter Roofing|2|last search|Fort Worth/i);
+    assert.doesNotMatch(applied.state.lastSpoken, /already on your list/i);
+  });
+
+  it("find me 5 roofing still discovers, not filters", () => {
+    const parsed = parseSpokenCommand("Find me 5 roofing companies in Fort Worth.");
+    assert.equal(parsed.intent, "FIND_CLIENTS");
+  });
+
+  it("clear filters is view-only", () => {
+    const start = applyDeskAction(
+      emptyDesk({ prospectFilter: { lastDiscovery: true } }),
+      { name: "FILTER_PROSPECTS", filter: { lastDiscovery: true } },
+      lastWorld,
+    );
+    const cleared = applyDeskAction(start.state, { name: "FILTER_PROSPECTS", filter: { replace: true } }, lastWorld);
+    assert.equal(cleared.effect.type, "none");
+    assert.deepEqual(cleared.state.prospectFilter, {});
+    assert.match(cleared.state.lastSpoken, /cleared/i);
+  });
+});

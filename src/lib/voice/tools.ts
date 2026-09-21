@@ -18,6 +18,15 @@ import {
   sanitizeOwnerTitle,
   type LastOwnerEvent,
 } from "../calendar/owner-event.ts";
+import {
+  applyProspectFilter,
+  asFilterable,
+  composeProspectFilter,
+  filterChips,
+  isFilterEmpty,
+  speakFilterResult,
+  toolArgsToFilter,
+} from "../prospects/view-filter.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
@@ -33,6 +42,7 @@ export const ALLOWED_TOOLS = [
   "find_clients",
   "set_find_clients_form",
   "run_find_clients",
+  "filter_prospects",
   "start_tasks",
   "start_my_tasks",
   "go_back",
@@ -152,6 +162,7 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   READ_EVERYTHING: "read_everything_on_screen",
   SET_FIND_CLIENTS_FORM: "set_find_clients_form",
   RUN_FIND_CLIENTS: "run_find_clients",
+  FILTER_PROSPECTS: "filter_prospects",
   DRAFT_OUTREACH: "draft_outreach",
   OPEN_OUTREACH: "open_outreach",
   NAVIGATE_CALENDAR: "navigate_calendar",
@@ -277,6 +288,11 @@ export type AraProspectSnap = {
   contact_summary?: string;
   opportunity_summary?: string;
   fit_headline?: string;
+  is_demo?: boolean;
+  is_test?: boolean;
+  discovered_at?: string;
+  google_rating?: string;
+  provider?: string;
 };
 
 export type AraDeskContext = {
@@ -318,6 +334,8 @@ export type AraDeskContext = {
   gallerySummary?: string;
   designSnapshot?: SafeDesignSnapshot | null;
   integration?: import("../mail/integration-status.ts").IntegrationStatus;
+  lastDiscovery?: import("../prospects/last-discovery.ts").LastDiscovery | null;
+  prospectFilter?: import("../prospects/view-filter.ts").ProspectViewFilter;
 };
 
 export type ToolPlan =
@@ -330,6 +348,7 @@ export type ToolPlan =
   | { type: "start_tasks" }
   | { type: "find"; vertical: string; location: string; count: number }
   | { type: "fill_find"; vertical: string; location: string; count: number }
+  | { type: "filter"; filter: import("../prospects/view-filter.ts").ProspectViewFilter; ask?: string; unknown?: string }
   | { type: "research"; uid: string }
   | { type: "find_contact"; uid: string }
   | { type: "open_website"; uid: string }
@@ -424,8 +443,9 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "read_current_screen", description: "Read the meaningful content of the current screen in Ara's voice. Use for ‘read this page’, ‘what does this say?’. Do not rewrite. Do not invent. If already_spoken is true, remain silent.", parameters: { type: "object", properties: { mode: { type: "string" } } } },
     { type: "function", name: "read_everything_on_screen", description: "Read everything meaningful on the current screen in Ara's voice. Use for ‘read everything’. If already_spoken is true, remain silent.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "set_find_clients_form", description: "Fill Find Clients fields without searching yet.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } } } },
-    { type: "function", name: "run_find_clients", description: "Run Find Clients using the form (or provided fields). Same server action as the button.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } } } },
-    { type: "function", name: "find_clients", description: "Fill Find Clients and run it. Same as the Find Clients button.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } }, required: ["location"] } },
+    { type: "function", name: "run_find_clients", description: "Run Find Clients using the form (or provided fields). Discovers NEW real Google businesses. Do NOT use to show or filter companies already found — use filter_prospects.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } } } },
+    { type: "function", name: "find_clients", description: "Fill Find Clients and run it. Same as the Find Clients button. Use ONLY to discover NEW companies. Do NOT use this to show, filter, or sort companies already on the list.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } }, required: ["location"] } },
+    { type: "function", name: "filter_prospects", description: "Filter, sort, or show the Pipeline VIEW. Does not search Google Places, does not change records, does not send email. Use for: show me those / the ones you just found / only roofing / good fit / needs contact info / has a phone / hide test / clear filters / sort by best fit. For 'those/these/just found', set last_discovery=true. Follow-up 'only the good fits' should compose=true onto the current view.", parameters: { type: "object", properties: { compose: { type: "boolean", description: "true (default) narrows the current view. false replaces it." }, clear: { type: "boolean", description: "Clear all view filters and show the full list." }, last_discovery: { type: "boolean", description: "Restrict to the prospect UIDs from the latest Find Clients search. Do not re-run Places." }, vertical: { type: "array", items: { type: "string" } }, city: { type: "string" }, location: { type: "string" }, fit: { type: "array", items: { type: "string", enum: ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] } }, research: { type: "array", items: { type: "string", enum: ["done", "unavailable", "not_started"] } }, reach: { type: "array", items: { type: "string", enum: ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED"] } }, has_phone: { type: "boolean" }, has_email: { type: "boolean" }, has_website: { type: "boolean" }, has_decision_maker: { type: "boolean" }, exclude_test: { type: "boolean" }, exclude_demo: { type: "boolean" }, added_after: { type: "string" }, min_reviews: { type: "number" }, min_rating: { type: "number" }, sort: { type: "string", enum: ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] }, limit: { type: "number" }, prospect_uids: { type: "array", items: { type: "string" } } } } },
     { type: "function", name: "research_prospect", description: "Run deep research on a prospect.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "research_further", description: "Same as Research further.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "find_contact", description: "Find a legitimate public decision-maker or outreach method. Same as Find Contact. Does not invent emails.", parameters: { type: "object", properties: uid } },
@@ -1020,6 +1040,68 @@ export function executeAllowlistedTool(
       ok: true, tool, rejected: false,
       output: { ok: true, ...f, changed: true },
       plan: { type: "find", vertical: f.vertical, location: f.location, count: f.count },
+    };
+  }
+  if (tool === "filter_prospects") {
+    const unsupported = ["party", "politics", "religion", "race", "ethnicity", "republican", "democrat"];
+    const unknownKeys = Object.keys(args).filter((k) => unsupported.includes(k.toLowerCase()));
+    if (unknownKeys.length) {
+      const reason = "I don’t have that information on file, so I won’t guess.";
+      return { ok: false, tool, rejected: false, output: { ok: false, reason, spoken: reason, changed: false }, plan: { type: "filter", filter: {}, unknown: reason } };
+    }
+    const parsed = toolArgsToFilter(args);
+    if (parsed.unknown.length && isFilterEmpty(parsed.filter)) {
+      const reason = "I don’t have that information on file, so I won’t guess.";
+      return { ok: false, tool, rejected: false, output: { ok: false, reason, spoken: reason, changed: false }, plan: { type: "filter", filter: {}, unknown: reason } };
+    }
+    let incoming = parsed.filter;
+    if (args.clear === true) incoming = { replace: true };
+    const current = ctx.prospectFilter || {};
+    const next = composeProspectFilter(current, incoming);
+    const rows = ctx.prospects.map((p) => asFilterable({
+      uid: p.uid,
+      name: p.name,
+      vertical: p.vertical,
+      city: p.city,
+      fitHeadline: (p.fit_headline as import("../prospects/qualify.ts").FitHeadline | undefined),
+      research: p.research_status === "complete" || p.research_status === "partial" ? "done"
+        : p.research_status === "blocked" || p.research_status === "failed" ? "unavailable"
+          : "not_started",
+      reach: (p.reach as import("../prospects/reach.ts").ReachKind | undefined),
+      stage: p.stage,
+      stage_plain: p.stage_plain,
+      hasPhone: Boolean(p.phone),
+      hasEmail: Boolean(p.recipient),
+      hasWebsite: Boolean(p.website),
+      hasDecisionMaker: Boolean(p.decisionMaker),
+      source: p.provider || (p.place_id ? "google_places" : "manual"),
+      isDemo: Boolean(p.is_demo),
+      isTest: Boolean(p.is_test),
+      addedAt: p.discovered_at || "",
+      reviewCount: p.review_count || 0,
+      rating: Number.parseFloat(String(p.google_rating || "")) || 0,
+      score: p.score || 0,
+      website: p.website,
+      phone: p.phone,
+    }));
+    const hits = applyProspectFilter(rows, next, ctx.lastDiscovery || null);
+    const spoken = speakFilterResult(hits.length, next, ctx.lastDiscovery || null);
+    const chips = filterChips(next, ctx.lastDiscovery || null);
+    return {
+      ok: true, tool, rejected: false,
+      output: {
+        ok: true,
+        changed: true,
+        view: "pipe",
+        count: hits.length,
+        names: hits.slice(0, 12).map((h) => h.name),
+        uids: hits.map((h) => h.uid),
+        chips,
+        spoken,
+        last_discovery_used: Boolean(next.lastDiscovery),
+        places_rerun: false,
+      },
+      plan: { type: "filter", filter: next },
     };
   }
   if (tool === "web_research" || tool === "research_topic" || tool === "deep_web_research" || tool === "compare_sources") {

@@ -127,11 +127,23 @@ export const findClientsFn = createServerFn({ method: "POST" })
     }
     const imported = await importProspects(context.userId, incoming);
     const prospects = imported.prospects;
+    const placeIds = incoming.map((p) => p.provider_place_id).filter((id): id is string => Boolean(id));
+    const matched = prospects.filter((p) => p.provider_place_id && placeIds.includes(p.provider_place_id));
+    const lastDiscovery = {
+      query: `${vertical} in ${location}`,
+      vertical,
+      location,
+      requested: limit,
+      matched: matched.length,
+      prospectUids: matched.map((p) => p.uid || "").filter(Boolean),
+      placeIds,
+      timestamp: new Date().toISOString(),
+    };
     const reason = imported.imported === 0 && imported.merged > 0
-      ? `Those companies are already on your list. No duplicates added (${imported.merged} matched by Place ID).`
-      : `Saved ${imported.imported} new companies${imported.merged ? `, ${imported.merged} already on your list` : ""}.`;
+      ? `Those ${matched.length} ${vertical} companies in ${location} are already on your list. Showing them on Pipeline.`
+      : `Saved ${imported.imported} new companies${imported.merged ? `, ${imported.merged} already on your list` : ""}. Showing them on Pipeline.`;
     await logActivity(context.userId, "find_clients", `${filtered.length} from Places (${vertical} / ${location}); imported ${imported.imported}, merged ${imported.merged}`);
-    return { ok: true as const, reason, prospects, imported: imported.imported, merged: imported.merged };
+    return { ok: true as const, reason, prospects, imported: imported.imported, merged: imported.merged, lastDiscovery };
   });
 
 export const discoveryStatusFn = createServerFn({ method: "GET" })
