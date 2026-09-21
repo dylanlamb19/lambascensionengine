@@ -298,14 +298,22 @@ test("listEvents keeps readable events when one item is malformed", async () => 
           end: { dateTime: "2026-09-22T15:30:00-05:00" },
         },
         { id: "evt-allday", summary: "Out", start: { date: "2026-09-23" }, end: { date: "2026-09-24" } },
+        {
+          id: "evt-conference",
+          summary: "Meet",
+          start: { dateTime: "2026-09-22T16:00:00-05:00" },
+          end: { dateTime: "2026-09-22T16:30:00-05:00" },
+          attendees: { "0": { email: "a@x.com" } },
+          conferenceData: { entryPoints: [{ uri: "https://meet.google.com/abc" }] },
+        },
       ],
     }), { status: 200 })) as typeof fetch;
   const listed = await listEvents("tok", new Date("2026-09-20T05:00:00Z"), new Date("2026-09-27T05:00:00Z"), fetchImpl);
   assert.equal(listed.ok, true);
   if (listed.ok) {
-    assert.equal(listed.events.length, 2);
-    assert.equal(listed.events[0]?.id, "evt-ok");
-    assert.equal(listed.events[1]?.id, "evt-allday");
+    assert.equal(listed.events.length, 3);
+    assert.deepEqual(listed.events.map((e) => e.id).sort(), ["evt-allday", "evt-conference", "evt-ok"]);
+    assert.equal(listed.events.find((e) => e.id === "evt-conference")?.attendees, 1);
   }
 });
 
@@ -320,6 +328,9 @@ test("asIsoTimestamp coerces Postgres Date objects so agenda sort cannot throw",
   ];
   events.sort(compareEventStart);
   assert.equal(asIsoTimestamp(events[0].start).startsWith("2026-09-22T15"), true);
+  const dateStart = d as unknown as string;
+  assert.equal(typeof dateStart.localeCompare, "undefined");
+  assert.throws(() => dateStart.localeCompare("2026-09-22T15:00:00.000Z"));
 });
 
 test("deleteEvent uses sendUpdates=none", async () => {

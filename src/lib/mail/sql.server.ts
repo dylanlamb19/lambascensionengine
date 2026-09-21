@@ -5,6 +5,25 @@ import type { GoogleTokens } from "../google/oauth";
 import { newUid } from "../prospects/ids";
 import { TEST_UID_LIKE, TEST_WORKFLOW_UID, isTestWorkflowUid } from "./test-loop";
 
+/** Postgres/neon often returns timestamptz as Date. Always serialize before UI/sort. */
+function isoTimestamp(value: unknown): string {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const d = new Date(value);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : "";
+  }
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof (value as { toISOString?: unknown }).toISOString === "function") {
+    try {
+      const iso = (value as Date).toISOString();
+      return typeof iso === "string" ? iso : "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 export async function saveOauthState(userId: string, kind: OauthKind): Promise<OauthStateRecord> {
   const rec = mintOauthState(userId, kind);
   const sql = await getSql();
@@ -583,7 +602,15 @@ export async function listCallsInRange(
   to: Date,
 ): Promise<{ id: string; prospect_uid: string; google_event_id: string | null; title: string; start_at: string; end_at: string; status: string }[]> {
   const sql = await getSql();
-  return sql`
+  const rows = await sql<{
+    id: string;
+    prospect_uid: string;
+    google_event_id: string | null;
+    title: string;
+    start_at: unknown;
+    end_at: unknown;
+    status: string;
+  }>`
     select id, prospect_uid, google_event_id, title, start_at, end_at, status
     from calendar_events
     where user_id = ${userId}
@@ -591,6 +618,15 @@ export async function listCallsInRange(
       and end_at > ${from.toISOString()}
     order by start_at asc
   `;
+  return rows.map((r) => ({
+    id: r.id,
+    prospect_uid: r.prospect_uid,
+    google_event_id: r.google_event_id,
+    title: r.title,
+    start_at: isoTimestamp(r.start_at),
+    end_at: isoTimestamp(r.end_at),
+    status: r.status,
+  })).filter((r) => r.start_at);
 }
 
 export async function outboundMessageIds(userId: string, prospectUid?: string): Promise<Set<string>> {

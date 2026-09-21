@@ -22,7 +22,8 @@ function openOauthWindow(): Window | null {
 }
 
 export async function startGoogleOAuth(kind: "gmail" | "calendar", opts?: { allowPopup?: boolean; force?: boolean }): Promise<GoogleConnectResult> {
-  const popup = opts?.allowPopup === false ? null : openOauthWindow();
+  const wantPopup = opts?.allowPopup !== false;
+  const popup = wantPopup ? openOauthWindow() : null;
   const { googleStartFn } = await import("@/lib/mail/actions");
   let res: Awaited<ReturnType<typeof googleStartFn>>;
   try {
@@ -41,6 +42,16 @@ export async function startGoogleOAuth(kind: "gmail" | "calendar", opts?: { allo
       launched: false,
     };
   }
+  if ("alreadyConnected" in res && res.alreadyConnected) {
+    try { popup?.close(); } catch { /* ignore */ }
+    return {
+      ok: true,
+      reason: res.reason || "Google Calendar is already connected. The existing connection was not changed.",
+      missing: res.missing || [],
+      next: res.next || "Use Reconnect only if Calendar actually needs a new Google sign-in.",
+      launched: false,
+    };
+  }
   if (!res.ok) {
     try { popup?.close(); } catch { /* ignore */ }
     return {
@@ -48,6 +59,18 @@ export async function startGoogleOAuth(kind: "gmail" | "calendar", opts?: { allo
       reason: res.reason,
       missing: res.missing || [],
       next: res.next || "Add the missing Google OAuth values on the server, then press Connect Gmail again. We will not ask for your Gmail password.",
+      launched: false,
+    };
+  }
+  if (!res.url) {
+    try { popup?.close(); } catch { /* ignore */ }
+    return {
+      ok: false,
+      reason: kind === "calendar"
+        ? "Could not start Google Calendar sign-in. The existing Calendar connection was not changed."
+        : "Could not start Google sign-in. Nothing was connected.",
+      missing: res.missing || [],
+      next: kind === "calendar" ? "The stored Calendar connection was left as-is." : "Try Connect Gmail again.",
       launched: false,
     };
   }

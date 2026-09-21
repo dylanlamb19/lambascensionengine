@@ -1477,6 +1477,7 @@ export function OwnerDesk() {
         "get_last_owner_calendar_event",
         "list_owner_calendar_events",
         "delete_owner_calendar_event",
+        "delete_owner_calendar_events_bulk",
         "update_owner_calendar_event",
       ])),
       confirmationOpen: false,
@@ -1520,7 +1521,7 @@ export function OwnerDesk() {
   }
 
   function rememberCalendarTurn(key: string, output: Record<string, unknown>) {
-    calendarTurnRef.current = { key, output, at: Date.now() };
+    calendarTurnRef.current = { key, output: { ...output, already_spoken: true, say_nothing: true }, at: Date.now() };
     return output;
   }
 
@@ -1529,7 +1530,7 @@ export function OwnerDesk() {
     if (!hit) return null;
     if (Date.now() - hit.at > 20_000) return null;
     if (hit.key !== key) return null;
-    return { ...hit.output, already_spoken: true };
+    return { ...hit.output, already_spoken: true, say_nothing: true };
   }
 
   async function hydrateAraOutput(name: string, result: ToolResult): Promise<Record<string, unknown>> {
@@ -1681,9 +1682,9 @@ export function OwnerDesk() {
       if (cached) return cached;
       try {
         const r = await listOwnerCalendarEventsFn({ data: { when: result.plan.when, title: result.plan.title } });
-        return rememberCalendarTurn(key, { ...result.output, ...r, spoken: r.spoken, already_spoken: true });
+        return rememberCalendarTurn(key, { ...result.output, ...r, spoken: r.spoken });
       } catch {
-        return rememberCalendarTurn(key, { ok: false, listed: false, spoken: "I couldn't read your Google Calendar.", already_spoken: true });
+        return rememberCalendarTurn(key, { ok: false, listed: false, spoken: "I couldn't read your Google Calendar." });
       }
     }
     if (result.plan.type === "owner_calendar_bulk_delete") {
@@ -1727,9 +1728,9 @@ export function OwnerDesk() {
           refreshCalendarAgenda();
           void refreshProspectsAndSales();
         }
-        return rememberCalendarTurn(key, { ...result.output, ...r, already_spoken: true, terminal: "terminal" in r ? r.terminal : undefined });
+        return rememberCalendarTurn(key, { ...result.output, ...r, terminal: "terminal" in r ? r.terminal : undefined });
       } catch {
-        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed.", already_spoken: true, terminal: "FAILED" });
+        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed.", terminal: "FAILED" });
       }
     }
     if (result.plan.type === "owner_calendar_delete") {
@@ -1758,9 +1759,9 @@ export function OwnerDesk() {
         if ("needsConfirm" in r && r.needsConfirm && r.eventId) {
           pendingCalManageRef.current = { kind: "delete", eventId: r.eventId, title: r.title, when: result.plan.when };
         }
-        return rememberCalendarTurn(key, { ...result.output, ...r, already_spoken: true });
+        return rememberCalendarTurn(key, { ...result.output, ...r });
       } catch {
-        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed.", already_spoken: true });
+        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed." });
       }
     }
     if (result.plan.type === "owner_calendar_update") {
@@ -1821,6 +1822,7 @@ export function OwnerDesk() {
           confirm: false,
         }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
+        if (output.already_spoken) return true;
         utter(String(output.spoken || ownerBulkCancelledSpeech()), "TOOL_RESULT");
         return true;
       }
@@ -1842,6 +1844,7 @@ export function OwnerDesk() {
         }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
         rememberCalendarTurn(turnKey, output);
+        if (output.already_spoken || output.say_nothing) return true;
         utter(String(output.spoken || "I didn't delete anything."), "TOOL_RESULT");
         return true;
       }
@@ -1887,6 +1890,7 @@ export function OwnerDesk() {
         const result = executeAllowlistedTool("list_owner_calendar_events", { when: manage.when, title: manage.title }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("list_owner_calendar_events", result);
         rememberCalendarTurn(turnKey, output);
+        if (output.already_spoken || output.say_nothing) return true;
         utter(String(output.spoken || "I couldn’t read your Google Calendar."), "TOOL_RESULT");
         return true;
       }
@@ -1899,6 +1903,7 @@ export function OwnerDesk() {
         }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
         rememberCalendarTurn(turnKey, output);
+        if (output.already_spoken || output.say_nothing) return true;
         utter(String(output.spoken || "I didn't delete anything."), "TOOL_RESULT");
         return true;
       }
@@ -1911,6 +1916,7 @@ export function OwnerDesk() {
         }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("delete_owner_calendar_event", result);
         rememberCalendarTurn(turnKey, output);
+        if (output.already_spoken || output.say_nothing) return true;
         utter(String(output.spoken || "I couldn't find a matching event, so I didn't delete anything."), "TOOL_RESULT");
         return true;
       }

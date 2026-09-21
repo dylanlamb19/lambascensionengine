@@ -46,8 +46,9 @@ export const googleStartFn = createServerFn({ method: "POST" })
       const accounts = await googleStatus(context.userId);
       if (data.kind === "calendar" && accounts.calendar === "connected" && !data.force) {
         return {
-          ok: false as const,
+          ok: true as const,
           alreadyConnected: true as const,
+          url: "",
           reason: "Google Calendar is already connected. The existing connection was not changed.",
           missing,
           next: "Use Reconnect only if Calendar actually needs a new Google sign-in.",
@@ -362,6 +363,7 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
   .validator((data: { from: string; to: string }) => data)
   .handler(async ({ data, context }) => {
     const { asIsoTimestamp, compareEventStart, calendarListUserReason } = await import("../google/calendar");
+    const events: AgendaEvent[] = [];
     try {
       const { listCallsInRange } = await import("./sql.server");
       const { getProspectByUid } = await import("@/lib/prospects/repo.server");
@@ -378,58 +380,71 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
         sales = [];
       }
       const byGoogle = new Map(sales.filter((s) => s.google_event_id).map((s) => [s.google_event_id as string, s]));
-      const events: AgendaEvent[] = [];
       for (const ev of listed.events) {
-        const sale = byGoogle.get(ev.id);
-        let companyName: string | null = null;
-        if (sale?.prospect_uid) {
+        try {
+          const sale = byGoogle.get(ev.id);
+          let companyName: string | null = null;
+          if (sale?.prospect_uid) {
+            try {
+              const p = await getProspectByUid(context.userId, sale.prospect_uid);
+              companyName = p?.name || null;
+            } catch {
+              companyName = null;
+            }
+          }
+          const start = asIsoTimestamp(ev.start) || String(ev.start || "");
+          if (!start) continue;
+          events.push({
+            id: ev.id,
+            title: ev.title,
+            start,
+            end: asIsoTimestamp(ev.end) || String(ev.end || ev.start || "") || start,
+            status: sale ? "booked" : ev.status,
+            prospectUid: sale?.prospect_uid || null,
+            companyName,
+            kind: sale ? "sales_call" : "google",
+            htmlLink: ev.htmlLink || null,
+          });
+        } catch {
+          console.info("[calendar-list]", { skipped: true, id: typeof ev?.id === "string" ? ev.id : "unknown" });
+        }
+      }
+      for (const sale of sales) {
+        try {
+          if (sale.google_event_id && listed.events.some((e) => e.id === sale.google_event_id)) continue;
+          let companyName: string | null = null;
           try {
-            const p = await getProspectByUid(context.userId, sale.prospect_uid);
+            const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
             companyName = p?.name || null;
           } catch {
             companyName = null;
           }
-        }
-        events.push({
-          id: ev.id,
-          title: ev.title,
-          start: asIsoTimestamp(ev.start) || String(ev.start || ""),
-          end: asIsoTimestamp(ev.end) || String(ev.end || ev.start || ""),
-          status: sale ? "booked" : ev.status,
-          prospectUid: sale?.prospect_uid || null,
-          companyName,
-          kind: sale ? "sales_call" : "google",
-          htmlLink: ev.htmlLink || null,
-        });
-      }
-      for (const sale of sales) {
-        if (sale.google_event_id && listed.events.some((e) => e.id === sale.google_event_id)) continue;
-        let companyName: string | null = null;
-        try {
-          const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
-          companyName = p?.name || null;
+          const start = asIsoTimestamp(sale.start_at);
+          const end = asIsoTimestamp(sale.end_at) || start;
+          if (!start) continue;
+          events.push({
+            id: sale.id,
+            title: sale.title,
+            start,
+            end,
+            status: sale.status,
+            prospectUid: sale.prospect_uid,
+            companyName,
+            kind: "sales_call",
+            htmlLink: null,
+          });
         } catch {
-          companyName = null;
+          console.info("[calendar-list]", { skipped: true, sale: true });
         }
-        const start = asIsoTimestamp(sale.start_at);
-        const end = asIsoTimestamp(sale.end_at) || start;
-        if (!start) continue;
-        events.push({
-          id: sale.id,
-          title: sale.title,
-          start,
-          end,
-          status: sale.status,
-          prospectUid: sale.prospect_uid,
-          companyName,
-          kind: "sales_call",
-          htmlLink: null,
-        });
       }
       events.sort(compareEventStart);
       return { ok: true as const, connected: true, events };
     } catch (err) {
-      console.info("[calendar-list]", { code: "CALENDAR_LIST_PARSE_FAILED", err: err instanceof Error ? err.name : "error" });
+      console.info("[calendar-list]", { code: "CALENDAR_LIST_PARSE_FAILED", err: err instanceof Error ? err.name : "error", kept: events.length });
+      if (events.length) {
+        try { events.sort(compareEventStart); } catch { /* keep insertion order */ }
+        return { ok: true as const, connected: true, events };
+      }
       return {
         ok: false as const,
         connected: true,

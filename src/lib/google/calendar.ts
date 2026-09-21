@@ -18,7 +18,6 @@ export const CALENDAR_UNREADABLE =
 export const CALENDAR_VIEW_UNREADABLE =
   "Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it.";
 
-const LIST_FIELDS = "nextPageToken,items(id,status,summary,htmlLink,location,description,attendees,start,end,eventType,recurringEventId)";
 const LIST_MAX_PAGES = 6;
 const LIST_PAGE_SIZE = 100;
 
@@ -268,8 +267,8 @@ async function listEventsOnCalendar(
   | { ok: false; reason: string; code: CalendarListCode; httpStatus: number; googleReason: string; calendarId: string }
 > {
   const events: GoogleCalEvent[] = [];
+  let skipped = 0;
   let pageToken = "";
-  let usedFields = true;
   try {
     for (let page = 0; page < LIST_MAX_PAGES; page += 1) {
       const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
@@ -279,18 +278,12 @@ async function listEventsOnCalendar(
       url.searchParams.set("orderBy", "startTime");
       url.searchParams.set("maxResults", String(LIST_PAGE_SIZE));
       url.searchParams.set("timeZone", "America/Chicago");
-      if (usedFields) url.searchParams.set("fields", LIST_FIELDS);
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const res = await fetchImpl(url.toString(), {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const raw = await res.text().catch(() => "");
       if (!res.ok) {
-        if (usedFields && res.status === 400 && page === 0) {
-          usedFields = false;
-          page -= 1;
-          continue;
-        }
         const code = classifyCalendarListHttp(res.status, raw);
         if (events.length && code !== "CALENDAR_LIST_AUTH_FAILED") {
           return { ok: true, events, calendarId };
@@ -320,10 +313,11 @@ async function listEventsOnCalendar(
       }
       const pageItems = itemsFromListJson(json);
       if (json.error && !pageItems.length && !events.length) {
+        const code = classifyCalendarListHttp(res.status, raw);
         return {
           ok: false,
-          reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
-          code: "CALENDAR_LIST_PARSE_FAILED",
+          reason: calendarListUserReason(code),
+          code,
           httpStatus: res.status,
           googleReason: googleErrorReason(raw),
           calendarId,
@@ -332,10 +326,19 @@ async function listEventsOnCalendar(
       for (const item of pageItems) {
         const event = normalizeGoogleCalendarEvent(item);
         if (event) events.push(event);
+        else if (item && typeof item === "object") {
+          const status = String((item as { status?: unknown }).status || "").toLowerCase();
+          if (status !== "cancelled") {
+            skipped += 1;
+            const rawId = String((item as { id?: unknown }).id || "").slice(0, 40);
+            console.info("[calendar-list]", { skipped: true, id: rawId || "none", reason: "unreadable_event" });
+          }
+        }
       }
       pageToken = typeof json.nextPageToken === "string" ? json.nextPageToken : "";
       if (!pageToken) break;
     }
+    if (skipped) console.info("[calendar-list]", { skipped, calendarId, kept: events.length });
     events.sort(compareEventStart);
     return { ok: true, events, calendarId };
   } catch {

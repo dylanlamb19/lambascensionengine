@@ -82,7 +82,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "what did you just add → get_last_owner_calendar_event",
     "what do I have tomorrow / what’s on my calendar this afternoon / show my events Friday → list_owner_calendar_events (real Google events, owner timezone)",
     "delete / remove / cancel my dentist / bank reminder / the event I just added → delete_owner_calendar_event (one matching event). Speak the result once. If nothing matches, say you didn't delete anything once — never loop.",
-    "delete everything / clear my calendar / delete all events / delete all future personal events / cancel all Lamb Ascension calls → delete_owner_calendar_events_bulk. NEVER delete on the first utterance. Ask scope if needed, then count + confirmation. If the tool result says already_spoken, remain silent.",
+    "delete everything / clear my calendar / delete all events / delete all future personal events / cancel all Lamb Ascension calls → delete_owner_calendar_events_bulk. NEVER delete on the first utterance. Ask scope if needed, then count + confirmation. If the tool result says already_spoken or say_nothing, remain completely silent — do not repeat the result.",
     "move / reschedule / rename a calendar event → update_owner_calendar_event (PATCH only changed fields, sendUpdates=none)",
     "put scenery / mountain lake / desert sunset behind Home (a known preset) → set_page_background (say ‘Preset selected’)",
     "what am I looking at / explain this screen → explain_current_screen (speak only; do not open a panel)",
