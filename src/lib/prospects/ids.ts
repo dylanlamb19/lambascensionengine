@@ -28,3 +28,25 @@ export function nextClientId(rows: { id: number }[]): number {
 export function normalizeName(name: string): string {
   return (name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
+
+const LEGAL_SUFFIX_RE = /\b(llc|inc|incorporated|ltd|co|company|corp|corporation)\b/g;
+
+export function nameKey(name: string): string {
+  return normalizeName(name)
+    .replace(LEGAL_SUFFIX_RE, " ")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Existing Owner Mode prospect profile: `/` with `?p=<uid>`. Not a new route. */
+export function prospectProfileSearch(uid: string): string {
+  const id = (uid || "").trim();
+  if (!id) return "/";
+  return `/?p=${encodeURIComponent(id)}`;
+}
+
+export function prospectProfileUrl(origin: string, uid: string): string {
+  const base = (origin || "").replace(/\/$/, "") || "https://lamb-ascension-engine.vercel.app";
+  return `${base}${prospectProfileSearch(uid)}`;
+}

@@ -233,6 +233,11 @@ test("personal calendar reminders are not sales bookings or calendar view", () =
   assert.equal(parseSpokenCommand("Schedule gym tomorrow at 6 PM.").intent, "CREATE_OWNER_CALENDAR_EVENT");
   assert.equal(parseSpokenCommand("Schedule the call").intent, "SCHEDULE_CALL");
   assert.equal(parseSpokenCommand("Pull up my calendar").intent, "NAVIGATE_CALENDAR");
+  assert.equal(parseSpokenCommand("Open my Calendar").intent, "NAVIGATE_CALENDAR");
   assert.equal(parseSpokenCommand("What's on my calendar").intent, "UNKNOWN");
   assert.equal(parseSpokenCommand("What do I have tomorrow?").intent, "UNKNOWN");
+  assert.equal(parseSpokenCommand("I want you to add a call to my calendar for 11 AM tomorrow.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Add a call tomorrow at 11.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Ara, can you hear me?").intent, "UNKNOWN");
+  assert.equal(parseSpokenCommand("That is not the name I wanted you to name that call.").intent, "UNKNOWN");
 });

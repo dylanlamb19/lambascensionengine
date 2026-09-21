@@ -1,5 +1,5 @@
 import type { Prospect } from "../review-brief.ts";
-import { ensureUid, normalizeName, websiteDomain } from "./ids.ts";
+import { ensureUid, nameKey, normalizeName, websiteDomain } from "./ids.ts";
 
 const STAGE_RANK: Record<string, number> = {
   New: 1,
@@ -38,6 +38,57 @@ export function matchExisting(existing: Prospect[], incoming: Prospect): Prospec
   return existing.find(
     (e) => normalizeName(e.name) === n && (e.city || "").trim().toLowerCase() === city,
   );
+}
+
+export type SpokenProspect = {
+  uid?: string;
+  name: string;
+  city?: string;
+  provider_place_id?: string;
+};
+
+/**
+ * Safe spoken-name resolution. Exact uid, exact/normalized name, or a strong
+ * full-name contains. Never matches a single generic token like "roofing".
+ */
+export function matchProspectsBySpokenName<T extends SpokenProspect>(
+  prospects: T[],
+  spoken: string,
+  opts?: { openUid?: string },
+): T[] {
+  const raw = (spoken || "").trim();
+  if (!raw) return [];
+  const byUid = prospects.filter((p) => p.uid && p.uid === raw);
+  if (byUid.length) return byUid;
+  const byPlace = prospects.filter((p) => p.provider_place_id && p.provider_place_id === raw);
+  if (byPlace.length) return byPlace;
+
+  const key = nameKey(raw);
+  if (key.length < 3) return [];
+
+  const exact = prospects.filter((p) => nameKey(p.name) === key);
+  if (exact.length) return exact;
+
+  const strong = prospects.filter((p) => {
+    const nk = nameKey(p.name);
+    if (!nk || nk.length < 4) return false;
+    if (key === nk) return true;
+    const shorter = key.length <= nk.length ? key : nk;
+    const longer = key.length > nk.length ? key : nk;
+    if (!longer.includes(shorter)) return false;
+    const tokens = shorter.split(" ").filter(Boolean);
+    return tokens.length >= 2 || shorter.length >= 12;
+  });
+  if (strong.length) return strong;
+
+  const openUid = opts?.openUid;
+  if (openUid) {
+    const open = prospects.find((p) => p.uid === openUid);
+    if (open && (nameKey(open.name) === key || (nameKey(open.name).includes(key) && key.length >= 8))) {
+      return [open];
+    }
+  }
+  return [];
 }
 
 function richerResearch(a: Prospect, b: Prospect): Prospect {

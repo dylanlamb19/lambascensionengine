@@ -4,6 +4,12 @@ export type CalendarFailureCode =
   | "CALENDAR_SCOPE_MISSING"
   | "CALENDAR_TOKEN_INVALID"
   | "CALENDAR_TOKEN_REFRESH_FAILED"
+  | "CALENDAR_TOKEN_MISSING"
+  | "CALENDAR_LIST_AUTH_FAILED"
+  | "CALENDAR_LIST_BAD_RANGE"
+  | "CALENDAR_LIST_UPSTREAM_4XX"
+  | "CALENDAR_LIST_UPSTREAM_5XX"
+  | "CALENDAR_LIST_PARSE_FAILED"
   | "TOKEN_INVALID"
   | "FREEBUSY_FAILED"
   | "FREEBUSY_FORBIDDEN"
@@ -11,6 +17,19 @@ export type CalendarFailureCode =
   | "FREEBUSY_PROVIDER_ERROR"
   | "EVENT_CREATE_FAILED"
   | "OAUTH_FAILED";
+
+export type CalendarListCode =
+  | "CALENDAR_API_DISABLED"
+  | "CALENDAR_NOT_AUTHORIZED"
+  | "CALENDAR_SCOPE_MISSING"
+  | "CALENDAR_TOKEN_INVALID"
+  | "CALENDAR_TOKEN_REFRESH_FAILED"
+  | "CALENDAR_TOKEN_MISSING"
+  | "CALENDAR_LIST_AUTH_FAILED"
+  | "CALENDAR_LIST_BAD_RANGE"
+  | "CALENDAR_LIST_UPSTREAM_4XX"
+  | "CALENDAR_LIST_UPSTREAM_5XX"
+  | "CALENDAR_LIST_PARSE_FAILED";
 
 export const CALENDAR_API_DISABLED_MESSAGE = "Google Calendar is connected, but the Google Calendar API itself still needs to be enabled in Google Cloud.";
 export const CALENDAR_AVAILABILITY_UNREADABLE = "Calendar availability couldn’t be read.";
@@ -50,7 +69,7 @@ export function classifyGoogleCalendarHttp(status: number, body: string): Calend
     return "CALENDAR_API_DISABLED";
   }
   if (/Google Calendar API has not been used in project/i.test(text)) return "CALENDAR_API_DISABLED";
-  if (status === 401 || reason === "authError") return "CALENDAR_TOKEN_INVALID";
+  if (status === 401 || reason === "authError" || reason === "UNAUTHENTICATED") return "CALENDAR_TOKEN_INVALID";
   if (/insufficient.{0,40}scope|insufficientPermissions|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(text)) {
     return "CALENDAR_SCOPE_MISSING";
   }
@@ -61,11 +80,58 @@ export function classifyGoogleCalendarHttp(status: number, body: string): Calend
   return "FREEBUSY_FAILED";
 }
 
+export function classifyCalendarListHttp(status: number, body: string): CalendarListCode {
+  const existing = classifyGoogleCalendarHttp(status, body);
+  if (existing === "CALENDAR_API_DISABLED") return "CALENDAR_API_DISABLED";
+  if (existing === "CALENDAR_SCOPE_MISSING") return "CALENDAR_SCOPE_MISSING";
+  if (status === 401 || existing === "CALENDAR_TOKEN_INVALID" || existing === "TOKEN_INVALID") {
+    return "CALENDAR_LIST_AUTH_FAILED";
+  }
+  const text = body || "";
+  if (status === 400 && /timeMin|timeMax|time range|Invalid value/i.test(text)) return "CALENDAR_LIST_BAD_RANGE";
+  if (status >= 500) return "CALENDAR_LIST_UPSTREAM_5XX";
+  if (status >= 400) return "CALENDAR_LIST_UPSTREAM_4XX";
+  return "CALENDAR_LIST_PARSE_FAILED";
+}
+
+export function calendarListUserReason(code: CalendarListCode | CalendarFailureCode): string {
+  switch (code) {
+    case "CALENDAR_API_DISABLED":
+      return CALENDAR_API_DISABLED_MESSAGE;
+    case "CALENDAR_TOKEN_MISSING":
+    case "CALENDAR_NOT_AUTHORIZED":
+      return "Calendar isn’t connected yet. (CALENDAR_TOKEN_MISSING)";
+    case "CALENDAR_TOKEN_REFRESH_FAILED":
+      return "The Calendar token could not be refreshed. (CALENDAR_TOKEN_REFRESH_FAILED)";
+    case "CALENDAR_LIST_AUTH_FAILED":
+    case "CALENDAR_TOKEN_INVALID":
+    case "TOKEN_INVALID":
+      return "Google Calendar could not authorize the events list. (CALENDAR_LIST_AUTH_FAILED)";
+    case "CALENDAR_SCOPE_MISSING":
+      return "The Calendar token is missing the events scope. (CALENDAR_SCOPE_MISSING)";
+    case "CALENDAR_LIST_BAD_RANGE":
+    case "FREEBUSY_BAD_REQUEST":
+      return "That Calendar date range isn’t valid. (CALENDAR_LIST_BAD_RANGE)";
+    case "CALENDAR_LIST_UPSTREAM_4XX":
+    case "FREEBUSY_FORBIDDEN":
+      return "Google Calendar refused the events list. (CALENDAR_LIST_UPSTREAM_4XX)";
+    case "CALENDAR_LIST_UPSTREAM_5XX":
+    case "FREEBUSY_PROVIDER_ERROR":
+      return "Google Calendar had a provider error while listing events. (CALENDAR_LIST_UPSTREAM_5XX)";
+    case "CALENDAR_LIST_PARSE_FAILED":
+    case "FREEBUSY_FAILED":
+      return "Google Calendar returned a response Lamb Ascension couldn’t parse. (CALENDAR_LIST_PARSE_FAILED)";
+    default:
+      return `Lamb Ascension couldn’t read your Google Calendar. (${code})`;
+  }
+}
+
 export function calendarFailureReason(code: CalendarFailureCode): string {
   switch (code) {
     case "CALENDAR_API_DISABLED":
       return CALENDAR_API_DISABLED_MESSAGE;
     case "CALENDAR_NOT_AUTHORIZED":
+    case "CALENDAR_TOKEN_MISSING":
       return CALENDAR_NOT_AUTHORIZED_MESSAGE;
     case "CALENDAR_SCOPE_MISSING":
       return "The Calendar token is missing the free/busy scope. Reconnect Google Calendar only — not Gmail. (CALENDAR_SCOPE_MISSING)";
@@ -74,6 +140,16 @@ export function calendarFailureReason(code: CalendarFailureCode): string {
       return CALENDAR_TOKEN_INVALID_MESSAGE;
     case "CALENDAR_TOKEN_REFRESH_FAILED":
       return "The Calendar token could not be refreshed. Reconnect Google Calendar only — not Gmail. (CALENDAR_TOKEN_REFRESH_FAILED)";
+    case "CALENDAR_LIST_AUTH_FAILED":
+      return calendarListUserReason("CALENDAR_LIST_AUTH_FAILED");
+    case "CALENDAR_LIST_BAD_RANGE":
+      return calendarListUserReason("CALENDAR_LIST_BAD_RANGE");
+    case "CALENDAR_LIST_UPSTREAM_4XX":
+      return calendarListUserReason("CALENDAR_LIST_UPSTREAM_4XX");
+    case "CALENDAR_LIST_UPSTREAM_5XX":
+      return calendarListUserReason("CALENDAR_LIST_UPSTREAM_5XX");
+    case "CALENDAR_LIST_PARSE_FAILED":
+      return calendarListUserReason("CALENDAR_LIST_PARSE_FAILED");
     case "FREEBUSY_FORBIDDEN":
       return "Google refused to read Calendar availability. (FREEBUSY_FORBIDDEN)";
     case "FREEBUSY_BAD_REQUEST":

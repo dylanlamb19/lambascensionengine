@@ -25,7 +25,7 @@ import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilter
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
@@ -64,8 +64,8 @@ import { wrapUntrustedWeb } from "@/lib/voice/web-research/parse";
 import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarManage, parseOwnerCalendarSpeech, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent } from "@/lib/calendar/owner-event";
+import { formatLong, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
+import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isExplicitCalendarNavigate, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -303,9 +303,20 @@ export function OwnerDesk() {
   const [calLoading, setCalLoading] = useState(false);
   const [calConnected, setCalConnected] = useState(false);
   const [nextCall, setNextCall] = useState<{ prospect_uid: string; start_at: string; title: string } | null>(null);
+  const [prospectCall, setProspectCall] = useState<{
+    googleEventId: string;
+    prospectUid: string;
+    title: string;
+    start: string;
+    end: string;
+    status: string;
+    googleUrl: string;
+  } | null>(null);
+  const [rescheduleDraft, setRescheduleDraft] = useState("");
+  const [callActionMsg, setCallActionMsg] = useState("");
   const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
   const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
-  const pendingOwnerCalRef = useRef<{ title: string; when: string } | null>(null);
+  const pendingOwnerCalRef = useRef<PendingOwnerCal | null>(null);
   const pendingCalManageRef = useRef<{
     kind: "delete" | "update";
     eventId: string;
@@ -1130,7 +1141,7 @@ export function OwnerDesk() {
         setCalConnected(Boolean(r.connected));
       })
       .catch(() => {
-        setCalReason("Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it.");
+        setCalReason("Google Calendar returned a response Lamb Ascension couldn’t parse. (CALENDAR_LIST_PARSE_FAILED)");
         setCalEvents([]);
       })
       .finally(() => setCalLoading(false));
@@ -1145,6 +1156,24 @@ export function OwnerDesk() {
       })
       .catch(() => setNextCall(null));
   }, [userId, view]);
+
+  useEffect(() => {
+    if (!userId || view !== "detail" || !openUid) {
+      if (view !== "detail") setProspectCall(null);
+      return;
+    }
+    void refreshProspectCall(openUid);
+  }, [userId, view, openUid]);
+
+  const prospectDeepLinkOpened = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || prospectDeepLinkOpened.current) return;
+    if (!userId || !rows.length) return;
+    const uid = new URLSearchParams(window.location.search).get("p")?.trim();
+    if (!uid) return;
+    prospectDeepLinkOpened.current = true;
+    dispatchRef.current({ name: "OPEN_PROSPECT", uid });
+  }, [userId, rows]);
 
   function refreshCalendarAgenda() {
     if (!userId) return;
@@ -1162,6 +1191,86 @@ export function OwnerDesk() {
         else setNextCall(null);
       })
       .catch(() => {});
+  }
+
+  async function refreshProspectsAndSales() {
+    try {
+      const [latest, s] = await Promise.all([listProspectsFn(), salesCountsFn()]);
+      if (latest.ok) {
+        setRows(latest.prospects);
+        saveCompanies(latest.prospects);
+      }
+      if (s.ok) setSales({ ready: s.ready, followups: s.followups, replies: s.replies, calls: s.calls });
+    } catch { /* keep last */ }
+  }
+
+  async function refreshProspectCall(uid: string | null) {
+    if (!uid) {
+      setProspectCall(null);
+      return;
+    }
+    try {
+      const r = await prospectUpcomingCallFn({ data: { uid } });
+      setProspectCall(r.ok ? r.call : null);
+    } catch {
+      setProspectCall(null);
+    }
+  }
+
+  function openProspectCallCalendar() {
+    const call = prospectCall;
+    if (call?.googleUrl) window.open(call.googleUrl, "_blank", "noopener,noreferrer");
+    if (call) {
+      dispatchAction({ name: "NAVIGATE_CALENDAR" });
+      dispatchAction({ name: "OPEN_CALENDAR_EVENT", eventId: call.googleEventId });
+    }
+  }
+
+  async function rescheduleProspectCall() {
+    const call = prospectCall;
+    const when = rescheduleDraft.trim();
+    if (!call || !when) {
+      setCallActionMsg("What time should I move it to?");
+      return;
+    }
+    setCallActionMsg("");
+    try {
+      const r = await updateOwnerCalendarEventFn({
+        data: { eventId: call.googleEventId, newTime: when, confirm: true },
+      });
+      if (r.ok && r.updated) {
+        setRescheduleDraft("");
+        setCallActionMsg(`Moved to ${r.whenLabel}.`);
+        refreshCalendarAgenda();
+        void refreshProspectCall(call.prospectUid);
+        void refreshProspectsAndSales();
+      } else {
+        setCallActionMsg(r.spoken || "I couldn't update that event, so nothing changed.");
+      }
+    } catch {
+      setCallActionMsg("I couldn't update that event, so nothing changed.");
+    }
+  }
+
+  async function cancelProspectCall() {
+    const call = prospectCall;
+    if (!call) return;
+    setCallActionMsg("");
+    try {
+      const r = await deleteOwnerCalendarEventFn({
+        data: { eventId: call.googleEventId, confirm: true },
+      });
+      if (r.ok && r.deleted) {
+        setProspectCall(null);
+        setCallActionMsg("Call cancelled.");
+        refreshCalendarAgenda();
+        void refreshProspectsAndSales();
+      } else {
+        setCallActionMsg(r.spoken || "I couldn't update that event, so nothing changed.");
+      }
+    } catch {
+      setCallActionMsg("I couldn't update that event, so nothing changed.");
+    }
   }
 
   async function connectGoogle(kind: "gmail" | "calendar") {
@@ -1466,6 +1575,7 @@ export function OwnerDesk() {
             description: plan.description,
             location: plan.location,
             requestId: plan.requestId,
+            origin: typeof window !== "undefined" ? window.location.origin : undefined,
           },
         });
         if (!r.ok) {
@@ -1476,6 +1586,9 @@ export function OwnerDesk() {
             question: "question" in r ? r.question : undefined,
             reason: "reason" in r ? r.reason : undefined,
             spoken: r.spoken,
+            title: "title" in r ? r.title : plan.title,
+            when: "when" in r ? r.when : plan.when,
+            matches: "matches" in r ? r.matches : undefined,
             attendees: 0,
             prospect: false,
             sales: false,
@@ -1493,6 +1606,10 @@ export function OwnerDesk() {
         lastOwnerEventRef.current = last;
         setLastOwnerEvent(last);
         refreshCalendarAgenda();
+        if (r.prospect) {
+          void refreshProspectsAndSales();
+          if (r.prospectUid) void refreshProspectCall(r.prospectUid);
+        }
         return {
           ok: true,
           created: true,
@@ -1505,8 +1622,9 @@ export function OwnerDesk() {
           fingerprint: r.fingerprint,
           attendees: 0,
           guests: 0,
-          prospect: false,
-          sales: false,
+          prospect: r.prospect,
+          prospectUid: r.prospectUid,
+          sales: r.sales,
           emailSent: false,
           spoken: r.spoken,
         };
@@ -1524,10 +1642,10 @@ export function OwnerDesk() {
     }
     if (result.plan.type === "owner_calendar_list") {
       try {
-        const r = await listOwnerCalendarEventsFn({ data: { when: result.plan.when } });
+        const r = await listOwnerCalendarEventsFn({ data: { when: result.plan.when, title: result.plan.title } });
         return { ...result.output, ...r, spoken: r.spoken };
       } catch {
-        return { ok: false, listed: false, spoken: "Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it." };
+        return { ok: false, listed: false, spoken: "Google Calendar returned a response Lamb Ascension couldn’t parse. (CALENDAR_LIST_PARSE_FAILED)" };
       }
     }
     if (result.plan.type === "owner_calendar_delete") {
@@ -1640,7 +1758,7 @@ export function OwnerDesk() {
       pendingCalManageRef.current = null;
       araRef.current?.cancelResponse();
       if (manage.kind === "list") {
-        const result = executeAllowlistedTool("list_owner_calendar_events", { when: manage.when }, araDesk(), "owner_session");
+        const result = executeAllowlistedTool("list_owner_calendar_events", { when: manage.when, title: manage.title }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("list_owner_calendar_events", result);
         utter(String(output.spoken || "I couldn’t read your Google Calendar."), "TOOL_RESULT");
         return true;
@@ -1670,31 +1788,117 @@ export function OwnerDesk() {
     }
 
     const pending = pendingOwnerCalRef.current;
+    if (pending && pendingOwnerCalExpired(pending)) {
+      pendingOwnerCalRef.current = null;
+    }
+    const livePending = pendingOwnerCalRef.current;
+
+    if (isOwnerCalendarCorrection(text)) {
+      araRef.current?.cancelResponse();
+      if (livePending && (livePending.need === "name" || livePending.need === "which" || !livePending.eventId)) {
+        pendingOwnerCalRef.current = { ...livePending, need: "name", intent: "create", at: Date.now() };
+        utter(ownerGenericNameQuestion(livePending.title || "call"), "TOOL_RESULT");
+        return true;
+      }
+      const last = lastOwnerEventRef.current;
+      if (last?.id) {
+        pendingOwnerCalRef.current = {
+          title: last.title,
+          when: last.whenLabel,
+          need: "name",
+          intent: "rename",
+          eventId: last.id,
+          at: Date.now(),
+        };
+        utter(ownerCalendarRenameQuestion(), "TOOL_RESULT");
+        return true;
+      }
+      utter("What should I name the call?", "TOOL_RESULT");
+      return true;
+    }
+
+    if (livePending && isConversationalAside(text)) {
+      return false;
+    }
+
     const parsed = parseOwnerCalendarSpeech(text);
     let title = "";
     let when = "";
-    if (parsed.matched) {
+    let renameId = "";
+    if (livePending?.intent === "rename" && livePending.eventId && isOwnerCalendarFollowupName(text)) {
+      title = extractOwnerFollowupTitle(text);
+      renameId = livePending.eventId;
+      pendingOwnerCalRef.current = null;
+    } else if (parsed.matched) {
       title = parsed.title;
       when = parsed.when;
       pendingOwnerCalRef.current = null;
-    } else if (pending && isOwnerCalendarFollowupTime(text)) {
-      title = pending.title;
-      when = `${pending.when} ${text}`.trim();
+    } else if (livePending && isOwnerCalendarFollowupTime(text)) {
+      title = livePending.title;
+      when = `${livePending.when} ${text}`.trim();
       pendingOwnerCalRef.current = null;
+    } else if (livePending && (livePending.need === "name" || livePending.need === "which") && isOwnerCalendarFollowupName(text)) {
+      title = extractOwnerFollowupTitle(text);
+      when = livePending.when;
+      pendingOwnerCalRef.current = null;
+    } else if (livePending && /\b(cancel|never mind|forget it)\b/i.test(text) && text.trim().length < 24) {
+      pendingOwnerCalRef.current = null;
+      araRef.current?.cancelResponse();
+      utter("Okay, I won’t add that.", "TOOL_RESULT");
+      return true;
     } else {
-      if (pending && !isPersonalCalendarCommand(text) && text.trim().length > 24) {
-        pendingOwnerCalRef.current = null;
+      if (livePending && !shouldKeepPendingOwnerCalendar(text, livePending)) {
+        const cmd = parseSpokenCommand(text);
+        if (cmd.intent !== "UNKNOWN" && cmd.confidence >= 0.9) {
+          pendingOwnerCalRef.current = null;
+        }
       }
       return false;
     }
+    if (renameId) {
+      araRef.current?.cancelResponse();
+      const result = executeAllowlistedTool("update_owner_calendar_event", {
+        event_id: renameId,
+        new_title: title,
+        confirm: true,
+      }, araDesk(), "owner_session");
+      const output = await hydrateAraOutput("update_owner_calendar_event", result);
+      utter(String(output.spoken || "I couldn't update that event, so nothing changed."), "TOOL_RESULT");
+      return true;
+    }
+    if (!title && livePending) {
+      pendingOwnerCalRef.current = livePending;
+      return false;
+    }
     araRef.current?.cancelResponse();
-    const result = executeAllowlistedTool("create_owner_calendar_event", { title, when }, araDesk(), "owner_session");
+    const result = executeAllowlistedTool("create_owner_calendar_event", {
+      title,
+      when,
+      origin: typeof window !== "undefined" ? window.location.origin : undefined,
+    }, araDesk(), "owner_session");
     if (!result.ok && result.output.need) {
-      pendingOwnerCalRef.current = { title: String(result.output.title || title), when };
-      utter(String(result.output.spoken || result.output.question || "What time?"), "TOOL_RESULT");
+      pendingOwnerCalRef.current = {
+        title: String(result.output.title || title),
+        when: String(result.output.when || when),
+        need: result.output.need as PendingOwnerCal["need"],
+        intent: "create",
+        at: Date.now(),
+      };
+      utter(String(result.output.spoken || result.output.question || "What should I name the call?"), "TOOL_RESULT");
       return true;
     }
     const output = await hydrateAraOutput("create_owner_calendar_event", result);
+    if (!output.ok && output.need) {
+      pendingOwnerCalRef.current = {
+        title: String(output.title || title),
+        when: String(output.when || when),
+        need: output.need as PendingOwnerCal["need"],
+        intent: "create",
+        at: Date.now(),
+      };
+      utter(String(output.spoken || output.question || "What should I name the call?"), "TOOL_RESULT");
+      return true;
+    }
     utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
     return true;
   }
@@ -1914,7 +2118,8 @@ export function OwnerDesk() {
       stopSpeaking();
       return;
     }
-    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current) || pendingCalManageRef.current) {
+    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current)
+      || (pendingCalManageRef.current && (isOwnerCalendarConfirmYes(text) || isOwnerCalendarConfirmNo(text)))) {
       araRef.current?.cancelResponse();
     }
     if (!isFinal) return;
@@ -2182,6 +2387,9 @@ export function OwnerDesk() {
           setVoiceMode("off");
           setVoiceReply("Okay. Stopped.");
           utter("Okay. Stopped.", "STOP");
+          return;
+        }
+        if (decided.action.name === "NAVIGATE_CALENDAR" && !isExplicitCalendarNavigate(text)) {
           return;
         }
         dispatchAction(decided.action);
@@ -2924,6 +3132,9 @@ export function OwnerDesk() {
             busy={deepBusy}
             err={deepErr}
             gmailConnected={google.gmail === "connected"}
+            upcomingCall={prospectCall && prospectCall.prospectUid === open.uid ? prospectCall : null}
+            rescheduleDraft={rescheduleDraft}
+            callActionMsg={callActionMsg}
             onEvidence={() => {
               if (evidence) setEvidence(false);
               else dispatchAction({ name: "SHOW_EVIDENCE", uid: open.uid });
@@ -2935,6 +3146,10 @@ export function OwnerDesk() {
             onResearch={() => researchFurther(open.uid || "")}
             onAction={(id) => runProspectAction(open.uid, id)}
             onBack={() => dispatchAction({ name: "GO_BACK" })}
+            onOpenCalendar={openProspectCallCalendar}
+            onRescheduleDraft={setRescheduleDraft}
+            onReschedule={() => void rescheduleProspectCall()}
+            onCancelCall={() => void cancelProspectCall()}
           />
         ) : null}
         {view !== "home" ? (
@@ -2982,7 +3197,9 @@ export function OwnerDesk() {
 }
 
 function ReviewPage({
-  company, evidence, advanced, busy, err, gmailConnected, onEvidence, onAdvanced, onExplain, onApprove, onSkip, onResearch, onAction, onBack,
+  company, evidence, advanced, busy, err, gmailConnected, upcomingCall, rescheduleDraft, callActionMsg,
+  onEvidence, onAdvanced, onExplain, onApprove, onSkip, onResearch, onAction, onBack,
+  onOpenCalendar, onRescheduleDraft, onReschedule, onCancelCall,
 }: {
   company: Prospect;
   evidence: boolean;
@@ -2990,6 +3207,16 @@ function ReviewPage({
   busy: boolean;
   err: string;
   gmailConnected: boolean;
+  upcomingCall: {
+    googleEventId: string;
+    title: string;
+    start: string;
+    end: string;
+    status: string;
+    googleUrl: string;
+  } | null;
+  rescheduleDraft: string;
+  callActionMsg: string;
   onEvidence: () => void;
   onAdvanced: () => void;
   onExplain: () => void;
@@ -2998,6 +3225,10 @@ function ReviewPage({
   onResearch: () => void;
   onAction: (id: ProspectActionId) => void;
   onBack: () => void;
+  onOpenCalendar: () => void;
+  onRescheduleDraft: (v: string) => void;
+  onReschedule: () => void;
+  onCancelCall: () => void;
 }) {
   const found = importantFindings(company);
   const opps = opportunities(company);
@@ -3019,6 +3250,32 @@ function ReviewPage({
         />
         {err ? <div className="la-ribbon la-ribbon-bad mt-3">{err}</div> : null}
       </section>
+
+      {upcomingCall ? (
+        <section className="la-card" data-upcoming-call="1">
+          <p className="la-kicker">Upcoming call</p>
+          <h2 className="font-display mt-1 text-2xl">Call</h2>
+          <p className="mt-2 text-sm"><b>Status:</b> Booked</p>
+          <p className="text-sm"><b>Date:</b> {formatLong(ymdInTz(new Date(upcomingCall.start)))}</p>
+          <p className="text-sm"><b>Time:</b> {formatTime(upcomingCall.start)}</p>
+          <p className="text-sm"><b>Calendar:</b> Google Calendar</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="la-btn la-btn-primary" type="button" onClick={onOpenCalendar}>Open Calendar</button>
+            <button className="la-btn la-btn-ghost" type="button" onClick={onCancelCall}>Cancel</button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              className="la-field"
+              value={rescheduleDraft}
+              onChange={(e) => onRescheduleDraft(e.target.value)}
+              placeholder="Reschedule to 1 PM"
+              aria-label="New call time"
+            />
+            <button className="la-btn la-btn-ghost" type="button" onClick={onReschedule}>Reschedule</button>
+          </div>
+          {callActionMsg ? <p className="mt-2 text-sm text-muted">{callActionMsg}</p> : null}
+        </section>
+      ) : null}
 
       <section className="la-card">
         <Block title="1. Why consider them?">

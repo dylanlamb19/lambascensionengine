@@ -557,6 +557,26 @@ export async function nextCall(userId: string): Promise<{ prospect_uid: string; 
   return rows[0] || null;
 }
 
+export async function upcomingCallForProspect(
+  userId: string,
+  prospectUid: string,
+): Promise<BookedCalendarRow | null> {
+  const uid = (prospectUid || "").trim();
+  if (!uid) return null;
+  const sql = await getSql();
+  const rows = await sql<BookedCalendarRow>`
+    select id, prospect_uid, google_event_id, title, start_at, end_at, status, booking_token
+    from calendar_events
+    where user_id = ${userId} and prospect_uid = ${uid}
+      and status = 'booked'
+      and google_event_id is not null and google_event_id <> ''
+      and end_at >= now()
+    order by start_at asc
+    limit 1
+  `;
+  return rows[0] || null;
+}
+
 export async function listCallsInRange(
   userId: string,
   from: Date,

@@ -4,14 +4,25 @@ import {
   OWNER_TZ_DEFAULT,
   fromZonedLocal,
   isOwnerCalendarFollowupTime,
+  isOwnerCalendarFollowupName,
   isPersonalCalendarCommand,
   isOwnerCalendarManageCommand,
   isOwnerCalendarRefusalSpeech,
+  isOwnerCalendarCorrection,
+  isConversationalAside,
+  isExplicitCalendarNavigate,
+  isGenericOwnerTitle,
   shouldSilenceAraForOwnerCalendar,
+  shouldKeepPendingOwnerCalendar,
   ownerEventFailureSpeech,
   ownerEventFingerprint,
   ownerEventSpeechFromState,
   ownerEventSuccessSpeech,
+  ownerGenericNameQuestion,
+  ownerLinkedCallSpeech,
+  ownerUnlinkedCallSpeech,
+  ownerAmbiguousProspectSpeech,
+  extractOwnerFollowupTitle,
   parseClock,
   parseOwnerCalendarSpeech,
   parseOwnerCalendarManage,
@@ -193,9 +204,132 @@ describe("personal calendar speech parsing", () => {
     assert.equal(shouldSilenceAraForOwnerCalendar("Schedule the call"), false);
     assert.equal(shouldSilenceAraForOwnerCalendar("Delete my dentist appointment tomorrow at 2"), true);
     assert.equal(shouldSilenceAraForOwnerCalendar("What do I have tomorrow?"), true);
+    assert.equal(shouldSilenceAraForOwnerCalendar("Ara, can you hear me?", { title: "Call", when: "tomorrow at 11", need: "name" }), false);
+    assert.equal(shouldSilenceAraForOwnerCalendar("That is not the name I wanted", { title: "Call", when: "tomorrow at 11", need: "name" }), true);
     assert.equal(isOwnerCalendarRefusalSpeech("I'll prepare that calendar booking for you. I can open your calendar or help with sales call bookings, but I don't have a tool to add personal reminders or events."), true);
     assert.equal(isOwnerCalendarRefusalSpeech("I can remove calendar events, but only the ones I created myself. The only calendar tool I have is for adding personal reminders and events. I can't delete or remove anything from your Google Calendar."), true);
     assert.equal(isOwnerCalendarRefusalSpeech("Done — I added ‘Go to SouthState Bank and withdraw cash’ to your calendar for tomorrow at 4:00 PM."), false);
+  });
+});
+
+describe("generic call name ask and prospect-call manage", () => {
+  it("treats Add a call Monday at 11 as a calendar create with a generic title", () => {
+    assert.equal(isPersonalCalendarCommand("Add a call Monday at 11"), true);
+    assert.equal(isPersonalCalendarCommand("Add a call to my calendar Monday at 11 AM"), true);
+    const p = parseOwnerCalendarSpeech("Add a call Monday at 11");
+    assert.equal(p.matched, true);
+    if (!p.matched) return;
+    assert.equal(p.generic, true);
+    assert.equal(isGenericOwnerTitle(p.title), true);
+    const when = resolveOwnerWhen({ when: p.when, now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(when.ok, true);
+    if (when.ok) {
+      assert.equal(ymdInTimezone(when.start, OWNER_TZ_DEFAULT), "2026-09-21");
+      assert.equal(when.timeLabel, "11:00 AM");
+    }
+    assert.equal(ownerGenericNameQuestion(p.title), "What should I name the call?");
+  });
+
+  it("does not ask for a name when the company is already in the command", () => {
+    const p = parseOwnerCalendarSpeech("Schedule a call with Firefighter Roofing Monday at 11");
+    assert.equal(p.matched, true);
+    if (!p.matched) return;
+    assert.equal(p.generic, false);
+    assert.equal(p.title, "Firefighter Roofing");
+  });
+
+  it("keeps dentist / lunch / gym as meaningful titles", () => {
+    const dentist = parseOwnerCalendarSpeech("Add my dentist appointment tomorrow at 2");
+    assert.equal(dentist.matched, true);
+    if (dentist.matched) {
+      assert.equal(dentist.generic, false);
+      assert.match(dentist.title, /dentist appointment/i);
+    }
+    const lunch = parseOwnerCalendarSpeech("Schedule lunch with Mom Friday at noon");
+    assert.equal(lunch.matched, true);
+    if (lunch.matched) {
+      assert.equal(lunch.generic, false);
+      assert.match(lunch.title, /lunch with Mom/i);
+    }
+  });
+
+  it("does not steal schedule the call / book them", () => {
+    assert.equal(isPersonalCalendarCommand("Schedule the call"), false);
+    assert.equal(isPersonalCalendarCommand("Book them"), false);
+    assert.equal(isPersonalCalendarCommand("Schedule this company"), false);
+  });
+
+  it("collapses duplicated speech and strips instruction phrases", () => {
+    const p = parseOwnerCalendarSpeech("I want you to add a call I want you to add a call Monday at 11");
+    assert.equal(p.matched, true);
+    if (!p.matched) return;
+    assert.equal(p.generic, true);
+    assert.doesNotMatch(p.title, /i want you to/i);
+    const when = resolveOwnerWhen({ when: p.when, now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(when.ok, true);
+  });
+
+  it("retains Monday 11 when the follow-up is a name", () => {
+    const first = parseOwnerCalendarSpeech("Add a call Monday at 11");
+    assert.equal(first.matched, true);
+    if (!first.matched) return;
+    assert.equal(isOwnerCalendarFollowupName("Firefighter Roofing"), true);
+    assert.equal(extractOwnerFollowupTitle("Add it for Firefighter Roofing"), "Firefighter Roofing");
+    assert.equal(extractOwnerFollowupTitle("Call CPA"), "Call CPA");
+    assert.equal(isGenericOwnerTitle("Call CPA"), false);
+    const combined = resolveOwnerWhen({
+      when: `${first.when} Firefighter Roofing`,
+      now: NOW,
+      timezone: OWNER_TZ_DEFAULT,
+    });
+    assert.equal(combined.ok, true);
+    if (combined.ok) assert.equal(combined.timeLabel, "11:00 AM");
+    assert.equal(
+      shouldSilenceAraForOwnerCalendar("Firefighter Roofing", { title: "Call", when: first.when, need: "name" }),
+      true,
+    );
+  });
+
+  it("keeps pending create across conversational asides and corrections", () => {
+    const pending = { title: "Call", when: "tomorrow at 11", need: "name" as const, intent: "create" as const, at: Date.now() };
+    assert.equal(isConversationalAside("Ara, can you hear me?"), true);
+    assert.equal(isOwnerCalendarCorrection("That is not the name I wanted you to name that call."), true);
+    assert.equal(isOwnerCalendarFollowupName("Can you hear me?"), false);
+    assert.equal(isOwnerCalendarFollowupName("That is not the name I wanted"), false);
+    assert.equal(shouldKeepPendingOwnerCalendar("Can you hear me?", pending), true);
+    assert.equal(shouldKeepPendingOwnerCalendar("That is not the name I wanted", pending), true);
+    assert.equal(shouldKeepPendingOwnerCalendar("Firefighter Roofing", pending), true);
+    assert.equal(isExplicitCalendarNavigate("Add a call to my calendar for 11 AM tomorrow"), false);
+    assert.equal(isExplicitCalendarNavigate("Ara, can you hear me?"), false);
+    assert.equal(isExplicitCalendarNavigate("Open my Calendar"), true);
+    assert.equal(isExplicitCalendarNavigate("Pull up my calendar"), true);
+  });
+
+  it("parses cancel / move / when-is for a named prospect call", () => {
+    const cancel = parseOwnerCalendarManage("Cancel my Firefighter Roofing call");
+    assert.equal(cancel.kind, "delete");
+    if (cancel.kind === "delete") assert.match(cancel.title, /firefighter roofing/i);
+    const move = parseOwnerCalendarManage("Move my Firefighter Roofing call to 1 PM");
+    assert.equal(move.kind, "update");
+    if (move.kind === "update") {
+      assert.match(move.title, /firefighter roofing/i);
+      assert.match(String(move.newTime), /1/i);
+    }
+    const when = parseOwnerCalendarManage("When is my Firefighter Roofing call?");
+    assert.equal(when.kind, "list");
+    if (when.kind === "list") assert.match(when.title, /firefighter roofing/i);
+  });
+
+  it("linked vs personal success speech", () => {
+    assert.match(ownerLinkedCallSpeech("Firefighter Roofing", "Monday at 11:00 AM"), /linked the call/);
+    assert.match(ownerUnlinkedCallSpeech("Call CPA", "Monday at 11:00 AM"), /isn.t linked/);
+    assert.match(
+      ownerAmbiguousProspectSpeech([
+        { name: "ABC Roofing", city: "Dallas" },
+        { name: "ABC Roofing", city: "Houston" },
+      ]),
+      /Which one do you mean/,
+    );
   });
 });
 

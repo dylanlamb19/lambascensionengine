@@ -883,15 +883,11 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
     }
     case "AVAILABILITY":
       return withAction({
-        view: "calendar",
-        stack: push(state, "calendar"),
-        lastSpoken: spoken("Opening Calendar."),
+        lastSpoken: spoken("I’ll read your verified open times."),
       }, { type: "availability" });
     case "NEXT_CALL":
       return withAction({
-        view: "calendar",
-        stack: push(state, "calendar"),
-        lastSpoken: spoken("Opening Calendar to the next sales call."),
+        lastSpoken: spoken("Checking your next sales call."),
       }, { type: "next_call" });
     case "DRAFT_REPLY": {
       const uid = action.uid || state.openUid;

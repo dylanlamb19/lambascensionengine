@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseSpokenHour, rangeFor, shiftAnchor, startOfWeek } from "./range.ts";
-import { listEvents, CALENDAR_VIEW_UNREADABLE } from "../google/calendar.ts";
+import { listEvents } from "../google/calendar.ts";
 import { buildScreenContext, explainScreen } from "../voice/screen-context.ts";
 import { applyDeskAction, emptyDesk, spokenToAction, type DeskWorld } from "../voice/desk-actions.ts";
 import { parseSpokenCommand } from "../voice/intents.ts";
@@ -45,6 +45,15 @@ describe("Calendar screen + explain", () => {
     assert.match(r.state.lastSpoken, /Calendar/i);
   });
 
+  it("scheduling and can-you-hear-me do not navigate to Calendar", () => {
+    assert.equal(parseSpokenCommand("I want you to add a call to my calendar for 11 AM tomorrow.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+    assert.equal(parseSpokenCommand("Ara, can you hear me?").intent, "UNKNOWN");
+    assert.equal(parseSpokenCommand("That is not the name I wanted you to name that call.").intent, "UNKNOWN");
+    assert.equal(parseSpokenCommand("Open my Calendar.").intent, "NAVIGATE_CALENDAR");
+    const r = say(emptyDesk(), "Open my calendar.");
+    assert.equal(r.state.view, "calendar");
+  });
+
   it("next week and today change the visible range", () => {
     let state = emptyDesk({ view: "calendar", calView: "week", calAnchor: "2026-09-17" });
     let r = say(state, "Show me next week.");
@@ -65,9 +74,12 @@ describe("Calendar screen + explain", () => {
 
   it("does not treat a Google Calendar HTTP failure as an empty week", async () => {
     const fetchImpl = (async () => new Response("nope", { status: 500 })) as typeof fetch;
-    const listed = await listEvents("tok", new Date(), new Date(), fetchImpl);
+    const listed = await listEvents("tok", new Date("2026-09-20T00:00:00Z"), new Date("2026-09-21T00:00:00Z"), fetchImpl);
     assert.equal(listed.ok, false);
-    if (!listed.ok) assert.equal(listed.reason, CALENDAR_VIEW_UNREADABLE);
+    if (!listed.ok) {
+      assert.equal(listed.code, "CALENDAR_LIST_UPSTREAM_5XX");
+      assert.match(listed.reason, /CALENDAR_LIST_UPSTREAM_5XX/);
+    }
   });
 
   it("explain calendar uses real visible events, not invented ones", () => {
@@ -135,11 +147,14 @@ describe("Calendar screen + explain", () => {
       confirmationOpen: false,
       evidenceOpen: false,
       lookingAt: "You’re looking at Home.",
+      lastOwnerUtterance: "Pull up my calendar.",
     };
     const open = executeAllowlistedTool("navigate_calendar", {}, desk);
     assert.equal(open.rejected, false);
     assert.equal(open.plan.type, "navigate");
     if (open.plan.type === "navigate") assert.equal(open.plan.view, "calendar");
+    const blocked = executeAllowlistedTool("navigate_calendar", {}, { ...desk, lastOwnerUtterance: "Can you hear me?" });
+    assert.equal(blocked.plan.type, "none");
     const next = executeAllowlistedTool("calendar_next", {}, desk);
     assert.equal(next.plan.type, "calendar_next");
   });

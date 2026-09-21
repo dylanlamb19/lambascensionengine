@@ -206,6 +206,26 @@ describe("Ara allowlisted tools", () => {
       assert.equal(ready.plan.title, "Go to SouthState Bank and withdraw cash");
     }
 
+    const generic = executeAllowlistedTool("create_owner_calendar_event", {
+      title: "Add a call Monday at 11",
+    }, { ...desk, timezone: "America/Chicago" });
+    assert.equal(generic.ok, false);
+    assert.equal(generic.output.created, false);
+    assert.equal(generic.output.need, "name");
+    assert.match(String(generic.output.question), /What should I name the call/i);
+    assert.equal(generic.plan.type, "none");
+
+    const named = executeAllowlistedTool("create_owner_calendar_event", {
+      title: "Firefighter Roofing",
+      when: "Monday at 11",
+    }, { ...desk, timezone: "America/Chicago" });
+    assert.equal(named.ok, true);
+    assert.equal(named.plan.type, "owner_calendar_event");
+    assert.equal(named.output.prospect, true);
+    if (named.plan.type === "owner_calendar_event") {
+      assert.equal(named.plan.title, "Firefighter Roofing");
+    }
+
     const fromSpeech = executeAllowlistedTool("create_owner_calendar_event", {
       title: "Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash",
     }, { ...desk, timezone: "America/Chicago" });
@@ -239,6 +259,13 @@ describe("Ara allowlisted tools", () => {
     assert.equal(listed.plan.type, "owner_calendar_list");
     assert.equal(planToAction(listed.plan), null);
 
+    const navFromHear = executeAllowlistedTool("navigate_calendar", {}, { ...desk, lastOwnerUtterance: "Ara, can you hear me?" });
+    assert.equal(navFromHear.plan.type, "none");
+    const navFromAdd = executeAllowlistedTool("navigate_calendar", {}, { ...desk, lastOwnerUtterance: "Add a call to my calendar for 11 AM tomorrow" });
+    assert.equal(navFromAdd.plan.type, "none");
+    const navExplicit = executeAllowlistedTool("navigate_calendar", {}, { ...desk, lastOwnerUtterance: "Open my calendar" });
+    assert.equal(navExplicit.plan.type, "navigate");
+
     const del = executeAllowlistedTool("delete_owner_calendar_event", { title: "Dentist appointment", when: "tomorrow at 2" }, desk);
     assert.equal(del.ok, true);
     assert.equal(del.plan.type, "owner_calendar_delete");
@@ -267,6 +294,8 @@ describe("Ara allowlisted tools", () => {
     assert.match(text, /Never say you don.t have a tool for personal reminders/i);
     assert.match(text, /Never say you can only remove events you created yourself/i);
     assert.match(text, /Always-available personal calendar tools/);
+    assert.match(text, /ONLY those explicit navigation phrases/i);
+    assert.match(text, /can you hear me/i);
     assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
   });
 
@@ -279,6 +308,9 @@ describe("Ara allowlisted tools", () => {
     assert.match(src, /listOwnerCalendarEventsFn/);
     assert.match(src, /deleteOwnerCalendarEventFn/);
     assert.match(src, /updateOwnerCalendarEventFn/);
+    assert.match(src, /isOwnerCalendarCorrection/);
+    assert.match(src, /shouldKeepPendingOwnerCalendar/);
+    assert.match(src, /isConversationalAside/);
   });
 
   it("uppercase action names and prospect_uid still operate the UI", () => {

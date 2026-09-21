@@ -17,8 +17,13 @@ import {
   parseOwnerCalendarManage,
   resolveOwnerWhen,
   sanitizeOwnerTitle,
+  isGenericOwnerTitle,
+  ownerGenericNameQuestion,
+  ownerAmbiguousProspectSpeech,
+  isExplicitCalendarNavigate,
   type LastOwnerEvent,
 } from "../calendar/owner-event.ts";
+import { matchProspectsBySpokenName } from "../prospects/dedupe.ts";
 import {
   applyProspectFilter,
   asFilterable,
@@ -392,8 +397,9 @@ export type ToolPlan =
       description?: string;
       location?: string;
       requestId?: string;
+      origin?: string;
     }
-  | { type: "owner_calendar_list"; when?: string }
+  | { type: "owner_calendar_list"; when?: string; title?: string }
   | {
       type: "owner_calendar_delete";
       title?: string;
@@ -452,7 +458,7 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "navigate_home", description: "Open the Home screen. Same as the Home button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_pipeline", description: "Open the Pipeline screen. Same as the Pipeline button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_settings", description: "Open Settings. Same as the Settings button.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. Same as the Calendar button. Use this when the owner says pull up my calendar.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. ONLY when the owner explicitly says pull up / show / open / go to my calendar as this turn’s command. NEVER because an earlier scheduling command mentioned calendar. NEVER for ‘add a call’, ‘can you hear me’, or name corrections.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_today", description: "Jump the Calendar to today.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_next", description: "Move Calendar forward: next day, next week, or next month depending on the current view.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_prev", description: "Move Calendar backward.", parameters: { type: "object", properties: {} } },
@@ -493,7 +499,7 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "get_calendar_availability", description: "Read verified open times and the next booked sales call. Fail closed if calendar cannot be read.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_next_call", description: "When is the next booked sales call. Same calendar data the buttons use.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "schedule_call", description: "Prepare a PROSPECT sales-call booking. Does not book until the owner says Confirm schedule. Do NOT use this for personal reminders, dentist, gym, lunch, or bank errands.", parameters: { type: "object", properties: uid } },
-    { type: "function", name: "create_owner_calendar_event", description: "Create a PERSONAL event on Dylan’s Google Calendar. Use for reminders, appointments, gym, lunch, errands. Explicit voice commands like ‘add this to my calendar’ or ‘remind me on my calendar at 4 PM’ are authorization — do not ask for Confirm schedule. No attendees, no email, no prospect, no sales metrics. Resolve tomorrow/Friday/next Monday in the owner timezone. If the time is missing, do not invent one — omit the call or pass only the day so the tool can ask. Only report success after the tool returns created=true.", parameters: { type: "object", properties: { title: { type: "string", description: "Short event name. For ‘remind me to go to SouthState Bank and withdraw cash’, use ‘Go to SouthState Bank and withdraw cash’." }, when: { type: "string", description: "Relative phrase in the owner timezone, e.g. ‘tomorrow at 4 PM’, ‘Friday at noon’, ‘next Monday at 9’, ‘tonight at 7’." }, date: { type: "string" }, time: { type: "string" }, duration_minutes: { type: "number" }, description: { type: "string" }, location: { type: "string" }, request_id: { type: "string" } }, required: ["title"] } },
+    { type: "function", name: "create_owner_calendar_event", description: "Create an event on Dylan’s Google Calendar. Use for personal reminders AND named sales calls he wants on his calendar (‘add a call Monday at 11’, ‘schedule a call with Firefighter Roofing’). If the title is generic (just ‘call’, ‘meeting’, ‘appointment’), do NOT invent a name and do NOT create — the tool will ask ‘What should I name the call?’. Keep the date/time. After he names it, call again with that title and the original when. If the name matches one Lamb Ascension prospect, the server links the Google event to that prospect uid and may set Call Booked. If it matches none, create a personal event and do not change Pipeline. If two match, ask which city. No attendees unless already a sales booking. Explicit voice commands are authorization — do not ask for Confirm schedule. Resolve relative dates in the owner timezone. If the time is missing, do not invent one. Only report success after created=true.", parameters: { type: "object", properties: { title: { type: "string", description: "Event name. Never the raw command. For a generic ‘add a call’, omit a fake title so the tool can ask. For ‘call with Firefighter Roofing’, use ‘Firefighter Roofing’." }, when: { type: "string", description: "Relative phrase in the owner timezone, e.g. ‘Monday at 11’, ‘tomorrow at 4 PM’." }, date: { type: "string" }, time: { type: "string" }, duration_minutes: { type: "number" }, description: { type: "string" }, location: { type: "string" }, request_id: { type: "string" }, origin: { type: "string" } }, required: ["title"] } },
     { type: "function", name: "get_last_owner_calendar_event", description: "What personal calendar event Ara last created this session. Use when Dylan asks ‘what did you just add?’", parameters: { type: "object", properties: {} } },
     { type: "function", name: "list_owner_calendar_events", description: "List REAL events from Dylan’s connected Google Calendar. Use for ‘what do I have tomorrow’, ‘what’s on my calendar this afternoon’, ‘show my events Friday’. Resolve relative dates in the owner timezone. Do not invent events. Do not answer from stale UI state.", parameters: { type: "object", properties: { when: { type: "string", description: "Window in owner timezone, e.g. ‘tomorrow’, ‘this afternoon’, ‘Friday’, ‘tonight’." }, date: { type: "string" } } } },
     { type: "function", name: "delete_owner_calendar_event", description: "Delete a REAL event on Dylan’s connected Google Calendar by Google event ID after lookup. Works for events Ara did NOT create. Explicit ‘delete/remove/cancel’ of a clearly identified personal event is authorization — do not ask again. If the event is a sales booking or has guests, the tool will ask for confirmation. Never invent an event ID. If zero matches, say nothing was deleted. If two or more match, ask which one.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, last_event: { type: "boolean", description: "true for ‘the event I just added’ / ‘that’" }, confirm: { type: "boolean", description: "true only after Dylan confirmed a sales/guest delete" } } } },
@@ -695,6 +701,13 @@ export function executeAllowlistedTool(
     return { ok: true, tool, rejected: false, output: { view: "settings", changed: true }, plan: { type: "navigate", view: "settings" } };
   }
   if (tool === "navigate_calendar") {
+    if (!isExplicitCalendarNavigate(ctx.lastOwnerUtterance || "")) {
+      return {
+        ok: true, tool, rejected: false,
+        output: { view: ctx.view, changed: false, ignored: true, reason: "not_explicit_navigate" },
+        plan: { type: "none" },
+      };
+    }
     return { ok: true, tool, rejected: false, output: { view: "calendar", changed: true }, plan: { type: "navigate", view: "calendar" } };
   }
   if (tool === "calendar_today") {
@@ -994,21 +1007,18 @@ export function executeAllowlistedTool(
     const date = String(args.date || "").trim();
     const time = String(args.time || "").trim();
     const parsedSpeech = parseOwnerCalendarSpeech([rawTitle, rawWhen, date, time].filter(Boolean).join(" "));
-    const title = parsedSpeech.matched && parsedSpeech.title
-      ? parsedSpeech.title
-      : sanitizeOwnerTitle(rawTitle);
+    const incoming = sanitizeOwnerTitle(rawTitle);
+    const parsedTitle = parsedSpeech.matched ? parsedSpeech.title : "";
+    const title = !isGenericOwnerTitle(incoming)
+      ? incoming
+      : (parsedTitle && !isGenericOwnerTitle(parsedTitle) ? parsedTitle : (parsedTitle || incoming));
     const when = rawWhen || (parsedSpeech.matched ? parsedSpeech.when : "");
     const durationMinutes = num(args, "duration_minutes", "durationMinutes", "duration");
     const description = String(args.description || args.notes || "").slice(0, 1000);
     const location = String(args.location || "").slice(0, 200);
     const requestId = String(args.request_id || args.requestId || "").trim();
-    if (!title) {
-      return {
-        ok: false, tool, rejected: false,
-        output: { ok: false, created: false, need: "when", question: "What should I call that calendar event?", spoken: "What should I call that calendar event?" },
-        plan: { type: "none" },
-      };
-    }
+    const origin = String(args.origin || "").trim();
+    const generic = isGenericOwnerTitle(title);
     const resolved = resolveOwnerWhen({
       when: when || undefined,
       date: date || undefined,
@@ -1016,6 +1026,29 @@ export function executeAllowlistedTool(
       durationMinutes,
       timezone: ctx.timezone || OWNER_TZ_DEFAULT,
     });
+    if (generic) {
+      const question = ownerGenericNameQuestion(title || "call");
+      return {
+        ok: false, tool, rejected: false,
+        output: {
+          ok: false,
+          created: false,
+          need: "name",
+          question,
+          spoken: question,
+          title: title || "Call",
+          when,
+        },
+        plan: { type: "none" },
+      };
+    }
+    if (!title) {
+      return {
+        ok: false, tool, rejected: false,
+        output: { ok: false, created: false, need: "name", question: "What should I name the call?", spoken: "What should I name the call?" },
+        plan: { type: "none" },
+      };
+    }
     if (!resolved.ok) {
       return {
         ok: false, tool, rejected: false,
@@ -1026,6 +1059,29 @@ export function executeAllowlistedTool(
           question: resolved.question,
           spoken: resolved.question,
           title,
+          when,
+        },
+        plan: { type: "none" },
+      };
+    }
+    const hits = matchProspectsBySpokenName(
+      ctx.prospects.map((p) => ({ uid: p.uid, name: p.name, city: p.city, provider_place_id: p.place_id })),
+      title,
+      { openUid: ctx.openUid || undefined },
+    );
+    if (hits.length > 1) {
+      const spoken = ownerAmbiguousProspectSpeech(hits.map((h) => ({ name: h.name, city: h.city })));
+      return {
+        ok: false, tool, rejected: false,
+        output: {
+          ok: false,
+          created: false,
+          need: "which",
+          question: spoken,
+          spoken,
+          title,
+          when,
+          matches: hits.map((h) => ({ uid: h.uid, name: h.name, city: h.city || "" })),
         },
         plan: { type: "none" },
       };
@@ -1040,8 +1096,9 @@ export function executeAllowlistedTool(
         when: resolved.whenLabel,
         durationMinutes: resolved.durationMinutes,
         attendees: 0,
-        prospect: false,
-        sales: false,
+        prospect: hits.length === 1,
+        sales: hits.length === 1,
+        prospectUid: hits[0]?.uid || null,
       },
       plan: {
         type: "owner_calendar_event",
@@ -1053,16 +1110,18 @@ export function executeAllowlistedTool(
         description: description || undefined,
         location: location || undefined,
         requestId: requestId || undefined,
+        origin: origin || undefined,
       },
     };
   }
   if (tool === "list_owner_calendar_events") {
     const parsed = parseOwnerCalendarManage(String(args.when || args.title || args.query || ""));
     const when = String(args.when || args.date || args.time || (parsed.kind === "list" ? parsed.when : "") || "").trim();
+    const title = String(args.title || (parsed.kind === "list" ? parsed.title : "") || "").trim();
     return {
       ok: true, tool, rejected: false,
       output: { ok: true, pending: true, listed: false },
-      plan: { type: "owner_calendar_list", when: when || undefined },
+      plan: { type: "owner_calendar_list", when: when || undefined, title: title || undefined },
     };
   }
   if (tool === "delete_owner_calendar_event") {

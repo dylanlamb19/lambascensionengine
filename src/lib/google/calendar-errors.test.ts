@@ -157,3 +157,67 @@ test("getEvent 404 is missing and patchEvent only sends changed fields with send
   assert.equal("description" in body, false);
   assert.ok(body.start);
 });
+
+test("listEvents treats missing items as an empty calendar, not unreadable", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({ kind: "calendar#events", summary: "Dylan" }), { status: 200 })) as typeof fetch;
+  const listed = await listEvents("tok", new Date("2026-09-20T05:00:00Z"), new Date("2026-09-27T05:00:00Z"), fetchImpl);
+  assert.equal(listed.ok, true);
+  if (listed.ok) assert.equal(listed.events.length, 0);
+});
+
+test("listEvents retries email calendar id when primary is notFound", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const urls: string[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL) => {
+    urls.push(String(url));
+    if (String(url).includes("calendars/primary/")) {
+      return new Response(JSON.stringify({ error: { errors: [{ reason: "notFound" }] } }), { status: 404 });
+    }
+    return new Response(JSON.stringify({
+      items: [{
+        id: "evt-1",
+        summary: "Dentist",
+        status: "confirmed",
+        start: { dateTime: "2026-09-21T19:00:00-05:00" },
+        end: { dateTime: "2026-09-21T19:30:00-05:00" },
+      }],
+    }), { status: 200 });
+  }) as typeof fetch;
+  const listed = await listEvents(
+    "tok",
+    new Date("2026-09-20T05:00:00Z"),
+    new Date("2026-09-27T05:00:00Z"),
+    fetchImpl,
+    "lambascension99@gmail.com",
+  );
+  assert.equal(listed.ok, true);
+  if (listed.ok) {
+    assert.equal(listed.events.length, 1);
+    assert.equal(listed.calendarId, "lambascension99@gmail.com");
+  }
+  assert.ok(urls.some((u) => decodeURIComponent(u).includes("lambascension99@gmail.com")));
+});
+
+test("listEvents classifies 401 as CALENDAR_LIST_AUTH_FAILED", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const listed = await listEvents(
+    "tok",
+    new Date("2026-09-20T05:00:00Z"),
+    new Date("2026-09-27T05:00:00Z"),
+    (async () => new Response("invalid_token", { status: 401 })) as typeof fetch,
+  );
+  assert.equal(listed.ok, false);
+  if (!listed.ok) {
+    assert.equal(listed.code, "CALENDAR_LIST_AUTH_FAILED");
+    assert.match(listed.reason, /CALENDAR_LIST_AUTH_FAILED/);
+  }
+});
+
+test("inverted date range is CALENDAR_LIST_BAD_RANGE", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const listed = await listEvents("tok", new Date("2026-09-27T00:00:00Z"), new Date("2026-09-20T00:00:00Z"));
+  assert.equal(listed.ok, false);
+  if (!listed.ok) assert.equal(listed.code, "CALENDAR_LIST_BAD_RANGE");
+});

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Prospect } from "../review-brief.ts";
-import { importWithoutDuplicates, matchExisting, mergeProspect } from "./dedupe.ts";
-import { websiteDomain } from "./ids.ts";
+import { importWithoutDuplicates, matchExisting, matchProspectsBySpokenName, mergeProspect } from "./dedupe.ts";
+import { prospectProfileSearch, prospectProfileUrl, websiteDomain } from "./ids.ts";
 
 function p(partial: Partial<Prospect> & { name: string }): Prospect {
   return {
@@ -133,4 +133,21 @@ test("overlapping Place ID search keeps researched why and contacts", () => {
   assert.equal(m.research_status, "complete");
   assert.equal(m.readiness_why?.[0], "Public website loaded");
   assert.equal(m.contacts?.[0]?.name, "Ada Owner");
+});
+
+test("spoken name match is exact/normalized, never a fuzzy single token", () => {
+  const fire = p({ uid: "uid-fire", name: "Firefighter Roofing", city: "Fort Worth" });
+  const fireLlc = p({ uid: "uid-fire", name: "Firefighter Roofing LLC", city: "Fort Worth" });
+  const other = p({ uid: "uid-abc", name: "ABC Roofing", city: "Dallas" });
+  const abc2 = p({ uid: "uid-abc2", name: "ABC Roofing", city: "Houston" });
+  assert.equal(matchProspectsBySpokenName([fire, other], "Firefighter Roofing")[0]?.uid, "uid-fire");
+  assert.equal(matchProspectsBySpokenName([fireLlc], "Firefighter Roofing")[0]?.uid, "uid-fire");
+  assert.equal(matchProspectsBySpokenName([fire, other], "roofing").length, 0);
+  assert.equal(matchProspectsBySpokenName([other, abc2], "ABC Roofing").length, 2);
+  assert.equal(matchProspectsBySpokenName([fire], "uid-fire")[0]?.uid, "uid-fire");
+  assert.equal(prospectProfileSearch("uid-fire"), "/?p=uid-fire");
+  assert.equal(
+    prospectProfileUrl("https://lamb-ascension-engine.vercel.app", "uid-fire"),
+    "https://lamb-ascension-engine.vercel.app/?p=uid-fire",
+  );
 });

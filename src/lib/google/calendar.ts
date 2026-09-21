@@ -3,9 +3,12 @@ import {
   calendarFailureReason,
   calendarScopeFlags,
   classifyGoogleCalendarHttp,
+  classifyCalendarListHttp,
+  calendarListUserReason,
   googleErrorReason,
   CALENDAR_API_DISABLED_MESSAGE,
   type CalendarFailureCode,
+  type CalendarListCode,
 } from "./calendar-errors.ts";
 import { toOffsetIso } from "../calendar/owner-event.ts";
 
@@ -117,59 +120,126 @@ export async function listEvents(
   from: Date,
   to: Date,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true; events: GoogleCalEvent[] } | { ok: false; reason: string; code: CalendarFailureCode }> {
+  calendarId?: string,
+): Promise<
+  | { ok: true; events: GoogleCalEvent[]; calendarId: string }
+  | { ok: false; reason: string; code: CalendarListCode; httpStatus: number; googleReason: string; calendarId: string }
+> {
+  if (!(from instanceof Date) || !(to instanceof Date) || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from.getTime() >= to.getTime()) {
+    return {
+      ok: false,
+      reason: calendarListUserReason("CALENDAR_LIST_BAD_RANGE"),
+      code: "CALENDAR_LIST_BAD_RANGE",
+      httpStatus: 0,
+      googleReason: "bad_range",
+      calendarId: calendarId || "primary",
+    };
+  }
+  const ids: string[] = [];
+  const preferred = (calendarId || "").trim();
+  if (preferred && preferred !== "primary") ids.push(preferred);
+  ids.push("primary");
+
+  let lastFail: Extract<Awaited<ReturnType<typeof listEventsOnCalendar>>, { ok: false }> | null = null;
+  for (const id of ids) {
+    const hit = await listEventsOnCalendar(accessToken, from, to, id, fetchImpl);
+    if (hit.ok) return hit;
+    lastFail = hit;
+    const retryNext = hit.httpStatus === 404 || hit.googleReason === "notFound";
+    if (!retryNext) return hit;
+  }
+  return lastFail || {
+    ok: false,
+    reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+    code: "CALENDAR_LIST_PARSE_FAILED",
+    httpStatus: 0,
+    googleReason: "empty",
+    calendarId: ids[0] || "primary",
+  };
+}
+
+async function listEventsOnCalendar(
+  accessToken: string,
+  from: Date,
+  to: Date,
+  calendarId: string,
+  fetchImpl: typeof fetch,
+): Promise<
+  | { ok: true; events: GoogleCalEvent[]; calendarId: string }
+  | { ok: false; reason: string; code: CalendarListCode; httpStatus: number; googleReason: string; calendarId: string }
+> {
   try {
-    const url = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
     url.searchParams.set("timeMin", from.toISOString());
     url.searchParams.set("timeMax", to.toISOString());
     url.searchParams.set("singleEvents", "true");
     url.searchParams.set("orderBy", "startTime");
     url.searchParams.set("maxResults", "80");
+    url.searchParams.set("timeZone", "America/Chicago");
     const res = await fetchImpl(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
+    const raw = await res.text().catch(() => "");
     if (!res.ok) {
-      const err = await readGoogleError(res);
-      if (err.code === "CALENDAR_API_DISABLED") return { ok: false, reason: CALENDAR_API_DISABLED_MESSAGE, code: err.code };
-      return { ok: false, reason: CALENDAR_VIEW_UNREADABLE, code: err.code };
+      const code = classifyCalendarListHttp(res.status, raw);
+      return {
+        ok: false,
+        reason: code === "CALENDAR_API_DISABLED" ? CALENDAR_API_DISABLED_MESSAGE : calendarListUserReason(code),
+        code,
+        httpStatus: res.status,
+        googleReason: googleErrorReason(raw),
+        calendarId,
+      };
     }
-    const json = (await res.json()) as {
-      error?: { message?: string };
-      items?: {
-        id?: string;
-        summary?: string;
-        status?: string;
-        htmlLink?: string;
-        location?: string;
-        description?: string;
-        attendees?: { email?: string }[];
-        start?: { dateTime?: string; date?: string };
-        end?: { dateTime?: string; date?: string };
-      }[];
-    };
-    if (json.error || !Array.isArray(json.items)) return { ok: false, reason: CALENDAR_VIEW_UNREADABLE, code: "FREEBUSY_FAILED" };
+    let json: { error?: { message?: string }; items?: unknown } = {};
+    try {
+      json = raw ? JSON.parse(raw) as { error?: { message?: string }; items?: unknown } : {};
+    } catch {
+      return {
+        ok: false,
+        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+        code: "CALENDAR_LIST_PARSE_FAILED",
+        httpStatus: res.status,
+        googleReason: "invalid_json",
+        calendarId,
+      };
+    }
+    if (json.error) {
+      return {
+        ok: false,
+        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+        code: "CALENDAR_LIST_PARSE_FAILED",
+        httpStatus: res.status,
+        googleReason: googleErrorReason(raw),
+        calendarId,
+      };
+    }
+    const items = json.items == null ? [] : json.items;
+    if (!Array.isArray(items)) {
+      return {
+        ok: false,
+        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+        code: "CALENDAR_LIST_PARSE_FAILED",
+        httpStatus: res.status,
+        googleReason: "items_not_array",
+        calendarId,
+      };
+    }
     const events: GoogleCalEvent[] = [];
-    for (const item of json.items) {
-      if (!item.id) continue;
-      if ((item.status || "").toLowerCase() === "cancelled") continue;
-      const start = item.start?.dateTime || (item.start?.date ? `${item.start.date}T12:00:00` : "");
-      const end = item.end?.dateTime || item.end?.date || "";
-      if (!start) continue;
-      events.push({
-        id: item.id,
-        title: (item.summary || "(No title)").trim(),
-        start,
-        end: end || start,
-        status: item.status || "confirmed",
-        htmlLink: item.htmlLink,
-        attendees: Array.isArray(item.attendees) ? item.attendees.length : 0,
-        location: item.location,
-        description: item.description,
-      });
+    for (const item of items as Parameters<typeof itemToEvent>[0][]) {
+      const event = itemToEvent(item);
+      if (event) events.push(event);
     }
-    return { ok: true, events };
+    return { ok: true, events, calendarId };
   } catch {
-    return { ok: false, reason: CALENDAR_VIEW_UNREADABLE, code: "FREEBUSY_FAILED" };
+    return {
+      ok: false,
+      reason: calendarListUserReason("CALENDAR_LIST_UPSTREAM_5XX"),
+      code: "CALENDAR_LIST_UPSTREAM_5XX",
+      httpStatus: 0,
+      googleReason: "network",
+      calendarId,
+    };
   }
 }
 
@@ -500,4 +570,4 @@ export async function offeredSlots(
   return { ok: true, busy: result.busy, slots: openSlots({ from, busy: result.busy, count: opts.count ?? 3 }) };
 }
 
-export { openSlots, calendarScopeFlags };
+export { openSlots, calendarScopeFlags, calendarListUserReason, classifyCalendarListHttp };

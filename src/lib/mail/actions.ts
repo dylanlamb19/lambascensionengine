@@ -242,69 +242,153 @@ export const nextCallFn = createServerFn({ method: "GET" })
     return { ok: true as const, call: await nextCall(context.userId) };
   });
 
+export const prospectUpcomingCallFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { uid: string }) => data)
+  .handler(async ({ data, context }) => {
+    const { upcomingCallForProspect } = await import("./sql.server");
+    const row = await upcomingCallForProspect(context.userId, data.uid);
+    if (!row) return { ok: true as const, call: null };
+    const start = new Date(row.start_at);
+    const y = start.toLocaleDateString("en-US", { timeZone: "America/Chicago", year: "numeric" });
+    const m = start.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "2-digit" });
+    const d = start.toLocaleDateString("en-US", { timeZone: "America/Chicago", day: "2-digit" });
+    const googleUrl = Number.isFinite(start.getTime())
+      ? `https://calendar.google.com/calendar/u/0/r/day/${y}/${m}/${d}`
+      : "https://calendar.google.com";
+    return {
+      ok: true as const,
+      call: {
+        googleEventId: row.google_event_id,
+        prospectUid: row.prospect_uid,
+        title: row.title,
+        start: row.start_at,
+        end: row.end_at,
+        status: row.status,
+        googleUrl,
+      },
+    };
+  });
+
+async function loadCalendarEventsForOwner(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<
+  | { ok: true; events: import("../google/calendar").GoogleCalEvent[]; connected: true; calendarId: string }
+  | { ok: false; connected: boolean; reason: string; code: string; events: [] }
+> {
+  const { accessFor } = await import("./live.server");
+  const { refreshAccess } = await import("../google/oauth");
+  const { saveGoogleAccount, loadSettings } = await import("./sql.server");
+  const { listEvents, calendarListUserReason } = await import("../google/calendar");
+  const { expandRangeToOwnerDays, OWNER_TZ_DEFAULT } = await import("../calendar/owner-event");
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from.getTime() >= to.getTime()) {
+    return { ok: false, connected: true, reason: calendarListUserReason("CALENDAR_LIST_BAD_RANGE"), code: "CALENDAR_LIST_BAD_RANGE", events: [] };
+  }
+  const settings = await loadSettings(userId);
+  const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+  const covered = expandRangeToOwnerDays(from, to, timezone);
+  if (covered.from.getTime() >= covered.to.getTime()) {
+    return { ok: false, connected: true, reason: calendarListUserReason("CALENDAR_LIST_BAD_RANGE"), code: "CALENDAR_LIST_BAD_RANGE", events: [] };
+  }
+
+  let tokens = await accessFor(userId, "calendar");
+  if (!tokens) {
+    return { ok: false, connected: false, reason: calendarListUserReason("CALENDAR_TOKEN_MISSING"), code: "CALENDAR_TOKEN_MISSING", events: [] };
+  }
+
+  const run = (tok: NonNullable<typeof tokens>) => listEvents(tok.access_token, covered.from, covered.to, fetch, tok.email);
+  let listed = await run(tokens);
+  if (!listed.ok && listed.code === "CALENDAR_LIST_AUTH_FAILED" && tokens.refresh_token) {
+    try {
+      const next = await refreshAccess(tokens.refresh_token);
+      next.refresh_token = tokens.refresh_token;
+      next.email = tokens.email;
+      next.sub = tokens.sub;
+      await saveGoogleAccount(userId, "calendar", next);
+      tokens = next;
+      listed = await run(tokens);
+    } catch {
+      return { ok: false, connected: true, reason: calendarListUserReason("CALENDAR_TOKEN_REFRESH_FAILED"), code: "CALENDAR_TOKEN_REFRESH_FAILED", events: [] };
+    }
+  }
+  if (!listed.ok) {
+    console.info("[calendar-list]", {
+      code: listed.code,
+      httpStatus: listed.httpStatus,
+      googleReason: listed.googleReason,
+      calendarId: listed.calendarId,
+    });
+    return { ok: false, connected: true, reason: listed.reason, code: listed.code, events: [] };
+  }
+  return { ok: true, events: listed.events, connected: true, calendarId: listed.calendarId };
+}
+
 export const calendarAgendaFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { from: string; to: string }) => data)
   .handler(async ({ data, context }) => {
-    const { accessFor } = await import("./live.server");
-    const { listEvents, CALENDAR_VIEW_UNREADABLE } = await import("../google/calendar");
-    const { listCallsInRange } = await import("./sql.server");
-    const { getProspectByUid } = await import("@/lib/prospects/repo.server");
-    const from = new Date(data.from);
-    const to = new Date(data.to);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      return { ok: false as const, connected: false, reason: "That date range isn’t valid.", events: [] as AgendaEvent[] };
-    }
-    const tokens = await accessFor(context.userId, "calendar");
-    if (!tokens) {
+    try {
+      const { listCallsInRange } = await import("./sql.server");
+      const { getProspectByUid } = await import("@/lib/prospects/repo.server");
+      const from = new Date(data.from);
+      const to = new Date(data.to);
+      const listed = await loadCalendarEventsForOwner(context.userId, from, to);
+      if (!listed.ok) {
+        return { ok: false as const, connected: listed.connected, reason: listed.reason, code: listed.code, events: [] as AgendaEvent[] };
+      }
+      const sales = await listCallsInRange(context.userId, from, to);
+      const byGoogle = new Map(sales.filter((s) => s.google_event_id).map((s) => [s.google_event_id as string, s]));
+      const events: AgendaEvent[] = [];
+      for (const ev of listed.events) {
+        const sale = byGoogle.get(ev.id);
+        let companyName: string | null = null;
+        if (sale?.prospect_uid) {
+          const p = await getProspectByUid(context.userId, sale.prospect_uid);
+          companyName = p?.name || null;
+        }
+        events.push({
+          id: ev.id,
+          title: ev.title,
+          start: ev.start,
+          end: ev.end,
+          status: sale ? "booked" : ev.status,
+          prospectUid: sale?.prospect_uid || null,
+          companyName,
+          kind: sale ? "sales_call" : "google",
+          htmlLink: ev.htmlLink || null,
+        });
+      }
+      for (const sale of sales) {
+        if (sale.google_event_id && listed.events.some((e) => e.id === sale.google_event_id)) continue;
+        const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
+        events.push({
+          id: sale.id,
+          title: sale.title,
+          start: sale.start_at,
+          end: sale.end_at,
+          status: sale.status,
+          prospectUid: sale.prospect_uid,
+          companyName: p?.name || null,
+          kind: "sales_call",
+          htmlLink: null,
+        });
+      }
+      events.sort((a, b) => a.start.localeCompare(b.start));
+      return { ok: true as const, connected: true, events };
+    } catch (err) {
+      console.info("[calendar-list]", { code: "CALENDAR_LIST_PARSE_FAILED", err: err instanceof Error ? err.name : "error" });
+      const { calendarListUserReason } = await import("../google/calendar");
       return {
         ok: false as const,
-        connected: false,
-        reason: "Calendar isn’t connected yet.",
+        connected: true,
+        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+        code: "CALENDAR_LIST_PARSE_FAILED",
         events: [] as AgendaEvent[],
       };
     }
-    const listed = await listEvents(tokens.access_token, from, to);
-    if (!listed.ok) {
-      return { ok: false as const, connected: true, reason: listed.reason || CALENDAR_VIEW_UNREADABLE, events: [] as AgendaEvent[] };
-    }
-    const sales = await listCallsInRange(context.userId, from, to);
-    const byGoogle = new Map(sales.filter((s) => s.google_event_id).map((s) => [s.google_event_id as string, s]));
-    const events: AgendaEvent[] = [];
-    for (const ev of listed.events) {
-      const sale = byGoogle.get(ev.id);
-      let companyName: string | null = null;
-      if (sale?.prospect_uid) {
-        const p = await getProspectByUid(context.userId, sale.prospect_uid);
-        companyName = p?.name || null;
-      }
-      events.push({
-        id: ev.id,
-        title: ev.title,
-        start: ev.start,
-        end: ev.end,
-        status: sale ? "booked" : ev.status,
-        prospectUid: sale?.prospect_uid || null,
-        companyName,
-        kind: sale ? "sales_call" : "google",
-      });
-    }
-    for (const sale of sales) {
-      if (sale.google_event_id && listed.events.some((e) => e.id === sale.google_event_id)) continue;
-      const p = sale.prospect_uid ? await getProspectByUid(context.userId, sale.prospect_uid) : null;
-      events.push({
-        id: sale.id,
-        title: sale.title,
-        start: sale.start_at,
-        end: sale.end_at,
-        status: sale.status,
-        prospectUid: sale.prospect_uid,
-        companyName: p?.name || null,
-        kind: "sales_call",
-      });
-    }
-    events.sort((a, b) => a.start.localeCompare(b.start));
-    return { ok: true as const, connected: true, events };
   });
 
 export const calendarTestEventFn = createServerFn({ method: "POST" })
@@ -361,12 +445,17 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     description?: string;
     location?: string;
     requestId?: string;
+    origin?: string;
   }) => data)
   .handler(async ({ data, context }) => {
     const { createHash } = await import("node:crypto");
     const { loadSettings, audit } = await import("./sql.server");
     const { accessFor } = await import("./live.server");
     const { createEvent, findMatchingEvent } = await import("../google/calendar");
+    const { listProspects } = await import("@/lib/prospects/repo.server");
+    const { matchProspectsBySpokenName } = await import("@/lib/prospects/dedupe");
+    const { prospectProfileUrl } = await import("@/lib/prospects/ids");
+    const { persistConfirmedBooking } = await import("./booking-confirm.server");
     const {
       resolveOwnerWhen,
       sanitizeOwnerTitle,
@@ -374,28 +463,49 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
       ownerEventFingerprint,
       ownerEventSuccessSpeech,
       ownerEventFailureSpeech,
+      ownerGenericNameQuestion,
+      ownerLinkedCallSpeech,
+      ownerUnlinkedCallSpeech,
+      ownerAmbiguousProspectSpeech,
+      isGenericOwnerTitle,
       OWNER_TZ_DEFAULT,
     } = await import("../calendar/owner-event");
 
     const parsedSpeech = parseOwnerCalendarSpeech(
       [data.title, data.when, data.date, data.time].filter((s) => typeof s === "string" && s.trim()).join(" "),
     );
-    const title = parsedSpeech.matched && parsedSpeech.title
-      ? parsedSpeech.title
-      : sanitizeOwnerTitle(data.title || "");
+    const incoming = sanitizeOwnerTitle(data.title || "");
+    const parsedTitle = parsedSpeech.matched ? parsedSpeech.title : "";
+    const title = !isGenericOwnerTitle(incoming)
+      ? incoming
+      : (parsedTitle && !isGenericOwnerTitle(parsedTitle) ? parsedTitle : (parsedTitle || incoming));
+    const whenBlob = data.when || (parsedSpeech.matched ? parsedSpeech.when : undefined);
+
+    if (isGenericOwnerTitle(title)) {
+      const question = ownerGenericNameQuestion(title || "call");
+      return {
+        ok: false as const,
+        created: false as const,
+        need: "name" as const,
+        question,
+        spoken: question,
+        title: title || "Call",
+        when: whenBlob || "",
+      };
+    }
     if (!title) {
       return {
         ok: false as const,
         created: false as const,
-        need: "when" as const,
-        question: "What should I call that calendar event?",
-        spoken: "What should I call that calendar event?",
+        need: "name" as const,
+        question: "What should I name the call?",
+        spoken: "What should I name the call?",
       };
     }
     const settings = await loadSettings(context.userId);
     const timezone = settings.timezone || OWNER_TZ_DEFAULT;
     const resolved = resolveOwnerWhen({
-      when: data.when || (parsedSpeech.matched ? parsedSpeech.when : undefined),
+      when: whenBlob,
       date: data.date,
       time: data.time,
       durationMinutes: data.durationMinutes,
@@ -409,8 +519,41 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
         need: resolved.need,
         question: resolved.question,
         spoken: resolved.question,
+        title,
+        when: whenBlob || "",
       };
     }
+
+    const prospects = await listProspects(context.userId);
+    const hits = matchProspectsBySpokenName(
+      prospects.map((p) => ({
+        uid: p.uid || "",
+        name: p.name,
+        city: p.city,
+        provider_place_id: p.provider_place_id,
+      })),
+      title,
+    ).filter((h) => h.uid);
+    if (hits.length > 1) {
+      const spoken = ownerAmbiguousProspectSpeech(hits.map((h) => ({ name: h.name, city: h.city })));
+      return {
+        ok: false as const,
+        created: false as const,
+        need: "which" as const,
+        question: spoken,
+        spoken,
+        title,
+        when: whenBlob || "",
+        matches: hits.map((h) => ({ uid: h.uid, name: h.name, city: h.city || "" })),
+      };
+    }
+    const linked = hits.length === 1 ? prospects.find((p) => p.uid === hits[0].uid) : null;
+    const origin = safeAppOrigin(data.origin);
+    const profileUrl = linked?.uid ? prospectProfileUrl(origin, linked.uid) : "";
+    const eventTitle = linked ? linked.name : title;
+    const eventDescription = linked
+      ? prospectCallDescription(linked, profileUrl)
+      : (data.description || "").slice(0, 1000);
 
     const tokens = await accessFor(context.userId, "calendar");
     if (!tokens) {
@@ -424,17 +567,17 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     }
 
     const fingerprint = ownerEventFingerprint({
-      title,
+      title: eventTitle,
       startIso: resolved.start.toISOString(),
       durationMinutes: resolved.durationMinutes,
     });
     const eventId = createHash("sha256").update(`${context.userId}:${fingerprint}`).digest("hex").slice(0, 32);
 
     const created = await createEvent(tokens.access_token, {
-      title,
+      title: eventTitle,
       start: resolved.start,
       end: resolved.end,
-      description: (data.description || "").slice(0, 1000),
+      description: eventDescription,
       location: (data.location || "").slice(0, 200) || undefined,
       timeZone: timezone,
       eventId,
@@ -444,12 +587,12 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     let id = created.ok ? created.id : "";
     let alreadyExisted = created.ok ? Boolean(created.alreadyExisted) : false;
     if (!created.ok) {
-      const existing = await findMatchingEvent(tokens.access_token, { title, start: resolved.start });
+      const existing = await findMatchingEvent(tokens.access_token, { title: eventTitle, start: resolved.start });
       if (existing) {
         id = existing.id;
         alreadyExisted = true;
       } else {
-        await audit(context.userId, "create_owner_calendar_event", `failed:${title}`, { method: "VOICE" });
+        await audit(context.userId, "create_owner_calendar_event", `failed:${eventTitle}`, { method: "VOICE" });
         return {
           ok: false as const,
           created: false as const,
@@ -460,26 +603,100 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
       }
     }
 
-    await audit(context.userId, "create_owner_calendar_event", alreadyExisted ? `exists:${title}` : `created:${title}`, { method: "VOICE", providerIds: id });
-    const spoken = ownerEventSuccessSpeech(title, resolved.whenLabel);
+    let sales = false;
+    if (linked?.uid) {
+      const persisted = await persistConfirmedBooking({
+        userId: context.userId,
+        prospectUid: linked.uid,
+        googleEventId: id,
+        title: eventTitle,
+        start: resolved.start,
+        end: resolved.end,
+        method: "MANUAL",
+      });
+      if (!persisted.ok) {
+        await audit(context.userId, "create_owner_calendar_event", `link_failed:${eventTitle}`, {
+          method: "VOICE",
+          providerIds: id,
+          prospectUid: linked.uid,
+        });
+        return {
+          ok: false as const,
+          created: false as const,
+          reason: persisted.reason,
+          spoken: "The Calendar event was created, but I couldn't link it to the prospect. No second event was created.",
+          eventId: id,
+          title: eventTitle,
+        };
+      }
+      sales = true;
+    }
+
+    await audit(context.userId, "create_owner_calendar_event", alreadyExisted ? `exists:${eventTitle}` : `created:${eventTitle}`, {
+      method: "VOICE",
+      providerIds: id,
+      prospectUid: linked?.uid,
+    });
+    const spoken = linked
+      ? ownerLinkedCallSpeech(eventTitle, resolved.whenLabel)
+      : (isCallLikeTitle(title)
+        ? ownerUnlinkedCallSpeech(eventTitle, resolved.whenLabel)
+        : ownerEventSuccessSpeech(eventTitle, resolved.whenLabel));
     return {
       ok: true as const,
       created: true as const,
       alreadyExisted,
       eventId: id,
-      title,
+      title: eventTitle,
       whenLabel: resolved.whenLabel,
       start: resolved.start.toISOString(),
       end: resolved.end.toISOString(),
       fingerprint,
       attendees: 0 as const,
       guests: 0 as const,
-      prospect: false as const,
-      sales: false as const,
+      prospect: Boolean(linked),
+      prospectUid: linked?.uid || null,
+      profileUrl: profileUrl || null,
+      sales,
       emailSent: false as const,
       spoken,
     };
   });
+
+function safeAppOrigin(candidate?: string): string {
+  const prod = "https://lamb-ascension-engine.vercel.app";
+  const raw = (candidate || "").trim().replace(/\/$/, "");
+  if (raw === prod) return raw;
+  if (/^https:\/\/lamb-ascension-engine(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(raw)) return raw;
+  const vercel = process.env.VERCEL_URL?.replace(/^https?:\/\//, "").trim();
+  if (vercel) return `https://${vercel}`;
+  return prod;
+}
+
+function isCallLikeTitle(title: string): boolean {
+  return /\b(call|meeting)\b/i.test(title);
+}
+
+function prospectCallDescription(
+  prospect: { name: string; phone?: string; contacts?: { name?: string; title?: string; email?: string }[] },
+  profileUrl: string,
+): string {
+  const named = (prospect.contacts || []).find((c) => c.name && c.name !== "UNKNOWN");
+  const phone = prospect.phone && prospect.phone !== "UNKNOWN" ? prospect.phone : "";
+  const lines = [
+    prospect.name,
+    "Lamb Ascension prospect call",
+    "",
+    "Open prospect in LambAscensionEngine:",
+    profileUrl,
+  ];
+  if (named?.name) {
+    lines.push("", `Contact: ${named.name}${named.title && named.title !== "UNKNOWN" ? ` — ${named.title}` : ""}`);
+  }
+  if (named?.email) lines.push(`Email: ${named.email}`);
+  if (phone) lines.push(`Phone: ${phone}`);
+  return lines.join("\n").slice(0, 1000);
+}
 
 type OwnerManageInput = {
   eventId?: string;
@@ -497,36 +714,30 @@ export const listOwnerCalendarEventsFn = createServerFn({ method: "POST" })
   .validator((data: OwnerManageInput) => data)
   .handler(async ({ data, context }) => {
     const { loadSettings, audit, listCallsInRange } = await import("./sql.server");
-    const { accessFor } = await import("./live.server");
-    const { listEvents, CALENDAR_VIEW_UNREADABLE } = await import("../google/calendar");
     const {
       resolveOwnerWindow,
       ownerListSpeech,
+      pickCalendarMatches,
+      formatEventWhen,
       OWNER_TZ_DEFAULT,
     } = await import("../calendar/owner-event");
 
     const settings = await loadSettings(context.userId);
     const timezone = settings.timezone || OWNER_TZ_DEFAULT;
     const now = new Date();
-    const win = resolveOwnerWindow({ when: data.when, timezone, now });
+    const named = (data.title || "").trim();
+    const win = named && !data.when
+      ? { ok: true as const, from: now, to: new Date(now.getTime() + 14 * 86400000), label: "the next two weeks", hasClock: false as const }
+      : resolveOwnerWindow({ when: data.when, timezone, now });
     const window = win.ok ? win : { from: now, to: new Date(now.getTime() + 24 * 3600 * 1000), label: "today", hasClock: false };
-    const tokens = await accessFor(context.userId, "calendar");
-    if (!tokens) {
-      return {
-        ok: false as const,
-        listed: false as const,
-        reason: "Calendar isn’t connected.",
-        spoken: "Calendar isn’t connected, so I couldn’t read your events.",
-        events: [] as { id: string; title: string; start: string; end: string; attendees: number; sales: boolean }[],
-      };
-    }
-    const listed = await listEvents(tokens.access_token, window.from, window.to);
+    const listed = await loadCalendarEventsForOwner(context.userId, window.from, window.to);
     if (!listed.ok) {
       return {
         ok: false as const,
         listed: false as const,
-        reason: listed.reason || CALENDAR_VIEW_UNREADABLE,
-        spoken: listed.reason || CALENDAR_VIEW_UNREADABLE,
+        reason: listed.reason,
+        code: listed.code,
+        spoken: listed.reason,
         events: [] as { id: string; title: string; start: string; end: string; attendees: number; sales: boolean }[],
       };
     }
@@ -540,14 +751,22 @@ export const listOwnerCalendarEventsFn = createServerFn({ method: "POST" })
       attendees: ev.attendees,
       sales: Boolean(byGoogle.get(ev.id)),
     }));
-    await audit(context.userId, "list_owner_calendar_events", `${window.label}:${events.length}`, { method: "VOICE" });
+    const focused = named ? pickCalendarMatches(events, { title: named }) : { matches: events, ambiguous: false };
+    const shown = named ? focused.matches : events;
+    let spoken = ownerListSpeech(shown, window.label, timezone, now);
+    if (named && shown.length === 1) {
+      spoken = `Your ‘${shown[0].title}’ call is ${formatEventWhen(shown[0].start, timezone, now)}.`;
+    } else if (named && !shown.length) {
+      spoken = `I don't see a ‘${named}’ call on your calendar in the next two weeks.`;
+    }
+    await audit(context.userId, "list_owner_calendar_events", `${window.label}:${shown.length}`, { method: "VOICE" });
     return {
       ok: true as const,
       listed: true as const,
       label: window.label,
       timezone,
-      spoken: ownerListSpeech(events, window.label, timezone, now),
-      events,
+      spoken,
+      events: shown,
     };
   });
 
@@ -588,6 +807,7 @@ export const deleteOwnerCalendarEventFn = createServerFn({ method: "POST" })
       lastEvent: data.lastEvent,
       title: data.title,
       when: data.when,
+      calendarId: tokens.email,
       listEvents,
       getEvent,
       findBookedByGoogleEventId,
@@ -686,6 +906,7 @@ export const updateOwnerCalendarEventFn = createServerFn({ method: "POST" })
       lastEvent: data.lastEvent,
       title: data.title,
       when: data.when,
+      calendarId: tokens.email,
       listEvents,
       getEvent,
       findBookedByGoogleEventId,
@@ -789,6 +1010,7 @@ async function locateOwnerEvent(opts: {
   lastEvent?: boolean;
   title?: string;
   when?: string;
+  calendarId?: string;
   listEvents: typeof import("../google/calendar").listEvents;
   getEvent: typeof import("../google/calendar").getEvent;
   findBookedByGoogleEventId: typeof import("./sql.server").findBookedByGoogleEventId;
@@ -826,7 +1048,7 @@ async function locateOwnerEvent(opts: {
       hasClock: false as const,
       start: undefined as Date | undefined,
     };
-  const listed = await opts.listEvents(opts.accessToken, window.from, window.to);
+  const listed = await opts.listEvents(opts.accessToken, window.from, window.to, fetch, opts.calendarId);
   if (!listed.ok) {
     return { ok: false, kind: "unread", spoken: listed.reason || CALENDAR_VIEW_UNREADABLE };
   }
@@ -872,6 +1094,7 @@ export type AgendaEvent = {
   prospectUid: string | null;
   companyName: string | null;
   kind: "sales_call" | "google";
+  htmlLink?: string | null;
 };
 
 export const testSettingsFn = createServerFn({ method: "GET" })

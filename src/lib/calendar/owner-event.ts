@@ -301,7 +301,7 @@ export function resolveOwnerWhen(input: ResolveOwnerWhenInput): ResolveOwnerWhen
   };
 }
 
-const SALES_BOOKING_RE = /\b(schedule|book)\s+(them|it|the call|a (sales )?call|this (call|company|prospect)|the meeting)\b/i;
+const SALES_BOOKING_RE = /\b(schedule|book)\s+(them|it|the call|this (call|company|prospect))\b/i;
 const VIEW_CALENDAR_RE = /\b(pull up|show( me)?|open|go to)\s+(my |the )?calendar\b/i;
 const PERSONAL_HINT_RE = new RegExp(
   [
@@ -310,6 +310,7 @@ const PERSONAL_HINT_RE = new RegExp(
     String.raw`\b(add|put|schedule)\b[\s\S]{0,120}\b(on|to)\s+my calendar\b`,
     String.raw`\bschedule\s+(gym|dentist|lunch|dinner|haircut|doctor|workout|run|errand)\b`,
     String.raw`\b(set|add|put|schedule)\s+(a |an )?.{0,40}\b(appointment|reminder)\b`,
+    String.raw`\b(add|put|set|schedule)\s+(a |an |my |this )?(call|meeting|appointment|event|reminder)\b`,
   ].join("|"),
   "i",
 );
@@ -317,8 +318,28 @@ const WEEKDAY_WORDS = "sunday|monday|tuesday|wednesday|thursday|friday|saturday|
 const RELATIVE_WORDS = "today|tonight|tomorrow";
 const MONTH_WORDS = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec";
 
+function collapseDuplicateSpeech(raw: string): string {
+  const t = (raw || "").replace(/\s+/g, " ").trim();
+  const words = t.split(" ").filter(Boolean);
+  if (words.length < 6) return t;
+  const max = Math.min(12, Math.floor(words.length / 2));
+  for (let i = max; i >= 3; i -= 1) {
+    const head = words.slice(0, i).join(" ").toLowerCase();
+    const next = words.slice(i, i * 2).join(" ").toLowerCase();
+    if (head && head === next) return words.slice(i).join(" ");
+  }
+  return t;
+}
+
 function stripWakeWord(raw: string): string {
-  return (raw || "").replace(/\s+/g, " ").trim().replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").trim();
+  let t = collapseDuplicateSpeech(raw);
+  t = t.replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").trim();
+  t = t.replace(/^(please[, ]+)+/i, "").trim();
+  if (!/\b(hear me|are you there|are you listening)\b/i.test(t)) {
+    t = t.replace(/^((i want you to|i need you to|i(?:'d| would) like you to|can you please|could you please|can you|could you|would you|will you)\s+)+/i, "").trim();
+  }
+  t = t.replace(/^(please[, ]+)+/i, "").trim();
+  return t.replace(/\s+/g, " ").trim();
 }
 
 export function isPersonalCalendarCommand(raw: string): boolean {
@@ -358,7 +379,30 @@ function tidyOwnerTitle(s: string): string {
 
 export type OwnerCalendarSpeech =
   | { matched: false }
-  | { matched: true; title: string; when: string };
+  | { matched: true; title: string; when: string; generic: boolean };
+
+const GENERIC_TITLE_RE = /^(a |an |the |my )?(call|meeting|appointment|event|reminder|sales call)( with| for)?$/i;
+
+export function isGenericOwnerTitle(title: string): boolean {
+  const t = (title || "").trim().replace(/[?.!,]/g, "");
+  if (!t) return true;
+  return GENERIC_TITLE_RE.test(t);
+}
+
+export function ownerGenericNameQuestion(title: string): string {
+  const t = (title || "").toLowerCase();
+  if (/\bmeeting\b/.test(t)) return "What should I name the meeting?";
+  if (/\bappointment\b/.test(t)) return "What should I name the appointment?";
+  if (/\breminder\b/.test(t)) return "What should I name the reminder?";
+  return "What should I name the call?";
+}
+
+function extractSubjectTitle(rawTitle: string): string {
+  let t = tidyOwnerTitle(stripWhenFromTitle(rawTitle));
+  const withFor = t.match(/^(call|meeting|appointment|event|reminder|sales call)\s+(with|for)\s+(.+)$/i);
+  if (withFor?.[3]) t = tidyOwnerTitle(withFor[3]);
+  return t;
+}
 
 export function parseOwnerCalendarSpeech(raw: string): OwnerCalendarSpeech {
   const stripped = stripWakeWord(raw);
@@ -376,12 +420,23 @@ export function parseOwnerCalendarSpeech(raw: string): OwnerCalendarSpeech {
     title = stripped
       .replace(/^(please\s+)/i, "")
       .replace(/^(set|add|put|schedule)\s+(a |an )?(reminder|event)\s+(on my calendar\s+)?(for\s+)?/i, "")
-      .replace(/^(set|add|put|schedule)\s+(a |an )?/i, "")
+      .replace(/^(set|add|put|schedule)\s+(a |an |my |this )?/i, "")
       .replace(/\s+(on|to)\s+my calendar\b/i, " ");
   }
-  title = tidyOwnerTitle(stripWhenFromTitle(title));
-  if (!title) title = "Reminder";
-  return { matched: true, title, when: stripped };
+  title = extractSubjectTitle(title);
+  const generic = isGenericOwnerTitle(title);
+  return { matched: true, title: generic ? tidyOwnerTitle(title) || "Call" : title, when: stripped, generic };
+}
+
+export function extractOwnerFollowupTitle(raw: string): string {
+  let t = stripWakeWord(raw);
+  t = t.replace(/^(add|put|schedule|set)\s+(it|that|this)\s+(for|with|as)\s+/i, "");
+  t = t.replace(/^(add|put|schedule)\s+(it|that|this)\s+/i, "");
+  t = t.replace(/^(it'?s|it is|call it|name it|name the (call|meeting|appointment|event)|make it)\s+/i, "");
+  t = t.replace(/^(for|with)\s+/i, "");
+  t = extractSubjectTitle(t);
+  if (isGenericOwnerTitle(t)) return "";
+  return t;
 }
 
 export function isOwnerCalendarFollowupTime(raw: string): boolean {
@@ -391,16 +446,108 @@ export function isOwnerCalendarFollowupTime(raw: string): boolean {
   return Boolean(parseClock(t));
 }
 
+export function isOwnerCalendarFollowupName(raw: string): boolean {
+  const t = stripWakeWord(raw);
+  if (!t) return false;
+  if (isConversationalAside(t)) return false;
+  if (isOwnerCalendarCorrection(t)) return false;
+  if (/\b(cancel|never mind|forget it|stop)\b/i.test(t) && t.length < 24) return false;
+  if (isOwnerCalendarManageCommand(t)) return false;
+  if (isOwnerCalendarFollowupTime(t) && t.length < 16) return false;
+  const title = extractOwnerFollowupTitle(t);
+  return Boolean(title) && !isGenericOwnerTitle(title);
+}
+
+export type PendingOwnerCal = {
+  title: string;
+  when: string;
+  need?: "time" | "when" | "name" | "which";
+  intent?: "create" | "rename";
+  eventId?: string;
+  at?: number;
+};
+
+const PENDING_OWNER_CAL_TTL_MS = 15 * 60 * 1000;
+
+export function pendingOwnerCalExpired(pending?: PendingOwnerCal | null, now = Date.now()): boolean {
+  if (!pending) return true;
+  if (!pending.at) return false;
+  return now - pending.at > PENDING_OWNER_CAL_TTL_MS;
+}
+
+/** Open/show/pull up/go to Calendar — not scheduling speech that merely mentions calendar. */
+export function isExplicitCalendarNavigate(raw: string): boolean {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (SALES_BOOKING_RE.test(t)) return false;
+  if (isPersonalCalendarCommand(raw)) return false;
+  if (isOwnerCalendarManageCommand(raw)) return false;
+  if (/^(my |the )?calendar$/.test(t)) return true;
+  return VIEW_CALENDAR_RE.test(t);
+}
+
+export function isConversationalAside(raw: string): boolean {
+  const lower = (raw || "").toLowerCase();
+  if (/\bcan you hear me\b/.test(lower)) return true;
+  if (/\bare you (there|listening|on)\b/.test(lower)) return true;
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (/^(are you (there|listening|on)|you there|you listening|hear me)$/.test(t)) return true;
+  if (/^(hello|hi|hey|thanks|thank you|okay|ok|yes|yeah|yep|nope)( ara)?$/.test(t)) return true;
+  if (/^ara$/.test(t)) return true;
+  return false;
+}
+
+export function isOwnerCalendarCorrection(raw: string): boolean {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  return (
+    /\bthat('s| is) not (the name|what i|the one)\b/.test(t)
+    || /\bnot the name i wanted\b/.test(t)
+    || /\bwrong name\b/.test(t)
+    || /\brename (it|that|the (call|event|meeting|appointment))\b/.test(t)
+    || /\bi (didn't|did not) (want|mean) that name\b/.test(t)
+    || /\bthat is not the name i wanted you to name\b/.test(t)
+  );
+}
+
+export function ownerCalendarRenameQuestion(): string {
+  return "What should I rename it to?";
+}
+
+export function shouldKeepPendingOwnerCalendar(raw: string, pending?: PendingOwnerCal | null): boolean {
+  if (!pending) return false;
+  if (pendingOwnerCalExpired(pending)) return false;
+  if (isOwnerCalendarCorrection(raw)) return true;
+  if (isConversationalAside(raw)) return true;
+  if (isOwnerCalendarFollowupName(raw) || isOwnerCalendarFollowupTime(raw)) return true;
+  if (isPersonalCalendarCommand(raw) || isOwnerCalendarManageCommand(raw)) return true;
+  return false;
+}
+
+export function expandRangeToOwnerDays(from: Date, to: Date, timeZone = OWNER_TZ_DEFAULT): { from: Date; to: Date } {
+  const startYmd = ymdInTimezone(from, timeZone);
+  const [y, m, d] = startYmd.split("-").map(Number);
+  const start = fromZonedLocal(y, m, d, 0, 0, timeZone);
+  const end = to.getTime() > start.getTime() ? to : new Date(start.getTime() + 24 * 3600 * 1000);
+  return { from: start, to: end };
+}
+
 /** True when Ara must stop talking and let the app own this personal-calendar turn. */
 export function shouldSilenceAraForOwnerCalendar(
   raw: string,
-  pending?: { title: string; when: string } | null,
+  pending?: PendingOwnerCal | null,
 ): boolean {
   const t = (raw || "").trim();
   if (!t) return false;
   if (/\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(t)) return true;
+  if (isOwnerCalendarCorrection(t)) return true;
+  if (isConversationalAside(t)) return false;
+  if (isExplicitCalendarNavigate(t)) return false;
   if (isOwnerCalendarManageCommand(t)) return true;
   if (isPersonalCalendarCommand(t)) return true;
+  if (pending?.need === "name" && isOwnerCalendarFollowupName(t)) return true;
+  if (pending?.need === "which" && isOwnerCalendarFollowupName(t)) return true;
   if (pending && isOwnerCalendarFollowupTime(t)) return true;
   return false;
 }
@@ -438,6 +585,21 @@ export function ownerEventSuccessSpeech(title: string, whenLabel: string): strin
   return `Done — I added ‘${title}’ to your calendar for ${whenLabel}.`;
 }
 
+export function ownerLinkedCallSpeech(name: string, whenLabel: string): string {
+  return `Done — I scheduled ${name} for ${whenLabel} and linked the call to their Lamb Ascension profile.`;
+}
+
+export function ownerUnlinkedCallSpeech(title: string, whenLabel: string): string {
+  return `I scheduled ‘${title}’ for ${whenLabel}. I didn't find a matching Lamb Ascension prospect, so it isn't linked to a company profile.`;
+}
+
+export function ownerAmbiguousProspectSpeech(matches: { name: string; city?: string }[]): string {
+  const bits = matches.slice(0, 4).map((m) => (m.city ? `${m.name} in ${m.city}` : m.name));
+  const noun = matches.length === 2 ? "two" : String(matches.length);
+  const label = matches[0]?.name || "matching";
+  return `I found ${noun} ${label} records. Which one do you mean — ${bits.join(" or ")}?`;
+}
+
 export function ownerEventFailureSpeech(): string {
   return "I couldn't create that event, so nothing was added.";
 }
@@ -448,10 +610,10 @@ export function ownerEventSpeechFromState(last: LastOwnerEvent | null | undefine
 }
 
 const LAST_EVENT_RE = /\b(the event i just added|the one i just (added|put|created)|what you just (added|put)|that event i just added)\b/i;
-const LIST_MANAGE_RE = /\bwhat (do i have|have i got)\b|\bwhat(?:'s| is) on my calendar\b|\bshow (me )?(my )?(events|calendar events)\b|\bwhat(?:'s| is) on (the )?calendar\b/i;
-const DELETE_MANAGE_RE = /\b(delete|remove)\b|\bcancel (the |my |this )?(event|appointment|reminder|meeting|dentist|gym|lunch|bank|call)\b/i;
+const LIST_MANAGE_RE = /\bwhat (do i have|have i got)\b|\bwhat(?:'s| is) on my calendar\b|\bshow (me )?(my )?(events|calendar events)\b|\bwhat(?:'s| is) on (the )?calendar\b|\bwhen is (my |the )?(?!next\b)(.{0,80})\bcall\b/i;
+const DELETE_MANAGE_RE = /\b(delete|remove)\b|\bcancel (the |my |this )?(event|appointment|reminder|meeting|dentist|gym|lunch|bank|call)\b|\bcancel .{0,80}\bcall\b/i;
 const UPDATE_MANAGE_RE = /\b(move|reschedule)\b|\bchange\b.{0,80}\b(to |from )\b|\brename\b/i;
-const CAL_NOUN_RE = /\b(event|appointment|reminder|meeting|dentist|gym|lunch|bank|calendar|insurance)\b/;
+const CAL_NOUN_RE = /\b(event|appointment|reminder|meeting|dentist|gym|lunch|bank|calendar|insurance|call)\b/;
 const MOVE_TIME_RE = /\b(to|at|from)\s+(\d{1,2}|noon|midnight)/i;
 
 export type OwnerCalendarManage =
@@ -497,9 +659,12 @@ export function parseOwnerCalendarManage(raw: string): OwnerCalendarManage {
   const fromTo = stripped.match(/\bfrom\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?|noon|midnight)\s+to\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|noon|midnight)\b/i);
   const toTime = stripped.match(/\b(?:to|at)\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|noon|midnight)\b/i);
   const rename = stripped.match(/\brename\s+['"“”‘’]?(.+?)['"“”‘’]?\s+to\s+['"“”‘’]?(.+?)['"“”‘’]?\s*$/i);
+  const whenIs = stripped.match(/\bwhen is (?:my |the |our )?(.+?)\s+call\b/i);
 
   let title = "";
-  if (rename?.[1] && kind === "update") title = rename[1];
+  if (whenIs?.[1] && kind === "list") title = tidyOwnerTitle(whenIs[1]);
+  else if (kind === "list") title = "";
+  else if (rename?.[1] && kind === "update") title = rename[1];
   else {
     title = stripped
       .replace(/^(please\s+)/i, "")
@@ -507,8 +672,12 @@ export function parseOwnerCalendarManage(raw: string): OwnerCalendarManage {
       .replace(/\b(from my calendar|on my calendar|from the calendar)\b/gi, " ");
     title = tidyOwnerTitle(stripWhenFromTitle(title));
     title = title.replace(/\b(from|to)\b/gi, " ").replace(/\s+/g, " ").trim();
+    title = tidyOwnerTitle(title.replace(/\b(call|event|appointment|reminder|meeting)\b/gi, " "));
   }
-  if (/^(event|appointment|reminder|meeting|one|that|it|this)$/i.test(title)) {
+  if (kind !== "list") {
+    title = tidyOwnerTitle(title.replace(/\b(call|event|appointment|reminder|meeting)\b/gi, " "));
+  }
+  if (/^(event|appointment|reminder|meeting|one|that|it|this|call)$/i.test(title)) {
     if (/^(that|it|this)$/i.test(title)) lastEvent = true;
     title = "";
   }
@@ -596,7 +765,7 @@ export type ManageMatch<T extends { id: string; title: string; start: string }> 
 
 export function scoreCalendarMatch(event: { title: string; start: string }, query: { title?: string; startMs?: number; windowMs?: number }): number {
   const et = event.title.toLowerCase();
-  const qt = (query.title || "").toLowerCase().replace(/\b(the|my|a|an|event|appointment|reminder|meeting|ones?)\b/g, " ").replace(/\s+/g, " ").trim();
+  const qt = (query.title || "").toLowerCase().replace(/\b(the|my|a|an|event|appointment|reminder|meeting|ones?|call)\b/g, " ").replace(/\s+/g, " ").trim();
   let score = 0;
   if (!qt) score += 1;
   else if (et === qt) score += 10;
