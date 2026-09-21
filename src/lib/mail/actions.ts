@@ -27,44 +27,75 @@ export const googleStatusFn = createServerFn({ method: "GET" })
 
 export const googleStartFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((data: { kind: "gmail" | "calendar"; origin: string }) => data)
+  .validator((data: { kind: "gmail" | "calendar"; origin: string; force?: boolean }) => data)
   .handler(async ({ data, context }) => {
-    const { googleOAuthConfigured, googleOAuthSetup, authorizeUrl } = await import("../google/oauth");
-    const missing = googleOAuthSetup();
-    if (!googleOAuthConfigured()) {
+    try {
+      const { googleOAuthConfigured, googleOAuthSetup, authorizeUrl } = await import("../google/oauth");
+      const missing = googleOAuthSetup();
+      if (!googleOAuthConfigured()) {
+        return {
+          ok: false as const,
+          reason: data.kind === "calendar"
+            ? "Google Calendar can’t be connected yet because Google OAuth isn’t configured on this server."
+            : "Gmail can’t be connected yet because Google OAuth isn’t configured on this server.",
+          missing,
+          next: "Whoever hosts Lamb Ascension needs to add the missing values. We will not ask for your Gmail password.",
+        };
+      }
+      const { saveOauthState, googleStatus } = await import("./sql.server");
+      const accounts = await googleStatus(context.userId);
+      if (data.kind === "calendar" && accounts.calendar === "connected" && !data.force) {
+        return {
+          ok: false as const,
+          alreadyConnected: true as const,
+          reason: "Google Calendar is already connected. The existing connection was not changed.",
+          missing,
+          next: "Use Reconnect only if Calendar actually needs a new Google sign-in.",
+        };
+      }
+      if (data.kind === "calendar" && data.force) {
+        const { accessFor } = await import("./live.server");
+        const { probeCalendarApiEnabled } = await import("../google/calendar");
+        const { CALENDAR_API_DISABLED_MESSAGE } = await import("../google/calendar-errors");
+        try {
+          const gmailTokens = await accessFor(context.userId, "gmail");
+          if (gmailTokens) {
+            const api = await Promise.race([
+              probeCalendarApiEnabled(gmailTokens.access_token),
+              new Promise<{ enabled: "unknown"; code: null; reason: string }>((resolve) => {
+                setTimeout(() => resolve({ enabled: "unknown", code: null, reason: "" }), 2500);
+              }),
+            ]);
+            if (api.enabled === false) {
+              return {
+                ok: false as const,
+                reason: CALENDAR_API_DISABLED_MESSAGE,
+                code: "CALENDAR_API_DISABLED" as const,
+                missing,
+                next: "Enable Google Calendar API in Google Cloud for LambAscensionEngine, then press Connect Google Calendar again. Gmail is unchanged.",
+              };
+            }
+          }
+        } catch {
+          /* probe is advisory — still mint an OAuth URL */
+        }
+      }
+      const rec = await saveOauthState(context.userId, data.kind);
+      const loginHint = data.kind === "calendar" ? (accounts.gmailEmail || undefined) : undefined;
+      const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin, loginHint });
+      return { ok: true as const, url, missing };
+    } catch {
       return {
         ok: false as const,
         reason: data.kind === "calendar"
-          ? "Google Calendar can’t be connected yet because Google OAuth isn’t configured on this server."
-          : "Gmail can’t be connected yet because Google OAuth isn’t configured on this server.",
-        missing,
-        next: "Whoever hosts Lamb Ascension needs to add the missing values. We will not ask for your Gmail password.",
+          ? "Could not start Google Calendar sign-in. The existing Calendar connection was not changed."
+          : "Could not start Google sign-in. Nothing was connected.",
+        missing: [],
+        next: data.kind === "calendar"
+          ? "The stored Calendar connection was left as-is. Try Reconnect only if Calendar still cannot be read."
+          : "Try Connect Gmail again. We will not ask for your Gmail password.",
       };
     }
-    if (data.kind === "calendar") {
-      const { accessFor } = await import("./live.server");
-      const { probeCalendarApiEnabled } = await import("../google/calendar");
-      const { CALENDAR_API_DISABLED_MESSAGE } = await import("../google/calendar-errors");
-      const gmailTokens = await accessFor(context.userId, "gmail");
-      if (gmailTokens) {
-        const api = await probeCalendarApiEnabled(gmailTokens.access_token);
-        if (api.enabled === false) {
-          return {
-            ok: false as const,
-            reason: CALENDAR_API_DISABLED_MESSAGE,
-            code: "CALENDAR_API_DISABLED" as const,
-            missing,
-            next: "Enable Google Calendar API in Google Cloud for LambAscensionEngine, then press Connect Google Calendar again. Gmail is unchanged.",
-          };
-        }
-      }
-    }
-    const { saveOauthState, googleStatus } = await import("./sql.server");
-    const rec = await saveOauthState(context.userId, data.kind);
-    const accounts = await googleStatus(context.userId);
-    const loginHint = data.kind === "calendar" ? (accounts.gmailEmail || undefined) : undefined;
-    const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin, loginHint });
-    return { ok: true as const, url, missing };
   });
 
 export const googleDisconnectFn = createServerFn({ method: "POST" })
@@ -330,6 +361,7 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { from: string; to: string }) => data)
   .handler(async ({ data, context }) => {
+    const { asIsoTimestamp, compareEventStart, calendarListUserReason } = await import("../google/calendar");
     try {
       const { listCallsInRange } = await import("./sql.server");
       const { getProspectByUid } = await import("@/lib/prospects/repo.server");
@@ -361,8 +393,8 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
         events.push({
           id: ev.id,
           title: ev.title,
-          start: ev.start,
-          end: ev.end,
+          start: asIsoTimestamp(ev.start) || String(ev.start || ""),
+          end: asIsoTimestamp(ev.end) || String(ev.end || ev.start || ""),
           status: sale ? "booked" : ev.status,
           prospectUid: sale?.prospect_uid || null,
           companyName,
@@ -379,11 +411,14 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
         } catch {
           companyName = null;
         }
+        const start = asIsoTimestamp(sale.start_at);
+        const end = asIsoTimestamp(sale.end_at) || start;
+        if (!start) continue;
         events.push({
           id: sale.id,
           title: sale.title,
-          start: sale.start_at,
-          end: sale.end_at,
+          start,
+          end,
           status: sale.status,
           prospectUid: sale.prospect_uid,
           companyName,
@@ -391,11 +426,10 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
           htmlLink: null,
         });
       }
-      events.sort((a, b) => a.start.localeCompare(b.start));
+      events.sort(compareEventStart);
       return { ok: true as const, connected: true, events };
     } catch (err) {
       console.info("[calendar-list]", { code: "CALENDAR_LIST_PARSE_FAILED", err: err instanceof Error ? err.name : "error" });
-      const { calendarListUserReason } = await import("../google/calendar");
       return {
         ok: false as const,
         connected: true,
@@ -880,6 +914,158 @@ export const deleteOwnerCalendarEventFn = createServerFn({ method: "POST" })
       title: located.event.title,
       sales: Boolean(sale && sale.status === "booked"),
       spoken: gone.alreadyGone ? ownerAlreadyGoneSpeech() : ownerDeleteSuccessSpeech(located.event.title),
+    };
+  });
+
+type BulkDeleteInput = {
+  when?: string;
+  horizon?: "unspecified" | "future" | "range" | "all";
+  filter?: "all" | "personal" | "sales" | "test";
+  confirm?: boolean;
+  bulkActionId?: string;
+  eventIds?: string[];
+  completedIds?: string[];
+};
+
+export const deleteOwnerCalendarEventsBulkFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: BulkDeleteInput) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings, audit, findBookedByGoogleEventId, cancelBookedCalendarEvent, listCallsInRange } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { listEvents, deleteEvent, asIsoTimestamp } = await import("../google/calendar");
+    const {
+      resolveBulkOwnerWindow,
+      filterBulkEvents,
+      ownerBulkConfirmSpeech,
+      ownerBulkSuccessSpeech,
+      ownerBulkScopeQuestion,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+    const { createHash } = await import("node:crypto");
+
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const now = new Date();
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        deleted: false as const,
+        spoken: "Calendar isn’t connected, so nothing was deleted.",
+        terminal: "FAILED" as const,
+      };
+    }
+
+    const horizon = data.horizon || "unspecified";
+    const filter = data.filter || "all";
+    if (horizon === "unspecified" && !data.confirm && !(data.eventIds && data.eventIds.length)) {
+      return {
+        ok: false as const,
+        deleted: false as const,
+        needsScope: true as const,
+        spoken: ownerBulkScopeQuestion(),
+        terminal: "NEEDS_CLARIFICATION" as const,
+        filter,
+      };
+    }
+
+    const window = resolveBulkOwnerWindow({ when: data.when, horizon, timezone, now });
+    const listed = await listEvents(tokens.access_token, window.from, window.to, fetch, tokens.email);
+    if (!listed.ok) {
+      return {
+        ok: false as const,
+        deleted: false as const,
+        spoken: listed.reason,
+        code: listed.code,
+        terminal: "FAILED" as const,
+      };
+    }
+
+    let salesRows: Awaited<ReturnType<typeof listCallsInRange>> = [];
+    try {
+      salesRows = await listCallsInRange(context.userId, window.from, window.to);
+    } catch {
+      salesRows = [];
+    }
+    const salesIds = new Set(salesRows.filter((s) => s.google_event_id && s.status === "booked").map((s) => s.google_event_id as string));
+    const tagged = listed.events.map((ev) => ({
+      ...ev,
+      start: asIsoTimestamp(ev.start) || ev.start,
+      end: asIsoTimestamp(ev.end) || ev.end,
+      sales: salesIds.has(ev.id),
+    }));
+    const filtered = filterBulkEvents(tagged, filter);
+    const requested = (data.eventIds || []).map((id) => String(id).trim()).filter(Boolean);
+    const targets = requested.length
+      ? filtered.filter((e) => requested.includes(e.id))
+      : filtered;
+    const guestCount = targets.filter((e) => e.attendees > 0).length;
+    const salesCount = targets.filter((e) => e.sales).length;
+    const ids = targets.map((e) => e.id);
+    const bulkActionId = data.bulkActionId || createHash("sha256").update(`bulk:${context.userId}:${ids.slice().sort().join(",")}`).digest("hex").slice(0, 24);
+
+    if (!data.confirm) {
+      const spoken = ownerBulkConfirmSpeech({
+        count: targets.length,
+        sales: salesCount,
+        guests: guestCount,
+        label: window.label,
+      });
+      return {
+        ok: false as const,
+        deleted: false as const,
+        needsConfirm: true as const,
+        bulkActionId,
+        eventIds: ids,
+        count: targets.length,
+        sales: salesCount,
+        guests: guestCount,
+        label: window.label,
+        spoken,
+        terminal: "NEEDS_CONFIRMATION" as const,
+      };
+    }
+
+    const done = new Set((data.completedIds || []).map((id) => String(id)));
+    let deleted = 0;
+    let skipped = 0;
+    const completed: string[] = [...done];
+    for (const event of targets) {
+      if (done.has(event.id)) {
+        skipped += 1;
+        continue;
+      }
+      const gone = await deleteEvent(tokens.access_token, event.id);
+      if (!gone.ok) continue;
+      if (gone.alreadyGone) skipped += 1;
+      else deleted += 1;
+      done.add(event.id);
+      completed.push(event.id);
+      if (event.sales) {
+        try {
+          const row = await findBookedByGoogleEventId(context.userId, event.id);
+          if (row && row.status === "booked") await cancelBookedCalendarEvent(context.userId, event.id);
+        } catch {
+          /* keep deleting remaining events */
+        }
+      }
+    }
+    await audit(context.userId, "delete_owner_calendar_events_bulk", `${bulkActionId}:${deleted}:${skipped}`, {
+      method: "VOICE",
+      providerIds: completed.slice(-20).join(","),
+    });
+    return {
+      ok: true as const,
+      deleted: true as const,
+      bulkActionId,
+      eventIds: ids,
+      completedIds: completed,
+      deletedCount: deleted,
+      skippedCount: skipped,
+      sales: salesCount,
+      spoken: ownerBulkSuccessSpeech(deleted, skipped),
+      terminal: "SUCCESS" as const,
     };
   });
 

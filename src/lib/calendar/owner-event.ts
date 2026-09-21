@@ -659,6 +659,10 @@ const DELETE_MANAGE_RE = /\b(delete|remove)\b|\bcancel (the |my |this )?(event|a
 const UPDATE_MANAGE_RE = /\b(move|reschedule)\b|\bchange\b.{0,80}\b(to |from )\b|\brename\b/i;
 const CAL_NOUN_RE = /\b(event|appointment|reminder|meeting|dentist|gym|lunch|bank|calendar|insurance|call)\b/;
 const MOVE_TIME_RE = /\b(to|at|from)\s+(\d{1,2}|noon|midnight)/i;
+const BULK_DELETE_RE = /\b((delete|remove|clear|cancel)\s+(everything|all(\s+(of\s+)?(my|the))?(\s+(future|past))?(\s+(personal|test))?(\s+lamb\s+ascension)?(\s+(calendar|events?|calls?|appointments?|reminders?))?)|(clear(\s+(out|off))?\s+(my\s+)?calendar)|(delete|remove|clear)\s+all\b)/i;
+
+export type BulkCalFilter = "all" | "personal" | "sales" | "test";
+export type BulkCalHorizon = "unspecified" | "future" | "range" | "all";
 
 export type OwnerCalendarManage =
   | { kind: "none" }
@@ -669,10 +673,46 @@ export type OwnerCalendarManage =
       lastEvent: boolean;
       newTime?: string;
       newTitle?: string;
+    }
+  | {
+      kind: "bulk_delete";
+      when: string;
+      filter: BulkCalFilter;
+      horizon: BulkCalHorizon;
+      label: string;
     };
 
 function isBareCalendarNavigate(t: string): boolean {
   return VIEW_CALENDAR_RE.test(t) && !/\b(tomorrow|today|tonight|afternoon|morning|evening|this week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(t) && !/\bevents\b/.test(t);
+}
+
+export function parseOwnerCalendarBulk(raw: string): Extract<OwnerCalendarManage, { kind: "bulk_delete" }> | null {
+  const stripped = stripWakeWord(raw);
+  const t = stripped.toLowerCase();
+  if (!t || SALES_BOOKING_RE.test(t)) return null;
+  if (!BULK_DELETE_RE.test(t)) return null;
+  if (/\b(delete|remove|cancel)\s+(the |my |this )?(dentist|gym|lunch|bank|haircut|doctor)\b/.test(t) && !/\ball\b/.test(t) && !/\beverything\b/.test(t)) return null;
+  if (LAST_EVENT_RE.test(t) && !/\ball\b/.test(t) && !/\beverything\b/.test(t)) return null;
+
+  let filter: BulkCalFilter = "all";
+  if (/\blamb ascension\b/.test(t) || /\bsales calls?\b/.test(t)) filter = "sales";
+  else if (/\bpersonal\b/.test(t)) filter = "personal";
+  else if (/\btest\b/.test(t)) filter = "test";
+
+  let horizon: BulkCalHorizon = "unspecified";
+  const dated = /\b(today|tonight|tomorrow|this week|this afternoon|this morning|this evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(t)
+    || /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}/.test(t)
+    || /\b\d{4}-\d{2}-\d{2}\b/.test(t);
+  if (/\bfuture\b/.test(t) || /\bupcoming\b/.test(t) || /\bfrom now\b/.test(t)) horizon = "future";
+  else if (dated) horizon = "range";
+
+  const label = horizon === "future"
+    ? (filter === "personal" ? "all future personal events" : filter === "sales" ? "all future Lamb Ascension calls" : filter === "test" ? "all future test events" : "all future events")
+    : horizon === "range"
+      ? (filter === "test" ? "matching test events" : filter === "sales" ? "Lamb Ascension calls" : filter === "personal" ? "personal events" : "events")
+      : "everything on this calendar";
+
+  return { kind: "bulk_delete", when: stripped, filter, horizon, label };
 }
 
 export function isOwnerCalendarManageCommand(raw: string): boolean {
@@ -680,6 +720,7 @@ export function isOwnerCalendarManageCommand(raw: string): boolean {
   if (!t || SALES_BOOKING_RE.test(t)) return false;
   if (/^(cancel that|never mind|cancel it|forget it)$/.test(t)) return false;
   if (isBareCalendarNavigate(t)) return false;
+  if (parseOwnerCalendarBulk(raw)) return true;
   if (LIST_MANAGE_RE.test(t)) return true;
   if (DELETE_MANAGE_RE.test(t) && (CAL_NOUN_RE.test(t) || LAST_EVENT_RE.test(t))) return true;
   if (/\b(pipeline|home|background|overlay|focal|widget|image|preset)\b/.test(t)) return false;
@@ -693,6 +734,8 @@ export function parseOwnerCalendarManage(raw: string): OwnerCalendarManage {
   const stripped = stripWakeWord(raw);
   const t = stripped.toLowerCase();
   if (!isOwnerCalendarManageCommand(stripped)) return { kind: "none" };
+  const bulk = parseOwnerCalendarBulk(stripped);
+  if (bulk) return bulk;
   let lastEvent = LAST_EVENT_RE.test(t);
   let kind: "list" | "delete" | "update" = "list";
   if (DELETE_MANAGE_RE.test(t) && !UPDATE_MANAGE_RE.test(t)) kind = "delete";
@@ -903,10 +946,91 @@ export function ownerSalesUpdateConfirmSpeech(title: string): string {
 
 export function isOwnerCalendarConfirmYes(raw: string): boolean {
   const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, "").trim();
-  return /^(yes|yeah|yep|do it|go ahead|please do|cancel it|delete it|remove it|confirm)$/.test(t);
+  if (/^(yes|yeah|yep|do it|go ahead|please do|cancel it|delete it|remove it|confirm)$/.test(t)) return true;
+  if (/^(yes|yeah|yep|go ahead),?\s*(delete|remove|clear|do it)\b/.test(t)) return true;
+  if (/^delete all( \d+)?$/.test(t)) return true;
+  if (/^yes,? delete all( \d+)?$/.test(t)) return true;
+  return false;
 }
 
 export function isOwnerCalendarConfirmNo(raw: string): boolean {
   const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, "").trim();
   return /^(no|nope|never mind|forget it|stop|don'?t|do not)$/.test(t);
+}
+
+export function parseBulkScopeAnswer(raw: string): "future" | "all" | null {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  if (/\b(past and future|every past|the whole calendar|entire calendar|all of them|everything on (this|my) calendar)\b/.test(t)) return "all";
+  if (/^(everything|all of them|both)$/.test(t)) return "all";
+  if (/\b(all )?future( events?)?\b/.test(t) || /\bupcoming\b/.test(t) || /\bfrom now\b/.test(t) || /^(future|just future)$/.test(t)) return "future";
+  return null;
+}
+
+export function ownerBulkScopeQuestion(): string {
+  return "Do you mean all future events, or every past and future event on this calendar?";
+}
+
+export function ownerBulkConfirmSpeech(opts: {
+  count: number;
+  sales: number;
+  guests: number;
+  label: string;
+}): string {
+  if (!opts.count) return `I didn't find any ${opts.label} to delete, so nothing was removed.`;
+  const salesBit = opts.sales
+    ? `, including ${opts.sales} Lamb Ascension sales call${opts.sales === 1 ? "" : "s"}`
+    : "";
+  const guestBit = opts.guests
+    ? ` ${opts.guests} of those events have attendees.`
+    : "";
+  return `I found ${opts.count} event${opts.count === 1 ? "" : "s"} on your primary calendar${salesBit}.${guestBit} This will permanently remove them. Do you want me to delete all ${opts.count}?`;
+}
+
+export function ownerBulkSuccessSpeech(deleted: number, skipped: number): string {
+  if (!deleted && skipped) return "Those events were already gone. Nothing else was deleted.";
+  if (!deleted) return "I didn't delete anything.";
+  const extra = skipped ? ` ${skipped} ${skipped === 1 ? "was" : "were"} already gone.` : "";
+  return `Done — I removed ${deleted} event${deleted === 1 ? "" : "s"} from your calendar.${extra}`;
+}
+
+export function ownerBulkCancelledSpeech(): string {
+  return "Okay, I left everything on your calendar.";
+}
+
+export function calendarCommandFingerprint(kind: string, raw: string): string {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  return `${kind}:${t}`;
+}
+
+export function resolveBulkOwnerWindow(input: {
+  when?: string;
+  horizon: BulkCalHorizon;
+  timezone?: string;
+  now?: Date;
+}): { from: Date; to: Date; label: string } {
+  const timezone = input.timezone || OWNER_TZ_DEFAULT;
+  const now = input.now || new Date();
+  if (input.horizon === "future") {
+    return { from: now, to: new Date(now.getTime() + 2 * 365 * 86400000), label: "future events" };
+  }
+  if (input.horizon === "range") {
+    const win = resolveOwnerWindow({ when: input.when, timezone, now });
+    if (win.ok) return { from: win.from, to: win.to, label: win.label };
+  }
+  return {
+    from: new Date(now.getTime() - 365 * 86400000),
+    to: new Date(now.getTime() + 2 * 365 * 86400000),
+    label: "the past year through the next two years",
+  };
+}
+
+export function filterBulkEvents<T extends { title: string; sales?: boolean }>(
+  events: T[],
+  filter: BulkCalFilter,
+): T[] {
+  if (filter === "sales") return events.filter((e) => e.sales || /\blamb ascension\b/i.test(e.title));
+  if (filter === "personal") return events.filter((e) => !e.sales && !/\blamb ascension\b/i.test(e.title));
+  if (filter === "test") return events.filter((e) => /\btest\b/i.test(e.title));
+  return events;
 }

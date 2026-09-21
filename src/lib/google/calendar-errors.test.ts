@@ -256,3 +256,80 @@ test("inverted date range is CALENDAR_LIST_BAD_RANGE", async () => {
   if (!listed.ok) assert.equal(listed.code, "CALENDAR_LIST_BAD_RANGE");
 });
 
+test("normalizeGoogleCalendarEvent skips cancelled, null, and missing-start events without throwing", async () => {
+  const { normalizeGoogleCalendarEvent } = await import("./calendar.ts");
+  assert.equal(normalizeGoogleCalendarEvent(null), null);
+  assert.equal(normalizeGoogleCalendarEvent("nope"), null);
+  assert.equal(normalizeGoogleCalendarEvent({ id: "x", status: "cancelled", start: { dateTime: "2026-09-21T19:00:00-05:00" } }), null);
+  assert.equal(normalizeGoogleCalendarEvent({ id: "x", start: {} }), null);
+  const timed = normalizeGoogleCalendarEvent({
+    id: "evt-1",
+    summary: "Dentist",
+    start: { dateTime: "2026-09-21T19:00:00-05:00" },
+    end: { dateTime: "2026-09-21T19:30:00-05:00" },
+    attendees: [{ email: "a@x.com" }, { email: "b@x.com" }],
+    conferenceData: { entryPoints: [{ uri: "https://meet.google.com/abc" }] },
+  });
+  assert.equal(timed?.id, "evt-1");
+  assert.equal(timed?.title, "Dentist");
+  assert.equal(timed?.attendees, 2);
+  const allDay = normalizeGoogleCalendarEvent({
+    id: "evt-day",
+    start: { date: "2026-09-22" },
+    end: { date: "2026-09-23" },
+  });
+  assert.equal(allDay?.allDay, true);
+  assert.equal(allDay?.title, "(No title)");
+  assert.match(allDay?.start || "", /^2026-09-22/);
+});
+
+test("listEvents keeps readable events when one item is malformed", async () => {
+  const { listEvents } = await import("./calendar.ts");
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify({
+      items: [
+        null,
+        { id: "bad" },
+        { status: "cancelled", id: "gone", start: { dateTime: "2026-09-21T19:00:00-05:00" } },
+        {
+          id: "evt-ok",
+          summary: "Calendar Test",
+          start: { dateTime: "2026-09-22T15:00:00-05:00" },
+          end: { dateTime: "2026-09-22T15:30:00-05:00" },
+        },
+        { id: "evt-allday", summary: "Out", start: { date: "2026-09-23" }, end: { date: "2026-09-24" } },
+      ],
+    }), { status: 200 })) as typeof fetch;
+  const listed = await listEvents("tok", new Date("2026-09-20T05:00:00Z"), new Date("2026-09-27T05:00:00Z"), fetchImpl);
+  assert.equal(listed.ok, true);
+  if (listed.ok) {
+    assert.equal(listed.events.length, 2);
+    assert.equal(listed.events[0]?.id, "evt-ok");
+    assert.equal(listed.events[1]?.id, "evt-allday");
+  }
+});
+
+test("asIsoTimestamp coerces Postgres Date objects so agenda sort cannot throw", async () => {
+  const { asIsoTimestamp, compareEventStart } = await import("./calendar.ts");
+  const d = new Date("2026-09-22T16:00:00.000Z");
+  assert.equal(asIsoTimestamp(d), "2026-09-22T16:00:00.000Z");
+  assert.equal(asIsoTimestamp("2026-09-22"), "2026-09-22T00:00:00");
+  const events = [
+    { start: d },
+    { start: "2026-09-22T15:00:00.000Z" },
+  ];
+  events.sort(compareEventStart);
+  assert.equal(asIsoTimestamp(events[0].start).startsWith("2026-09-22T15"), true);
+});
+
+test("deleteEvent uses sendUpdates=none", async () => {
+  const { deleteEvent } = await import("./calendar.ts");
+  const urls: string[] = [];
+  const gone = await deleteEvent("tok", "evt-1", (async (url: RequestInfo | URL) => {
+    urls.push(String(url));
+    return new Response("", { status: 200 });
+  }) as typeof fetch);
+  assert.equal(gone.ok, true);
+  assert.match(urls[0], /sendUpdates=none/);
+});
+

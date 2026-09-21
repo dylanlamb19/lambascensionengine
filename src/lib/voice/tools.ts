@@ -15,6 +15,7 @@ import {
   OWNER_TZ_DEFAULT,
   parseOwnerCalendarSpeech,
   parseOwnerCalendarManage,
+  parseOwnerCalendarBulk,
   resolveOwnerWhen,
   sanitizeOwnerTitle,
   isGenericOwnerTitle,
@@ -82,6 +83,7 @@ export const ALLOWED_TOOLS = [
   "get_last_owner_calendar_event",
   "list_owner_calendar_events",
   "delete_owner_calendar_event",
+  "delete_owner_calendar_events_bulk",
   "update_owner_calendar_event",
   "send_email",
   "next_task",
@@ -189,6 +191,8 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   GET_LAST_OWNER_CALENDAR_EVENT: "get_last_owner_calendar_event",
   LIST_OWNER_CALENDAR_EVENTS: "list_owner_calendar_events",
   DELETE_OWNER_CALENDAR_EVENT: "delete_owner_calendar_event",
+  DELETE_OWNER_CALENDAR_EVENTS_BULK: "delete_owner_calendar_events_bulk",
+  DELETE_CALENDAR_EVENTS_BULK: "delete_owner_calendar_events_bulk",
   UPDATE_OWNER_CALENDAR_EVENT: "update_owner_calendar_event",
   REMOVE_CALENDAR_EVENT: "delete_owner_calendar_event",
   CANCEL_CALENDAR_EVENT: "delete_owner_calendar_event",
@@ -412,6 +416,16 @@ export type ToolPlan =
       confirm?: boolean;
     }
   | {
+      type: "owner_calendar_bulk_delete";
+      when?: string;
+      horizon?: "unspecified" | "future" | "range" | "all";
+      filter?: "all" | "personal" | "sales" | "test";
+      confirm?: boolean;
+      bulkActionId?: string;
+      eventIds?: string[];
+      completedIds?: string[];
+    }
+  | {
       type: "owner_calendar_update";
       title?: string;
       when?: string;
@@ -505,7 +519,8 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "create_owner_calendar_event", description: "Create an event on Dylan’s Google Calendar. Use for personal reminders AND named sales calls he wants on his calendar (‘add a call Monday at 11’, ‘schedule a call with Firefighter Roofing’). If the title is generic (just ‘call’, ‘meeting’, ‘appointment’), do NOT invent a name and do NOT create — the tool will ask ‘What should I name the call?’. Keep the date/time. After he names it, call again with that title and the original when. If the name matches one Lamb Ascension prospect, the server links the Google event to that prospect uid and may set Call Booked. If it matches none, create a personal event and do not change Pipeline. If two match, ask which city. No attendees unless already a sales booking. Explicit voice commands are authorization — do not ask for Confirm schedule. Resolve relative dates in the owner timezone. If the time is missing, do not invent one. Only report success after created=true.", parameters: { type: "object", properties: { title: { type: "string", description: "Event name. Never the raw command. For a generic ‘add a call’, omit a fake title so the tool can ask. For ‘call with Firefighter Roofing’, use ‘Firefighter Roofing’." }, when: { type: "string", description: "Relative phrase in the owner timezone, e.g. ‘Monday at 11’, ‘tomorrow at 4 PM’." }, date: { type: "string" }, time: { type: "string" }, duration_minutes: { type: "number" }, description: { type: "string" }, location: { type: "string" }, request_id: { type: "string" }, origin: { type: "string" } }, required: ["title"] } },
     { type: "function", name: "get_last_owner_calendar_event", description: "What personal calendar event Ara last created this session. Use when Dylan asks ‘what did you just add?’", parameters: { type: "object", properties: {} } },
     { type: "function", name: "list_owner_calendar_events", description: "List REAL events from Dylan’s connected Google Calendar. Use for ‘what do I have tomorrow’, ‘what’s on my calendar this afternoon’, ‘show my events Friday’. Resolve relative dates in the owner timezone. Do not invent events. Do not answer from stale UI state.", parameters: { type: "object", properties: { when: { type: "string", description: "Window in owner timezone, e.g. ‘tomorrow’, ‘this afternoon’, ‘Friday’, ‘tonight’." }, date: { type: "string" } } } },
-    { type: "function", name: "delete_owner_calendar_event", description: "Delete a REAL event on Dylan’s connected Google Calendar by Google event ID after lookup. Works for events Ara did NOT create. Explicit ‘delete/remove/cancel’ of a clearly identified personal event is authorization — do not ask again. If the event is a sales booking or has guests, the tool will ask for confirmation. Never invent an event ID. If zero matches, say nothing was deleted. If two or more match, ask which one.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, last_event: { type: "boolean", description: "true for ‘the event I just added’ / ‘that’" }, confirm: { type: "boolean", description: "true only after Dylan confirmed a sales/guest delete" } } } },
+    { type: "function", name: "delete_owner_calendar_event", description: "Delete ONE clearly identified Google Calendar event (dentist, Calendar Test at 3, the event I just added). NOT for ‘delete everything’, ‘clear my calendar’, or ‘delete all events’ — those use delete_owner_calendar_events_bulk. Never invent an event ID. If zero matches, say nothing was deleted once. If two or more match, ask which one.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, last_event: { type: "boolean", description: "true for ‘the event I just added’ / ‘that’" }, confirm: { type: "boolean", description: "true only after Dylan confirmed a sales/guest delete" } } } },
+    { type: "function", name: "delete_owner_calendar_events_bulk", description: "SAFE bulk delete. Use for ‘delete everything’, ‘clear my calendar’, ‘delete all events tomorrow’, ‘delete all future personal events’, ‘cancel all Lamb Ascension calls tomorrow’, ‘delete all my test events tomorrow’. NEVER delete on the first call. If scope is missing, the tool asks future vs past-and-future. Then it reports counts (including sales calls and attendees) and requires explicit confirmation. sendUpdates=none.", parameters: { type: "object", properties: { when: { type: "string" }, horizon: { type: "string", description: "unspecified | future | range" }, filter: { type: "string", description: "all | personal | sales | test" }, confirm: { type: "boolean" }, bulk_action_id: { type: "string" }, event_ids: { type: "array", items: { type: "string" } }, completed_ids: { type: "array", items: { type: "string" } } } } },
     { type: "function", name: "update_owner_calendar_event", description: "Move, reschedule, or rename a REAL Google Calendar event by event ID. PATCH only the fields Dylan asked to change. Do not notify guests. Do not invent an event ID. Sales bookings require confirmation.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, new_time: { type: "string" }, new_title: { type: "string" }, last_event: { type: "boolean" }, confirm: { type: "boolean" } } } },
     { type: "function", name: "send_email", description: "Prepare a first email. Does NOT send. Returns REQUIRES_CONFIRMATION. Owner must say Confirm send.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "next_task", description: "Move to the next owner task. Same as the Next button.", parameters: { type: "object", properties: {} } },
@@ -1148,11 +1163,24 @@ export function executeAllowlistedTool(
   }
   if (tool === "delete_owner_calendar_event") {
     const speech = [args.title, args.when, args.query].filter((s) => typeof s === "string" && String(s).trim()).join(" ");
+    const bulk = parseOwnerCalendarBulk(speech || String(args.title || args.query || ""));
+    if (bulk) {
+      return {
+        ok: true, tool: "delete_owner_calendar_events_bulk", rejected: false,
+        output: { ok: true, pending: true, deleted: false },
+        plan: {
+          type: "owner_calendar_bulk_delete",
+          when: bulk.when,
+          horizon: bulk.horizon,
+          filter: bulk.filter,
+        },
+      };
+    }
     const parsed = parseOwnerCalendarManage(speech || String(args.title || ""));
-    const title = String(args.title || (parsed.kind !== "none" ? parsed.title : "") || "").trim();
-    const when = String(args.when || (parsed.kind !== "none" ? parsed.when : "") || "").trim();
+    const title = String(args.title || (parsed.kind === "delete" ? parsed.title : "") || "").trim();
+    const when = String(args.when || (parsed.kind === "delete" || parsed.kind === "update" ? parsed.when : "") || "").trim();
     const eventId = String(args.event_id || args.eventId || args.id || "").trim();
-    const lastEvent = args.last_event === true || args.lastEvent === true || (parsed.kind !== "none" && parsed.lastEvent);
+    const lastEvent = args.last_event === true || args.lastEvent === true || (parsed.kind === "delete" && parsed.lastEvent);
     const confirm = args.confirm === true;
     return {
       ok: true, tool, rejected: false,
@@ -1167,13 +1195,43 @@ export function executeAllowlistedTool(
       },
     };
   }
+  if (tool === "delete_owner_calendar_events_bulk") {
+    const speech = [args.when, args.query, args.title].filter((s) => typeof s === "string" && String(s).trim()).join(" ");
+    const bulk = parseOwnerCalendarBulk(speech) || {
+      kind: "bulk_delete" as const,
+      when: speech || "delete everything from my calendar",
+      filter: "all" as const,
+      horizon: "unspecified" as const,
+      label: "everything on this calendar",
+    };
+    const horizonRaw = String(args.horizon || bulk.horizon || "unspecified");
+    const horizon = horizonRaw === "future" || horizonRaw === "range" || horizonRaw === "all" ? horizonRaw : "unspecified";
+    const filterRaw = String(args.filter || bulk.filter || "all");
+    const filter = filterRaw === "personal" || filterRaw === "sales" || filterRaw === "test" ? filterRaw : "all";
+    const eventIds = Array.isArray(args.event_ids) ? args.event_ids.map((id) => String(id)) : Array.isArray(args.eventIds) ? (args.eventIds as unknown[]).map((id) => String(id)) : undefined;
+    const completedIds = Array.isArray(args.completed_ids) ? args.completed_ids.map((id) => String(id)) : undefined;
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, deleted: false },
+      plan: {
+        type: "owner_calendar_bulk_delete",
+        when: String(args.when || bulk.when || "").trim() || undefined,
+        horizon,
+        filter,
+        confirm: args.confirm === true,
+        bulkActionId: String(args.bulk_action_id || args.bulkActionId || "").trim() || undefined,
+        eventIds,
+        completedIds,
+      },
+    };
+  }
   if (tool === "update_owner_calendar_event") {
     const speech = [args.title, args.when, args.new_time, args.new_title, args.query].filter((s) => typeof s === "string" && String(s).trim()).join(" ");
     const parsed = parseOwnerCalendarManage(speech || String(args.title || ""));
-    const title = String(args.title || (parsed.kind !== "none" ? parsed.title : "") || "").trim();
-    const when = String(args.when || (parsed.kind !== "none" ? parsed.when : "") || "").trim();
+    const title = String(args.title || (parsed.kind === "update" || parsed.kind === "delete" ? parsed.title : "") || "").trim();
+    const when = String(args.when || (parsed.kind === "update" || parsed.kind === "delete" || parsed.kind === "list" ? parsed.when : "") || "").trim();
     const eventId = String(args.event_id || args.eventId || args.id || "").trim();
-    const lastEvent = args.last_event === true || args.lastEvent === true || (parsed.kind !== "none" && parsed.lastEvent);
+    const lastEvent = args.last_event === true || args.lastEvent === true || ((parsed.kind === "update" || parsed.kind === "delete") && parsed.lastEvent);
     const newTime = String(args.new_time || args.newTime || args.time || (parsed.kind === "update" ? parsed.newTime : "") || "").trim();
     const newTitle = String(args.new_title || args.newTitle || (parsed.kind === "update" ? parsed.newTitle : "") || "").trim();
     const confirm = args.confirm === true;

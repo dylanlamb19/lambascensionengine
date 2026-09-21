@@ -18,6 +18,10 @@ export const CALENDAR_UNREADABLE =
 export const CALENDAR_VIEW_UNREADABLE =
   "Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it.";
 
+const LIST_FIELDS = "nextPageToken,items(id,status,summary,htmlLink,location,description,attendees,start,end,eventType,recurringEventId)";
+const LIST_MAX_PAGES = 6;
+const LIST_PAGE_SIZE = 100;
+
 export type GoogleCalEvent = {
   id: string;
   title: string;
@@ -28,6 +32,8 @@ export type GoogleCalEvent = {
   attendees: number;
   location?: string;
   description?: string;
+  allDay?: boolean;
+  sales?: boolean;
 };
 
 export type FreeBusyMeta = {
@@ -115,6 +121,101 @@ export async function probeCalendarApiEnabled(
   }
 }
 
+export function asIsoTimestamp(value: unknown): string {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const d = new Date(value);
+    return Number.isFinite(d.getTime()) ? d.toISOString() : "";
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return `${t}T00:00:00`;
+    return t;
+  }
+  if (value && typeof value === "object" && typeof (value as { toISOString?: unknown }).toISOString === "function") {
+    try {
+      const iso = (value as Date).toISOString();
+      return typeof iso === "string" ? iso : "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function pickEventInstant(slot: unknown): { iso: string; allDay: boolean } | null {
+  if (!slot || typeof slot !== "object") return null;
+  const rec = slot as { dateTime?: unknown; date?: unknown };
+  const dateTime = asIsoTimestamp(rec.dateTime);
+  if (dateTime) return { iso: dateTime, allDay: false };
+  const dateOnly = typeof rec.date === "string" ? rec.date.trim() : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return { iso: `${dateOnly}T00:00:00`, allDay: true };
+  return null;
+}
+
+function attendeeCount(raw: unknown): number {
+  if (!raw) return 0;
+  if (Array.isArray(raw)) return raw.length;
+  if (typeof raw === "object") return Object.keys(raw as object).length;
+  return 0;
+}
+
+/**
+ * One parser for Calendar page, Ara list/search, delete, and reschedule.
+ * Never throws. One unusual Google event is skipped instead of failing the whole calendar.
+ */
+export function normalizeGoogleCalendarEvent(raw: unknown): GoogleCalEvent | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const item = raw as {
+    id?: unknown;
+    summary?: unknown;
+    status?: unknown;
+    htmlLink?: unknown;
+    location?: unknown;
+    description?: unknown;
+    attendees?: unknown;
+    start?: unknown;
+    end?: unknown;
+  };
+  const id = String(item.id || "").trim();
+  if (!id) return null;
+  const status = String(item.status || "confirmed").toLowerCase();
+  if (status === "cancelled") return null;
+  const start = pickEventInstant(item.start);
+  if (!start) return null;
+  const end = pickEventInstant(item.end);
+  const titleRaw = typeof item.summary === "string" ? item.summary.trim() : "";
+  const htmlLink = typeof item.htmlLink === "string" ? item.htmlLink : undefined;
+  const location = typeof item.location === "string" ? item.location : undefined;
+  const description = typeof item.description === "string" ? item.description : undefined;
+  return {
+    id,
+    title: titleRaw || "(No title)",
+    start: start.iso,
+    end: end?.iso || start.iso,
+    status: status || "confirmed",
+    htmlLink,
+    attendees: attendeeCount(item.attendees),
+    location,
+    description,
+    allDay: start.allDay,
+  };
+}
+
+export function compareEventStart(a: { start: unknown }, b: { start: unknown }): number {
+  const as = Date.parse(asIsoTimestamp(a.start)) || 0;
+  const bs = Date.parse(asIsoTimestamp(b.start)) || 0;
+  return as - bs;
+}
+
+function itemsFromListJson(json: { items?: unknown }): unknown[] {
+  if (json.items == null) return [];
+  if (Array.isArray(json.items)) return json.items;
+  if (typeof json.items === "object") return Object.values(json.items as Record<string, unknown>);
+  return [];
+}
+
 export async function listEvents(
   accessToken: string,
   from: Date,
@@ -166,70 +267,79 @@ async function listEventsOnCalendar(
   | { ok: true; events: GoogleCalEvent[]; calendarId: string }
   | { ok: false; reason: string; code: CalendarListCode; httpStatus: number; googleReason: string; calendarId: string }
 > {
+  const events: GoogleCalEvent[] = [];
+  let pageToken = "";
+  let usedFields = true;
   try {
-    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
-    url.searchParams.set("timeMin", from.toISOString());
-    url.searchParams.set("timeMax", to.toISOString());
-    url.searchParams.set("singleEvents", "true");
-    url.searchParams.set("orderBy", "startTime");
-    url.searchParams.set("maxResults", "80");
-    url.searchParams.set("timeZone", "America/Chicago");
-    const res = await fetchImpl(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const raw = await res.text().catch(() => "");
-    if (!res.ok) {
-      const code = classifyCalendarListHttp(res.status, raw);
-      return {
-        ok: false,
-        reason: code === "CALENDAR_API_DISABLED" ? CALENDAR_API_DISABLED_MESSAGE : calendarListUserReason(code),
-        code,
-        httpStatus: res.status,
-        googleReason: googleErrorReason(raw),
-        calendarId,
-      };
+    for (let page = 0; page < LIST_MAX_PAGES; page += 1) {
+      const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
+      url.searchParams.set("timeMin", from.toISOString());
+      url.searchParams.set("timeMax", to.toISOString());
+      url.searchParams.set("singleEvents", "true");
+      url.searchParams.set("orderBy", "startTime");
+      url.searchParams.set("maxResults", String(LIST_PAGE_SIZE));
+      url.searchParams.set("timeZone", "America/Chicago");
+      if (usedFields) url.searchParams.set("fields", LIST_FIELDS);
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const res = await fetchImpl(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const raw = await res.text().catch(() => "");
+      if (!res.ok) {
+        if (usedFields && res.status === 400 && page === 0) {
+          usedFields = false;
+          page -= 1;
+          continue;
+        }
+        const code = classifyCalendarListHttp(res.status, raw);
+        if (events.length && code !== "CALENDAR_LIST_AUTH_FAILED") {
+          return { ok: true, events, calendarId };
+        }
+        return {
+          ok: false,
+          reason: code === "CALENDAR_API_DISABLED" ? CALENDAR_API_DISABLED_MESSAGE : calendarListUserReason(code),
+          code,
+          httpStatus: res.status,
+          googleReason: googleErrorReason(raw),
+          calendarId,
+        };
+      }
+      let json: { error?: { message?: string }; items?: unknown; nextPageToken?: unknown } = {};
+      try {
+        json = raw ? JSON.parse(raw) as { error?: { message?: string }; items?: unknown; nextPageToken?: unknown } : {};
+      } catch {
+        if (events.length) return { ok: true, events, calendarId };
+        return {
+          ok: false,
+          reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+          code: "CALENDAR_LIST_PARSE_FAILED",
+          httpStatus: res.status,
+          googleReason: raw.trim().startsWith("<") ? "html_body" : "invalid_json",
+          calendarId,
+        };
+      }
+      const pageItems = itemsFromListJson(json);
+      if (json.error && !pageItems.length && !events.length) {
+        return {
+          ok: false,
+          reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
+          code: "CALENDAR_LIST_PARSE_FAILED",
+          httpStatus: res.status,
+          googleReason: googleErrorReason(raw),
+          calendarId,
+        };
+      }
+      for (const item of pageItems) {
+        const event = normalizeGoogleCalendarEvent(item);
+        if (event) events.push(event);
+      }
+      pageToken = typeof json.nextPageToken === "string" ? json.nextPageToken : "";
+      if (!pageToken) break;
     }
-    let json: { error?: { message?: string }; items?: unknown } = {};
-    try {
-      json = raw ? JSON.parse(raw) as { error?: { message?: string }; items?: unknown } : {};
-    } catch {
-      return {
-        ok: false,
-        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
-        code: "CALENDAR_LIST_PARSE_FAILED",
-        httpStatus: res.status,
-        googleReason: "invalid_json",
-        calendarId,
-      };
-    }
-    if (json.error) {
-      return {
-        ok: false,
-        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
-        code: "CALENDAR_LIST_PARSE_FAILED",
-        httpStatus: res.status,
-        googleReason: googleErrorReason(raw),
-        calendarId,
-      };
-    }
-    const items = json.items == null ? [] : json.items;
-    if (!Array.isArray(items)) {
-      return {
-        ok: false,
-        reason: calendarListUserReason("CALENDAR_LIST_PARSE_FAILED"),
-        code: "CALENDAR_LIST_PARSE_FAILED",
-        httpStatus: res.status,
-        googleReason: "items_not_array",
-        calendarId,
-      };
-    }
-    const events: GoogleCalEvent[] = [];
-    for (const item of items as Parameters<typeof itemToEvent>[0][]) {
-      const event = itemToEvent(item);
-      if (event) events.push(event);
-    }
+    events.sort(compareEventStart);
     return { ok: true, events, calendarId };
   } catch {
+    if (events.length) return { ok: true, events, calendarId };
     return {
       ok: false,
       reason: calendarListUserReason("CALENDAR_LIST_UPSTREAM_5XX"),
@@ -420,43 +530,14 @@ export async function deleteEvent(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; alreadyGone?: boolean } | { ok: false; error: string; code: CalendarFailureCode }> {
   const id = encodeURIComponent(eventId);
-  const res = await fetchImpl(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}`, {
+  const res = await fetchImpl(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}?sendUpdates=none`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (res.status === 410 || res.status === 404) return { ok: true, alreadyGone: true };
-  if (res.ok) return { ok: true };
+  if (res.ok || res.status === 204) return { ok: true };
   const err = await readGoogleError(res);
   return { ok: false, error: calendarFailureReason(err.code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : err.code), code: err.code };
-}
-
-function itemToEvent(item: {
-  id?: string;
-  summary?: string;
-  status?: string;
-  htmlLink?: string;
-  location?: string;
-  description?: string;
-  attendees?: { email?: string }[];
-  start?: { dateTime?: string; date?: string; timeZone?: string };
-  end?: { dateTime?: string; date?: string; timeZone?: string };
-}): GoogleCalEvent | null {
-  if (!item.id) return null;
-  if ((item.status || "").toLowerCase() === "cancelled") return null;
-  const start = item.start?.dateTime || (item.start?.date ? `${item.start.date}T12:00:00` : "");
-  const end = item.end?.dateTime || item.end?.date || "";
-  if (!start) return null;
-  return {
-    id: item.id,
-    title: (item.summary || "(No title)").trim(),
-    start,
-    end: end || start,
-    status: item.status || "confirmed",
-    htmlLink: item.htmlLink,
-    attendees: Array.isArray(item.attendees) ? item.attendees.length : 0,
-    location: item.location,
-    description: item.description,
-  };
 }
 
 export async function getEvent(
@@ -476,8 +557,8 @@ export async function getEvent(
       const err = await readGoogleError(res);
       return { ok: false, reason: calendarFailureReason(err.code), code: err.code };
     }
-    const json = (await res.json()) as Parameters<typeof itemToEvent>[0] & { error?: { message?: string } };
-    const event = itemToEvent(json);
+    const json = await res.json().catch(() => null);
+    const event = normalizeGoogleCalendarEvent(json);
     if (!event) return { ok: false, missing: true, reason: "That event is already gone.", code: "FREEBUSY_BAD_REQUEST" };
     return { ok: true, event };
   } catch {
@@ -523,9 +604,9 @@ export async function patchEvent(
       const err = await readGoogleError(new Response(raw, { status: res.status }));
       return { ok: false, error: calendarFailureReason(err.code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : err.code), code: err.code };
     }
-    let json: Parameters<typeof itemToEvent>[0] = {};
-    try { json = raw ? JSON.parse(raw) as Parameters<typeof itemToEvent>[0] : {}; } catch { json = {}; }
-    const event = itemToEvent(json);
+    let json: unknown = {};
+    try { json = raw ? JSON.parse(raw) : {}; } catch { json = {}; }
+    const event = normalizeGoogleCalendarEvent(json);
     if (!event) return { ok: false, error: calendarFailureReason("EVENT_CREATE_FAILED"), code: "EVENT_CREATE_FAILED" };
     return { ok: true, event };
   } catch {

@@ -270,8 +270,13 @@ export function TestDesk({
     setBusy("");
   }
 
-  async function connectGoogle(kind: "gmail" | "calendar") {
+  async function connectGoogle(kind: "gmail" | "calendar", opts?: { reconnect?: boolean }) {
     if (busy) return;
+    const calendarConnected = Boolean(data?.calendarEmail) || data?.integration?.calendar_connected === true;
+    if (kind === "calendar" && calendarConnected && !opts?.reconnect) {
+      setGoogleMsg("Calendar is already connected. The existing connection was not changed.");
+      return;
+    }
     setBusy(kind);
     setGoogleErr("");
     setGoogleMsg("");
@@ -281,6 +286,7 @@ export function TestDesk({
     try {
       const r = await startGoogleOAuth(kind, {
         allowPopup: data?.integrations.googleOAuthClientId === "ready" && data?.integrations.googleOAuthClientSecret === "ready",
+        force: Boolean(opts?.reconnect),
       });
       setGoogleMissing(r.missing);
       setGoogleNext(r.next);
@@ -288,7 +294,9 @@ export function TestDesk({
       if (!r.ok) setGoogleErr(r.reason);
       else setGoogleMsg(r.reason);
     } catch {
-      setGoogleErr("Could not start Google sign-in. Nothing was connected.");
+      setGoogleErr(kind === "calendar"
+        ? "Could not start Google Calendar sign-in. The existing Calendar connection was not changed."
+        : "Could not start Google sign-in. Nothing was connected.");
     }
     setBusy("");
   }
@@ -387,14 +395,20 @@ export function TestDesk({
         ))}
         <p className="text-sm">{(data.worker?.detail || "Worker not configured").replace(/^[🟢🟡🔴✅❌]\s*/u, "")}</p>
         {data.gmailEmail ? <p className="mt-2 text-sm text-muted">Connected Gmail: {data.gmailEmail}</p> : null}
-        {data.calendarEmail ? <p className="text-sm text-muted">Connected Calendar: {data.calendarEmail}</p> : null}
+        {data.calendarEmail ? <p className="text-sm text-muted">Calendar connected{data.calendarEmail ? ` · ${data.calendarEmail}` : ""}</p> : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="la-btn la-btn-primary" disabled={Boolean(busy)} onClick={() => void connectGoogle("gmail")}>
-            {busy === "gmail" ? "Connecting…" : "Connect Gmail"}
+            {busy === "gmail" ? "Connecting…" : data.gmailEmail ? "Reconnect Gmail" : "Connect Gmail"}
           </button>
-          <button type="button" className="la-btn la-btn-ghost" disabled={Boolean(busy)} onClick={() => void connectGoogle("calendar")}>
-            {busy === "calendar" ? "Connecting…" : "Connect Google Calendar"}
-          </button>
+          {data.calendarEmail || data.integration?.calendar_connected ? (
+            <button type="button" className="la-btn la-btn-quiet" disabled={Boolean(busy)} onClick={() => void connectGoogle("calendar", { reconnect: true })}>
+              {busy === "calendar" ? "Connecting…" : "Reconnect Calendar"}
+            </button>
+          ) : (
+            <button type="button" className="la-btn la-btn-ghost" disabled={Boolean(busy)} onClick={() => void connectGoogle("calendar")}>
+              {busy === "calendar" ? "Connecting…" : "Connect Google Calendar"}
+            </button>
+          )}
         </div>
         {googleErr ? (
           <div className="la-ribbon la-ribbon-bad mt-3" data-testid="google-connect-err">

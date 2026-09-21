@@ -25,7 +25,7 @@ import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilter
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
@@ -65,7 +65,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatLong, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldAllowCalendarNavigation, shouldAllowCalendarViewChange, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, calendarCommandFingerprint, extractOwnerFollowupTitle, isConversationalAside, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerBulkCancelledSpeech, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseBulkScopeAnswer, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldAllowCalendarNavigation, shouldAllowCalendarViewChange, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -324,13 +324,20 @@ export function OwnerDesk() {
     setPendingOwnerCal(next);
   }
   const pendingCalManageRef = useRef<{
-    kind: "delete" | "update";
-    eventId: string;
-    title: string;
+    kind: "delete" | "update" | "bulk_scope" | "bulk_confirm";
+    eventId?: string;
+    title?: string;
     when?: string;
     newTime?: string;
     newTitle?: string;
+    horizon?: "unspecified" | "future" | "range" | "all";
+    filter?: "all" | "personal" | "sales" | "test";
+    bulkActionId?: string;
+    eventIds?: string[];
+    completedIds?: string[];
+    count?: number;
   } | null>(null);
+  const calendarTurnRef = useRef<{ key: string; output: Record<string, unknown>; at: number } | null>(null);
   const [layout, setLayout] = useState<HomeLayout>(DEFAULT_HOME_LAYOUT);
   const [visual, setVisual] = useState<VisualTheme>(DEFAULT_VISUAL_THEME);
   const [chrome, setChrome] = useState<DesignChrome>(DEFAULT_CHROME);
@@ -1147,7 +1154,7 @@ export function OwnerDesk() {
         setCalConnected(Boolean(r.connected));
       })
       .catch(() => {
-        setCalReason("Google Calendar returned a response Lamb Ascension couldn’t parse. (CALENDAR_LIST_PARSE_FAILED)");
+        setCalReason("Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it.");
         setCalEvents([]);
       })
       .finally(() => setCalLoading(false));
@@ -1279,14 +1286,18 @@ export function OwnerDesk() {
     }
   }
 
-  async function connectGoogle(kind: "gmail" | "calendar") {
+  async function connectGoogle(kind: "gmail" | "calendar", opts?: { reconnect?: boolean }) {
     setGoogleErr("");
     setGoogleMsg("");
     setGoogleMissing([]);
     setGoogleNext("");
     setGoogleUrl("");
+    if (kind === "calendar" && google.calendar === "connected" && !opts?.reconnect) {
+      setGoogleMsg("Calendar is already connected. The existing connection was not changed.");
+      return;
+    }
     try {
-      const res = await startGoogleOAuth(kind, { allowPopup: google.configured });
+      const res = await startGoogleOAuth(kind, { allowPopup: google.configured, force: Boolean(opts?.reconnect) });
       setGoogleMissing(res.missing);
       setGoogleNext(res.next);
       if (res.url) setGoogleUrl(res.url);
@@ -1297,7 +1308,9 @@ export function OwnerDesk() {
       }
       setGoogleMsg(res.reason);
     } catch {
-      setGoogleErr("Could not start Google sign-in. Nothing was connected.");
+      setGoogleErr(kind === "calendar"
+        ? "Could not start Google Calendar sign-in. The existing Calendar connection was not changed."
+        : "Could not start Google sign-in. Nothing was connected.");
     }
   }
 
@@ -1506,6 +1519,19 @@ export function OwnerDesk() {
     };
   }
 
+  function rememberCalendarTurn(key: string, output: Record<string, unknown>) {
+    calendarTurnRef.current = { key, output, at: Date.now() };
+    return output;
+  }
+
+  function existingCalendarTurn(key: string): Record<string, unknown> | null {
+    const hit = calendarTurnRef.current;
+    if (!hit) return null;
+    if (Date.now() - hit.at > 20_000) return null;
+    if (hit.key !== key) return null;
+    return { ...hit.output, already_spoken: true };
+  }
+
   async function hydrateAraOutput(name: string, result: ToolResult): Promise<Record<string, unknown>> {
     if (result.plan.type === "web_research" || result.plan.type === "read_page") {
       try {
@@ -1650,14 +1676,66 @@ export function OwnerDesk() {
       }
     }
     if (result.plan.type === "owner_calendar_list") {
+      const key = calendarCommandFingerprint("list", `${result.plan.when || ""}|${result.plan.title || ""}`);
+      const cached = existingCalendarTurn(key);
+      if (cached) return cached;
       try {
         const r = await listOwnerCalendarEventsFn({ data: { when: result.plan.when, title: result.plan.title } });
-        return { ...result.output, ...r, spoken: r.spoken };
+        return rememberCalendarTurn(key, { ...result.output, ...r, spoken: r.spoken, already_spoken: true });
       } catch {
-        return { ok: false, listed: false, spoken: "Google Calendar returned a response Lamb Ascension couldn’t parse. (CALENDAR_LIST_PARSE_FAILED)" };
+        return rememberCalendarTurn(key, { ok: false, listed: false, spoken: "I couldn't read your Google Calendar.", already_spoken: true });
+      }
+    }
+    if (result.plan.type === "owner_calendar_bulk_delete") {
+      const key = calendarCommandFingerprint(
+        "bulk",
+        `${result.plan.horizon}|${result.plan.filter}|${result.plan.when || ""}|${result.plan.confirm ? "go" : "ask"}|${(result.plan.eventIds || []).join(",")}`,
+      );
+      const cached = existingCalendarTurn(key);
+      if (cached) return cached;
+      try {
+        const r = await deleteOwnerCalendarEventsBulkFn({
+          data: {
+            when: result.plan.when,
+            horizon: result.plan.horizon,
+            filter: result.plan.filter,
+            confirm: result.plan.confirm,
+            bulkActionId: result.plan.bulkActionId,
+            eventIds: result.plan.eventIds,
+            completedIds: result.plan.completedIds,
+          },
+        });
+        if ("needsScope" in r && r.needsScope) {
+          pendingCalManageRef.current = {
+            kind: "bulk_scope",
+            when: result.plan.when,
+            filter: result.plan.filter,
+            horizon: "unspecified",
+          };
+        } else if ("needsConfirm" in r && r.needsConfirm) {
+          pendingCalManageRef.current = {
+            kind: "bulk_confirm",
+            when: result.plan.when,
+            filter: result.plan.filter,
+            horizon: result.plan.horizon,
+            bulkActionId: r.bulkActionId,
+            eventIds: r.eventIds,
+            count: r.count,
+          };
+        } else if (r.ok && r.deleted) {
+          pendingCalManageRef.current = null;
+          refreshCalendarAgenda();
+          void refreshProspectsAndSales();
+        }
+        return rememberCalendarTurn(key, { ...result.output, ...r, already_spoken: true, terminal: "terminal" in r ? r.terminal : undefined });
+      } catch {
+        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed.", already_spoken: true, terminal: "FAILED" });
       }
     }
     if (result.plan.type === "owner_calendar_delete") {
+      const key = calendarCommandFingerprint("delete", `${result.plan.eventId || ""}|${result.plan.title || ""}|${result.plan.when || ""}|${result.plan.confirm ? "1" : "0"}`);
+      const cached = existingCalendarTurn(key);
+      if (cached) return cached;
       try {
         const r = await deleteOwnerCalendarEventFn({
           data: {
@@ -1680,9 +1758,9 @@ export function OwnerDesk() {
         if ("needsConfirm" in r && r.needsConfirm && r.eventId) {
           pendingCalManageRef.current = { kind: "delete", eventId: r.eventId, title: r.title, when: result.plan.when };
         }
-        return { ...result.output, ...r };
+        return rememberCalendarTurn(key, { ...result.output, ...r, already_spoken: true });
       } catch {
-        return { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed." };
+        return rememberCalendarTurn(key, { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed.", already_spoken: true });
       }
     }
     if (result.plan.type === "owner_calendar_update") {
@@ -1732,8 +1810,41 @@ export function OwnerDesk() {
 
   async function runOwnerPersonalCalendar(text: string): Promise<boolean> {
     const pendingManage = pendingCalManageRef.current;
-    if (pendingManage && isOwnerCalendarConfirmYes(text)) {
+    if (pendingManage?.kind === "bulk_scope") {
+      const scope = parseBulkScopeAnswer(text);
+      if (scope) {
+        araRef.current?.cancelResponse();
+        const result = executeAllowlistedTool("delete_owner_calendar_events_bulk", {
+          when: pendingManage.when,
+          horizon: scope === "all" ? "all" : "future",
+          filter: pendingManage.filter || "all",
+          confirm: false,
+        }, araDesk(), "owner_session");
+        const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
+        utter(String(output.spoken || ownerBulkCancelledSpeech()), "TOOL_RESULT");
+        return true;
+      }
+    }
+    if (pendingManage && (pendingManage.kind === "bulk_confirm" || pendingManage.kind === "delete" || pendingManage.kind === "update") && isOwnerCalendarConfirmYes(text)) {
       araRef.current?.cancelResponse();
+      const turnKey = calendarCommandFingerprint("confirm", text);
+      if (existingCalendarTurn(turnKey)) return true;
+      if (pendingManage.kind === "bulk_confirm") {
+        pendingCalManageRef.current = null;
+        const result = executeAllowlistedTool("delete_owner_calendar_events_bulk", {
+          when: pendingManage.when,
+          horizon: pendingManage.horizon || "future",
+          filter: pendingManage.filter || "all",
+          confirm: true,
+          bulk_action_id: pendingManage.bulkActionId,
+          event_ids: pendingManage.eventIds,
+          completed_ids: pendingManage.completedIds,
+        }, araDesk(), "owner_session");
+        const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
+        rememberCalendarTurn(turnKey, output);
+        utter(String(output.spoken || "I didn't delete anything."), "TOOL_RESULT");
+        return true;
+      }
       pendingCalManageRef.current = null;
       const tool = pendingManage.kind === "delete" ? "delete_owner_calendar_event" : "update_owner_calendar_event";
       const result = executeAllowlistedTool(tool, {
@@ -1745,13 +1856,14 @@ export function OwnerDesk() {
         confirm: true,
       }, araDesk(), "owner_session");
       const output = await hydrateAraOutput(tool, result);
+      rememberCalendarTurn(turnKey, output);
       utter(String(output.spoken || "I couldn't update that event, so nothing changed."), "TOOL_RESULT");
       return true;
     }
     if (pendingManage && isOwnerCalendarConfirmNo(text)) {
       araRef.current?.cancelResponse();
       pendingCalManageRef.current = null;
-      utter("Okay, I left it on your calendar.", "TOOL_RESULT");
+      utter(pendingManage.kind === "bulk_confirm" || pendingManage.kind === "bulk_scope" ? ownerBulkCancelledSpeech() : "Okay, I left it on your calendar.", "TOOL_RESULT");
       return true;
     }
 
@@ -1764,12 +1876,30 @@ export function OwnerDesk() {
 
     const manage = parseOwnerCalendarManage(text);
     if (manage.kind !== "none") {
+      const turnKey = calendarCommandFingerprint(manage.kind, text);
+      if (existingCalendarTurn(turnKey)) {
+        araRef.current?.cancelResponse();
+        return true;
+      }
       pendingCalManageRef.current = null;
       araRef.current?.cancelResponse();
       if (manage.kind === "list") {
         const result = executeAllowlistedTool("list_owner_calendar_events", { when: manage.when, title: manage.title }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("list_owner_calendar_events", result);
+        rememberCalendarTurn(turnKey, output);
         utter(String(output.spoken || "I couldn’t read your Google Calendar."), "TOOL_RESULT");
+        return true;
+      }
+      if (manage.kind === "bulk_delete") {
+        const result = executeAllowlistedTool("delete_owner_calendar_events_bulk", {
+          when: manage.when,
+          horizon: manage.horizon,
+          filter: manage.filter,
+          confirm: false,
+        }, araDesk(), "owner_session");
+        const output = await hydrateAraOutput("delete_owner_calendar_events_bulk", result);
+        rememberCalendarTurn(turnKey, output);
+        utter(String(output.spoken || "I didn't delete anything."), "TOOL_RESULT");
         return true;
       }
       if (manage.kind === "delete") {
@@ -1780,6 +1910,7 @@ export function OwnerDesk() {
           event_id: manage.lastEvent ? lastOwnerEventRef.current?.id : undefined,
         }, araDesk(), "owner_session");
         const output = await hydrateAraOutput("delete_owner_calendar_event", result);
+        rememberCalendarTurn(turnKey, output);
         utter(String(output.spoken || "I couldn't find a matching event, so I didn't delete anything."), "TOOL_RESULT");
         return true;
       }
@@ -1792,6 +1923,7 @@ export function OwnerDesk() {
         new_title: manage.newTitle,
       }, araDesk(), "owner_session");
       const output = await hydrateAraOutput("update_owner_calendar_event", result);
+      rememberCalendarTurn(turnKey, output);
       utter(String(output.spoken || "I couldn't update that event, so nothing changed."), "TOOL_RESULT");
       return true;
     }
@@ -2764,8 +2896,16 @@ export function OwnerDesk() {
           <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? `Gmail connected${google.gmailEmail ? ` · ${google.gmailEmail}` : ""}` : google.gmail === "attention" ? "Gmail needs attention" : google.gmail === "unknown" ? "Checking Gmail…" : "Gmail not connected"}</p>
           <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? `Calendar connected${google.calendarEmail ? ` · ${google.calendarEmail}` : ""}` : google.calendar === "attention" ? "Calendar needs attention" : google.calendar === "unknown" ? "Checking Calendar…" : "Calendar not connected"}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
-            <button type="button" className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>
+            {google.gmail === "connected" ? (
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => void connectGoogle("gmail")}>Reconnect Gmail</button>
+            ) : (
+              <button type="button" className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
+            )}
+            {google.calendar === "connected" ? (
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => void connectGoogle("calendar", { reconnect: true })}>Reconnect Calendar</button>
+            ) : (
+              <button type="button" className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>
+            )}
           </div>
           {googleErr ? (
             <div className="la-ribbon la-ribbon-bad mt-3">

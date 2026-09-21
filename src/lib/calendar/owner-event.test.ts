@@ -40,6 +40,12 @@ import {
   ownerUpdateSuccessSpeech,
   ownerAmbiguousSpeech,
   ownerSalesDeleteConfirmSpeech,
+  isOwnerCalendarConfirmYes,
+  parseBulkScopeAnswer,
+  ownerBulkScopeQuestion,
+  ownerBulkConfirmSpeech,
+  ownerBulkSuccessSpeech,
+  calendarCommandFingerprint,
 } from "./owner-event.ts";
 
 /** Sunday, Sep 20, 2026 11:05 AM CDT */
@@ -444,5 +450,51 @@ describe("owner calendar manage speech", () => {
     assert.match(ownerDeleteSuccessSpeech("Dentist appointment"), /removed/);
     assert.match(ownerUpdateSuccessSpeech("Dentist appointment", "tomorrow at 4:00 PM"), /moved/);
     assert.match(ownerSalesDeleteConfirmSpeech("Sales call", 1), /booked sales call/);
+  });
+
+  it("treats delete everything as bulk, not a single-event match", () => {
+    const bulk = parseOwnerCalendarManage("Delete everything from my calendar.");
+    assert.equal(bulk.kind, "bulk_delete");
+    if (bulk.kind === "bulk_delete") {
+      assert.equal(bulk.horizon, "unspecified");
+      assert.equal(bulk.filter, "all");
+    }
+    const tomorrow = parseOwnerCalendarManage("Delete all events tomorrow.");
+    assert.equal(tomorrow.kind, "bulk_delete");
+    if (tomorrow.kind === "bulk_delete") {
+      assert.equal(tomorrow.horizon, "range");
+      assert.match(tomorrow.when, /tomorrow/i);
+    }
+    const future = parseOwnerCalendarManage("Delete all future personal events.");
+    assert.equal(future.kind, "bulk_delete");
+    if (future.kind === "bulk_delete") {
+      assert.equal(future.horizon, "future");
+      assert.equal(future.filter, "personal");
+    }
+    const sales = parseOwnerCalendarManage("Cancel all Lamb Ascension calls tomorrow.");
+    assert.equal(sales.kind, "bulk_delete");
+    if (sales.kind === "bulk_delete") assert.equal(sales.filter, "sales");
+    const tests = parseOwnerCalendarManage("Delete all my test events tomorrow.");
+    assert.equal(tests.kind, "bulk_delete");
+    if (tests.kind === "bulk_delete") assert.equal(tests.filter, "test");
+    const single = parseOwnerCalendarManage("Delete my Calendar Test tomorrow at 3.");
+    assert.equal(single.kind, "delete");
+    if (single.kind === "delete") assert.match(single.title, /calendar test/i);
+    assert.equal(parseOwnerCalendarManage("Clear my calendar.").kind, "bulk_delete");
+  });
+
+  it("bulk confirmation and scope answers stay deterministic", () => {
+    assert.equal(isOwnerCalendarConfirmYes("Yes, delete all 18."), true);
+    assert.equal(isOwnerCalendarConfirmYes("delete all 18"), true);
+    assert.equal(isOwnerCalendarConfirmYes("go ahead, delete them"), true);
+    assert.equal(parseBulkScopeAnswer("all future events"), "future");
+    assert.equal(parseBulkScopeAnswer("every past and future event on this calendar"), "all");
+    assert.match(ownerBulkScopeQuestion(), /future events/);
+    assert.match(ownerBulkConfirmSpeech({ count: 18, sales: 2, guests: 3, label: "future events" }), /18 events/);
+    assert.match(ownerBulkConfirmSpeech({ count: 18, sales: 2, guests: 3, label: "future events" }), /2 Lamb Ascension sales calls/);
+    assert.match(ownerBulkConfirmSpeech({ count: 18, sales: 2, guests: 3, label: "future events" }), /3 of those events have attendees/);
+    assert.match(ownerBulkSuccessSpeech(18, 0), /removed 18/);
+    const fp = calendarCommandFingerprint("delete", "Delete everything from my calendar.");
+    assert.equal(fp, calendarCommandFingerprint("delete", "delete everything from my calendar"));
   });
 });

@@ -182,6 +182,7 @@ describe("Ara allowlisted tools", () => {
     assert.equal(isAllowedTool("create_owner_calendar_event"), true);
     assert.equal(isAllowedTool("list_owner_calendar_events"), true);
     assert.equal(isAllowedTool("delete_owner_calendar_event"), true);
+    assert.equal(isAllowedTool("delete_owner_calendar_events_bulk"), true);
     assert.equal(isAllowedTool("update_owner_calendar_event"), true);
     const missingTime = executeAllowlistedTool("create_owner_calendar_event", { title: "Dentist appointment", when: "tomorrow" }, desk);
     assert.equal(missingTime.ok, false);
@@ -274,6 +275,16 @@ describe("Ara allowlisted tools", () => {
       assert.match(String(del.plan.title), /dentist/i);
     }
 
+    const bulk = executeAllowlistedTool("delete_owner_calendar_event", { title: "Delete everything from my calendar" }, desk);
+    assert.equal(bulk.plan.type, "owner_calendar_bulk_delete");
+    const bulkDirect = executeAllowlistedTool("delete_owner_calendar_events_bulk", { when: "tomorrow", horizon: "range", filter: "test" }, desk);
+    assert.equal(bulkDirect.plan.type, "owner_calendar_bulk_delete");
+    if (bulkDirect.plan.type === "owner_calendar_bulk_delete") {
+      assert.equal(bulkDirect.plan.filter, "test");
+      assert.equal(bulkDirect.plan.horizon, "range");
+      assert.notEqual(bulkDirect.plan.confirm, true);
+    }
+
     const move = executeAllowlistedTool("update_owner_calendar_event", {
       title: "Move my dentist appointment from 2 PM to 4 PM tomorrow",
     }, desk);
@@ -287,7 +298,7 @@ describe("Ara allowlisted tools", () => {
     const text = buildAraInstructions({ ...desk, timezone: "America/Chicago" });
     assert.match(text, /create_owner_calendar_event/);
     assert.match(text, /list_owner_calendar_events/);
-    assert.match(text, /delete_owner_calendar_event/);
+    assert.match(text, /delete_owner_calendar_events_bulk/);
     assert.match(text, /update_owner_calendar_event/);
     assert.match(text, /Do NOT use schedule_call for personal reminders/i);
     assert.match(text, /Owner timezone: America\/Chicago/);
