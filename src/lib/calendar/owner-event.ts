@@ -302,7 +302,7 @@ export function resolveOwnerWhen(input: ResolveOwnerWhenInput): ResolveOwnerWhen
 }
 
 const SALES_BOOKING_RE = /\b(schedule|book)\s+(them|it|the call|a (sales )?call|this (call|company|prospect)|the meeting)\b/i;
-const VIEW_CALENDAR_RE = /\b(pull up|show( me)?|open|go to)\s+(my |the )?calendar\b|\bwhat(?:'s| is) on my calendar\b|\bwhat (?:do i have|have i got|calls do i have)\b/i;
+const VIEW_CALENDAR_RE = /\b(pull up|show( me)?|open|go to)\s+(my |the )?calendar\b/i;
 const PERSONAL_HINT_RE = new RegExp(
   [
     String.raw`\bremind me\b`,
@@ -326,6 +326,7 @@ export function isPersonalCalendarCommand(raw: string): boolean {
   if (!lower) return false;
   if (SALES_BOOKING_RE.test(lower)) return false;
   if (VIEW_CALENDAR_RE.test(lower) && !/\b(remind|reminder|add |put |set a )\b/.test(lower)) return false;
+  if (isOwnerCalendarManageCommand(raw)) return false;
   if (PERSONAL_HINT_RE.test(lower)) return true;
   return /\bon my calendar\b/.test(lower) && /\b(remind|reminder|add|put|set|schedule)\b/.test(lower);
 }
@@ -398,6 +399,7 @@ export function shouldSilenceAraForOwnerCalendar(
   const t = (raw || "").trim();
   if (!t) return false;
   if (/\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(t)) return true;
+  if (isOwnerCalendarManageCommand(t)) return true;
   if (isPersonalCalendarCommand(t)) return true;
   if (pending && isOwnerCalendarFollowupTime(t)) return true;
   return false;
@@ -410,6 +412,9 @@ export function isOwnerCalendarRefusalSpeech(raw: string): boolean {
   if (/i('ll| will) prepare that calendar booking/.test(t)) return true;
   if (/don'?t have a tool to add personal (reminders|events)/.test(t)) return true;
   if (/i can open your calendar or help with sales call bookings/.test(t)) return true;
+  if (/only the ones i created( myself)?/.test(t)) return true;
+  if (/can'?t delete or remove anything from your google calendar/.test(t)) return true;
+  if (/only calendar tool i have is for adding/.test(t)) return true;
   return false;
 }
 
@@ -440,4 +445,255 @@ export function ownerEventFailureSpeech(): string {
 export function ownerEventSpeechFromState(last: LastOwnerEvent | null | undefined): string {
   if (!last) return "I haven’t added a personal calendar event this session.";
   return `I added ‘${last.title}’ to your calendar for ${last.whenLabel}.`;
+}
+
+const LAST_EVENT_RE = /\b(the event i just added|the one i just (added|put|created)|what you just (added|put)|that event i just added)\b/i;
+const LIST_MANAGE_RE = /\bwhat (do i have|have i got)\b|\bwhat(?:'s| is) on my calendar\b|\bshow (me )?(my )?(events|calendar events)\b|\bwhat(?:'s| is) on (the )?calendar\b/i;
+const DELETE_MANAGE_RE = /\b(delete|remove)\b|\bcancel (the |my |this )?(event|appointment|reminder|meeting|dentist|gym|lunch|bank|call)\b/i;
+const UPDATE_MANAGE_RE = /\b(move|reschedule)\b|\bchange\b.{0,80}\b(to |from )\b|\brename\b/i;
+const CAL_NOUN_RE = /\b(event|appointment|reminder|meeting|dentist|gym|lunch|bank|calendar|insurance)\b/;
+const MOVE_TIME_RE = /\b(to|at|from)\s+(\d{1,2}|noon|midnight)/i;
+
+export type OwnerCalendarManage =
+  | { kind: "none" }
+  | {
+      kind: "list" | "delete" | "update";
+      title: string;
+      when: string;
+      lastEvent: boolean;
+      newTime?: string;
+      newTitle?: string;
+    };
+
+function isBareCalendarNavigate(t: string): boolean {
+  return VIEW_CALENDAR_RE.test(t) && !/\b(tomorrow|today|tonight|afternoon|morning|evening|this week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(t) && !/\bevents\b/.test(t);
+}
+
+export function isOwnerCalendarManageCommand(raw: string): boolean {
+  const t = stripWakeWord(raw).toLowerCase();
+  if (!t || SALES_BOOKING_RE.test(t)) return false;
+  if (/^(cancel that|never mind|cancel it|forget it)$/.test(t)) return false;
+  if (isBareCalendarNavigate(t)) return false;
+  if (LIST_MANAGE_RE.test(t)) return true;
+  if (DELETE_MANAGE_RE.test(t) && (CAL_NOUN_RE.test(t) || LAST_EVENT_RE.test(t))) return true;
+  if (/\b(pipeline|home|background|overlay|focal|widget|image|preset)\b/.test(t)) return false;
+  if (/\brename\b/.test(t)) return true;
+  if (/\b(move|reschedule)\b/.test(t) && (CAL_NOUN_RE.test(t) || LAST_EVENT_RE.test(t) || MOVE_TIME_RE.test(t) || /\b(that|it)\b/.test(t))) return true;
+  if (/\bchange\b/.test(t) && /\b(to|from)\b/.test(t) && (CAL_NOUN_RE.test(t) || MOVE_TIME_RE.test(t))) return true;
+  return false;
+}
+
+export function parseOwnerCalendarManage(raw: string): OwnerCalendarManage {
+  const stripped = stripWakeWord(raw);
+  const t = stripped.toLowerCase();
+  if (!isOwnerCalendarManageCommand(stripped)) return { kind: "none" };
+  let lastEvent = LAST_EVENT_RE.test(t);
+  let kind: "list" | "delete" | "update" = "list";
+  if (DELETE_MANAGE_RE.test(t) && !UPDATE_MANAGE_RE.test(t)) kind = "delete";
+  else if (UPDATE_MANAGE_RE.test(t)) kind = "update";
+  else if (LIST_MANAGE_RE.test(t)) kind = "list";
+  else if (DELETE_MANAGE_RE.test(t)) kind = "delete";
+
+  const fromTo = stripped.match(/\bfrom\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?|noon|midnight)\s+to\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|noon|midnight)\b/i);
+  const toTime = stripped.match(/\b(?:to|at)\s+(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|noon|midnight)\b/i);
+  const rename = stripped.match(/\brename\s+['"“”‘’]?(.+?)['"“”‘’]?\s+to\s+['"“”‘’]?(.+?)['"“”‘’]?\s*$/i);
+
+  let title = "";
+  if (rename?.[1] && kind === "update") title = rename[1];
+  else {
+    title = stripped
+      .replace(/^(please\s+)/i, "")
+      .replace(/^(delete|remove|cancel|move|reschedule|change|rename)\s+(the |my |this )?/i, "")
+      .replace(/\b(from my calendar|on my calendar|from the calendar)\b/gi, " ");
+    title = tidyOwnerTitle(stripWhenFromTitle(title));
+    title = title.replace(/\b(from|to)\b/gi, " ").replace(/\s+/g, " ").trim();
+  }
+  if (/^(event|appointment|reminder|meeting|one|that|it|this)$/i.test(title)) {
+    if (/^(that|it|this)$/i.test(title)) lastEvent = true;
+    title = "";
+  }
+
+  const newTitle = rename?.[2] ? tidyOwnerTitle(rename[2]) : undefined;
+  const newTime = kind === "update" ? (fromTo?.[2] || (rename ? undefined : toTime?.[1]) || undefined) : undefined;
+  const when = fromTo?.[1] ? stripped.replace(fromTo[0], `at ${fromTo[1]}`) : stripped;
+
+  return {
+    kind,
+    title,
+    when,
+    lastEvent,
+    newTime: newTime ? String(newTime) : undefined,
+    newTitle,
+  };
+}
+
+export type OwnerWindow = {
+  ok: true;
+  from: Date;
+  to: Date;
+  label: string;
+  start?: Date;
+  hasClock: boolean;
+};
+
+export function resolveOwnerWindow(input: { when?: string; timezone?: string; now?: Date }): OwnerWindow | { ok: false } {
+  const timezone = input.timezone || OWNER_TZ_DEFAULT;
+  const now = input.now || new Date();
+  const blob = (input.when || "").trim();
+  const today = ymdInTimezone(now, timezone);
+  const dated = parseDateYmd(blob, today, timezone);
+  const clock = parseClock(blob, { tonight: /\btonight\b/i.test(blob) });
+  const afternoon = /\bafternoon\b/i.test(blob);
+  const morning = /\bmorning\b/i.test(blob);
+  const evening = /\b(evening|tonight)\b/i.test(blob);
+  const week = /\bthis week\b/i.test(blob);
+
+  if (week) {
+    return { ok: true, from: now, to: new Date(now.getTime() + 7 * 86400000), label: "this week", hasClock: false };
+  }
+
+  let ymd = dated?.ymd || today;
+  if (!dated && clock) {
+    const todayStart = fromZonedLocal(Number(today.slice(0, 4)), Number(today.slice(5, 7)), Number(today.slice(8, 10)), clock.hour, clock.minute, timezone);
+    ymd = todayStart.getTime() > now.getTime() ? today : addDaysYmd(today, 1);
+  }
+  const [y, m, d] = ymd.split("-").map(Number);
+  const label = dated?.label || (ymd === today ? "today" : ymd === addDaysYmd(today, 1) ? "tomorrow" : ymd);
+
+  if (clock) {
+    const start = fromZonedLocal(y, m, d, clock.hour, clock.minute, timezone);
+    return {
+      ok: true,
+      from: new Date(start.getTime() - 90 * 60 * 1000),
+      to: new Date(start.getTime() + 90 * 60 * 1000),
+      label,
+      start,
+      hasClock: true,
+    };
+  }
+  if (afternoon) {
+    return { ok: true, from: fromZonedLocal(y, m, d, 12, 0, timezone), to: fromZonedLocal(y, m, d, 18, 0, timezone), label: `${label} afternoon`, hasClock: false };
+  }
+  if (morning) {
+    return { ok: true, from: fromZonedLocal(y, m, d, 5, 0, timezone), to: fromZonedLocal(y, m, d, 12, 0, timezone), label: `${label} morning`, hasClock: false };
+  }
+  if (evening) {
+    return { ok: true, from: fromZonedLocal(y, m, d, 17, 0, timezone), to: fromZonedLocal(y, m, d, 23, 59, timezone), label: evening && /\btonight\b/i.test(blob) ? "tonight" : `${label} evening`, hasClock: false };
+  }
+  return {
+    ok: true,
+    from: fromZonedLocal(y, m, d, 0, 0, timezone),
+    to: fromZonedLocal(y, m, d, 23, 59, timezone),
+    label,
+    hasClock: false,
+  };
+}
+
+export type ManageMatch<T extends { id: string; title: string; start: string }> = {
+  matches: T[];
+  ambiguous: boolean;
+};
+
+export function scoreCalendarMatch(event: { title: string; start: string }, query: { title?: string; startMs?: number; windowMs?: number }): number {
+  const et = event.title.toLowerCase();
+  const qt = (query.title || "").toLowerCase().replace(/\b(the|my|a|an|event|appointment|reminder|meeting|ones?)\b/g, " ").replace(/\s+/g, " ").trim();
+  let score = 0;
+  if (!qt) score += 1;
+  else if (et === qt) score += 10;
+  else if (et.includes(qt) || qt.includes(et)) score += 8;
+  else {
+    const tokens = qt.split(" ").filter((w) => w.length > 2);
+    const hits = tokens.filter((tok) => et.includes(tok));
+    if (!tokens.length) score += 1;
+    else if (hits.length === tokens.length) score += 6;
+    else if (hits.length) score += 2;
+    else return 0;
+  }
+  if (query.startMs != null) {
+    const t = Date.parse(event.start);
+    if (!Number.isFinite(t)) return 0;
+    const window = query.windowMs ?? 90 * 60 * 1000;
+    const delta = Math.abs(t - query.startMs);
+    if (delta > window) return 0;
+    score += Math.max(0, 5 - Math.floor(delta / (15 * 60 * 1000)));
+  }
+  return score;
+}
+
+export function pickCalendarMatches<T extends { id: string; title: string; start: string }>(
+  events: T[],
+  query: { title?: string; startMs?: number; windowMs?: number },
+): ManageMatch<T> {
+  const scored = events
+    .map((e) => ({ e, s: scoreCalendarMatch(e, query) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  if (!scored.length) return { matches: [], ambiguous: false };
+  const top = scored[0].s;
+  const strong = scored.filter((x) => x.s >= Math.max(query.title ? 6 : 1, top - 1));
+  if (strong.length > 1) return { matches: strong.map((x) => x.e), ambiguous: true };
+  return { matches: [scored[0].e], ambiguous: false };
+}
+
+export function formatEventWhen(startIso: string, timeZone: string, now: Date): string {
+  const d = new Date(startIso);
+  if (!Number.isFinite(d.getTime())) return startIso;
+  return formatOwnerWhen(d, timeZone, now);
+}
+
+export function ownerListSpeech(events: { title: string; start: string }[], label: string, timeZone: string, now: Date): string {
+  if (!events.length) return `Nothing on your calendar ${label}.`;
+  const bits = events.slice(0, 12).map((e) => `‘${e.title}’ ${formatEventWhen(e.start, timeZone, now)}`);
+  if (events.length === 1) return `${label[0].toUpperCase()}${label.slice(1)} you have ${bits[0]}.`;
+  return `${label[0].toUpperCase()}${label.slice(1)} you have ${events.length} events: ${bits.join("; ")}.`;
+}
+
+export function ownerDeleteSuccessSpeech(title: string): string {
+  return `Done — I removed ‘${title}’ from your calendar.`;
+}
+
+export function ownerDeleteMissingSpeech(): string {
+  return "I couldn't find a matching event, so I didn't delete anything.";
+}
+
+export function ownerUpdateSuccessSpeech(title: string, whenLabel: string): string {
+  return `Done — I moved ‘${title}’ to ${whenLabel}.`;
+}
+
+export function ownerUpdateFailureSpeech(): string {
+  return "I couldn't update that event, so nothing changed.";
+}
+
+export function ownerAmbiguousSpeech(events: { title: string; start: string }[], timeZone: string, now: Date, verb: "delete" | "change"): string {
+  const bits = events.slice(0, 4).map((e) => `${e.title} (${formatEventWhen(e.start, timeZone, now)})`);
+  return `I found ${events.length} events: ${bits.join(" and ")}. Which should I ${verb}?`;
+}
+
+export function ownerAlreadyGoneSpeech(): string {
+  return "That event is already gone.";
+}
+
+export function ownerSalesDeleteConfirmSpeech(title: string, attendees: number): string {
+  if (attendees > 0) {
+    return `This event is a booked sales call with an attendee. Deleting it may affect the prospect record. Do you want me to cancel ‘${title}’?`;
+  }
+  return `This event is a booked sales call. Deleting it may affect the prospect record. Do you want me to cancel ‘${title}’?`;
+}
+
+export function ownerGuestDeleteConfirmSpeech(title: string): string {
+  return `‘${title}’ has guests. Deleting it will not email them. Do you want me to remove it?`;
+}
+
+export function ownerSalesUpdateConfirmSpeech(title: string): string {
+  return `‘${title}’ is a booked sales call. Changing it may affect the prospect record. Do you want me to update it?`;
+}
+
+export function isOwnerCalendarConfirmYes(raw: string): boolean {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, "").trim();
+  return /^(yes|yeah|yep|do it|go ahead|please do|cancel it|delete it|remove it|confirm)$/.test(t);
+}
+
+export function isOwnerCalendarConfirmNo(raw: string): boolean {
+  const t = stripWakeWord(raw).toLowerCase().replace(/[?.!,]/g, "").trim();
+  return /^(no|nope|never mind|forget it|stop|don'?t|do not)$/.test(t);
 }

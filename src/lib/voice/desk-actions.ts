@@ -1327,6 +1327,9 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "availability": return { name: "AVAILABILITY" };
     case "next_call": return { name: "NEXT_CALL" };
     case "owner_calendar_event": return null;
+    case "owner_calendar_list": return null;
+    case "owner_calendar_delete": return null;
+    case "owner_calendar_update": return null;
     default: return null;
   }
 }

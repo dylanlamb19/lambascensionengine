@@ -14,6 +14,7 @@ import type { ScreenFact } from "./screen-context.ts";
 import {
   OWNER_TZ_DEFAULT,
   parseOwnerCalendarSpeech,
+  parseOwnerCalendarManage,
   resolveOwnerWhen,
   sanitizeOwnerTitle,
   type LastOwnerEvent,
@@ -72,6 +73,9 @@ export const ALLOWED_TOOLS = [
   "schedule_call",
   "create_owner_calendar_event",
   "get_last_owner_calendar_event",
+  "list_owner_calendar_events",
+  "delete_owner_calendar_event",
+  "update_owner_calendar_event",
   "send_email",
   "next_task",
   "previous_task",
@@ -176,6 +180,12 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   SET_REMINDER: "create_owner_calendar_event",
   ADD_REMINDER: "create_owner_calendar_event",
   GET_LAST_OWNER_CALENDAR_EVENT: "get_last_owner_calendar_event",
+  LIST_OWNER_CALENDAR_EVENTS: "list_owner_calendar_events",
+  DELETE_OWNER_CALENDAR_EVENT: "delete_owner_calendar_event",
+  UPDATE_OWNER_CALENDAR_EVENT: "update_owner_calendar_event",
+  REMOVE_CALENDAR_EVENT: "delete_owner_calendar_event",
+  CANCEL_CALENDAR_EVENT: "delete_owner_calendar_event",
+  RESCHEDULE_CALENDAR_EVENT: "update_owner_calendar_event",
   REARRANGE_HOME: "rearrange_home",
   HIDE_HOME_WIDGET: "hide_home_widget",
   SHOW_HOME_WIDGET: "show_home_widget",
@@ -383,6 +393,25 @@ export type ToolPlan =
       location?: string;
       requestId?: string;
     }
+  | { type: "owner_calendar_list"; when?: string }
+  | {
+      type: "owner_calendar_delete";
+      title?: string;
+      when?: string;
+      eventId?: string;
+      lastEvent?: boolean;
+      confirm?: boolean;
+    }
+  | {
+      type: "owner_calendar_update";
+      title?: string;
+      when?: string;
+      eventId?: string;
+      lastEvent?: boolean;
+      newTime?: string;
+      newTitle?: string;
+      confirm?: boolean;
+    }
   | { type: "calendar_today" }
   | { type: "calendar_next" }
   | { type: "calendar_prev" }
@@ -466,6 +495,9 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "schedule_call", description: "Prepare a PROSPECT sales-call booking. Does not book until the owner says Confirm schedule. Do NOT use this for personal reminders, dentist, gym, lunch, or bank errands.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "create_owner_calendar_event", description: "Create a PERSONAL event on Dylan’s Google Calendar. Use for reminders, appointments, gym, lunch, errands. Explicit voice commands like ‘add this to my calendar’ or ‘remind me on my calendar at 4 PM’ are authorization — do not ask for Confirm schedule. No attendees, no email, no prospect, no sales metrics. Resolve tomorrow/Friday/next Monday in the owner timezone. If the time is missing, do not invent one — omit the call or pass only the day so the tool can ask. Only report success after the tool returns created=true.", parameters: { type: "object", properties: { title: { type: "string", description: "Short event name. For ‘remind me to go to SouthState Bank and withdraw cash’, use ‘Go to SouthState Bank and withdraw cash’." }, when: { type: "string", description: "Relative phrase in the owner timezone, e.g. ‘tomorrow at 4 PM’, ‘Friday at noon’, ‘next Monday at 9’, ‘tonight at 7’." }, date: { type: "string" }, time: { type: "string" }, duration_minutes: { type: "number" }, description: { type: "string" }, location: { type: "string" }, request_id: { type: "string" } }, required: ["title"] } },
     { type: "function", name: "get_last_owner_calendar_event", description: "What personal calendar event Ara last created this session. Use when Dylan asks ‘what did you just add?’", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "list_owner_calendar_events", description: "List REAL events from Dylan’s connected Google Calendar. Use for ‘what do I have tomorrow’, ‘what’s on my calendar this afternoon’, ‘show my events Friday’. Resolve relative dates in the owner timezone. Do not invent events. Do not answer from stale UI state.", parameters: { type: "object", properties: { when: { type: "string", description: "Window in owner timezone, e.g. ‘tomorrow’, ‘this afternoon’, ‘Friday’, ‘tonight’." }, date: { type: "string" } } } },
+    { type: "function", name: "delete_owner_calendar_event", description: "Delete a REAL event on Dylan’s connected Google Calendar by Google event ID after lookup. Works for events Ara did NOT create. Explicit ‘delete/remove/cancel’ of a clearly identified personal event is authorization — do not ask again. If the event is a sales booking or has guests, the tool will ask for confirmation. Never invent an event ID. If zero matches, say nothing was deleted. If two or more match, ask which one.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, last_event: { type: "boolean", description: "true for ‘the event I just added’ / ‘that’" }, confirm: { type: "boolean", description: "true only after Dylan confirmed a sales/guest delete" } } } },
+    { type: "function", name: "update_owner_calendar_event", description: "Move, reschedule, or rename a REAL Google Calendar event by event ID. PATCH only the fields Dylan asked to change. Do not notify guests. Do not invent an event ID. Sales bookings require confirmation.", parameters: { type: "object", properties: { event_id: { type: "string" }, title: { type: "string" }, when: { type: "string" }, new_time: { type: "string" }, new_title: { type: "string" }, last_event: { type: "boolean" }, confirm: { type: "boolean" } } } },
     { type: "function", name: "send_email", description: "Prepare a first email. Does NOT send. Returns REQUIRES_CONFIRMATION. Owner must say Confirm send.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "next_task", description: "Move to the next owner task. Same as the Next button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "previous_task", description: "Move to the previous owner task.", parameters: { type: "object", properties: {} } },
@@ -1021,6 +1053,61 @@ export function executeAllowlistedTool(
         description: description || undefined,
         location: location || undefined,
         requestId: requestId || undefined,
+      },
+    };
+  }
+  if (tool === "list_owner_calendar_events") {
+    const parsed = parseOwnerCalendarManage(String(args.when || args.title || args.query || ""));
+    const when = String(args.when || args.date || args.time || (parsed.kind === "list" ? parsed.when : "") || "").trim();
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, listed: false },
+      plan: { type: "owner_calendar_list", when: when || undefined },
+    };
+  }
+  if (tool === "delete_owner_calendar_event") {
+    const speech = [args.title, args.when, args.query].filter((s) => typeof s === "string" && String(s).trim()).join(" ");
+    const parsed = parseOwnerCalendarManage(speech || String(args.title || ""));
+    const title = String(args.title || (parsed.kind !== "none" ? parsed.title : "") || "").trim();
+    const when = String(args.when || (parsed.kind !== "none" ? parsed.when : "") || "").trim();
+    const eventId = String(args.event_id || args.eventId || args.id || "").trim();
+    const lastEvent = args.last_event === true || args.lastEvent === true || (parsed.kind !== "none" && parsed.lastEvent);
+    const confirm = args.confirm === true;
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, deleted: false },
+      plan: {
+        type: "owner_calendar_delete",
+        title: title || undefined,
+        when: when || undefined,
+        eventId: eventId || undefined,
+        lastEvent: lastEvent || undefined,
+        confirm: confirm || undefined,
+      },
+    };
+  }
+  if (tool === "update_owner_calendar_event") {
+    const speech = [args.title, args.when, args.new_time, args.new_title, args.query].filter((s) => typeof s === "string" && String(s).trim()).join(" ");
+    const parsed = parseOwnerCalendarManage(speech || String(args.title || ""));
+    const title = String(args.title || (parsed.kind !== "none" ? parsed.title : "") || "").trim();
+    const when = String(args.when || (parsed.kind !== "none" ? parsed.when : "") || "").trim();
+    const eventId = String(args.event_id || args.eventId || args.id || "").trim();
+    const lastEvent = args.last_event === true || args.lastEvent === true || (parsed.kind !== "none" && parsed.lastEvent);
+    const newTime = String(args.new_time || args.newTime || args.time || (parsed.kind === "update" ? parsed.newTime : "") || "").trim();
+    const newTitle = String(args.new_title || args.newTitle || (parsed.kind === "update" ? parsed.newTitle : "") || "").trim();
+    const confirm = args.confirm === true;
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, updated: false },
+      plan: {
+        type: "owner_calendar_update",
+        title: title || undefined,
+        when: when || undefined,
+        eventId: eventId || undefined,
+        lastEvent: lastEvent || undefined,
+        newTime: newTime || undefined,
+        newTitle: newTitle || undefined,
+        confirm: confirm || undefined,
       },
     };
   }

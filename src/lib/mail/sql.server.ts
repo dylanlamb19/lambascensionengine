@@ -397,6 +397,72 @@ export async function findBookedCalendarEvent(
   return rows[0] || null;
 }
 
+export async function findBookedByGoogleEventId(
+  userId: string,
+  googleEventId: string,
+): Promise<BookedCalendarRow | null> {
+  const id = (googleEventId || "").trim();
+  if (!id) return null;
+  const sql = await getSql();
+  const rows = await sql<BookedCalendarRow>`
+    select id, prospect_uid, google_event_id, title, start_at, end_at, status, booking_token
+    from calendar_events
+    where user_id = ${userId} and google_event_id = ${id}
+    order by created_at desc
+    limit 1
+  `;
+  return rows[0] || null;
+}
+
+export async function cancelBookedCalendarEvent(
+  userId: string,
+  googleEventId: string,
+): Promise<BookedCalendarRow | null> {
+  const row = await findBookedByGoogleEventId(userId, googleEventId);
+  if (!row) return null;
+  const sql = await getSql();
+  await sql`
+    update calendar_events
+    set status = ${"cancelled"}
+    where user_id = ${userId} and google_event_id = ${googleEventId} and status = ${"booked"}
+  `;
+  const { getProspectByUid, upsertProspects } = await import("@/lib/prospects/repo.server");
+  const prospect = await getProspectByUid(userId, row.prospect_uid);
+  if (prospect && prospect.stage === "Call Booked") {
+    prospect.stage = "Approved for Outreach";
+    prospect.stage_plain = "Call was cancelled";
+    await upsertProspects(userId, [prospect]);
+  }
+  if (isTestWorkflowUid(row.prospect_uid)) {
+    await saveTestState(userId, {
+      pipeline_stage: prospect?.stage || "Approved for Outreach",
+      event_id: "",
+    });
+  }
+  await audit(userId, "cancel_owner_calendar_event", `cancelled:${row.title}`, {
+    prospectUid: row.prospect_uid,
+    method: "VOICE",
+    providerIds: googleEventId,
+  });
+  return { ...row, status: "cancelled" };
+}
+
+export async function updateBookedCalendarTimes(
+  userId: string,
+  googleEventId: string,
+  start: Date,
+  end: Date,
+): Promise<void> {
+  const id = (googleEventId || "").trim();
+  if (!id) return;
+  const sql = await getSql();
+  await sql`
+    update calendar_events
+    set start_at = ${start.toISOString()}, end_at = ${end.toISOString()}
+    where user_id = ${userId} and google_event_id = ${id} and status = ${"booked"}
+  `;
+}
+
 export async function findBookingAuditEventId(userId: string, prospectUid: string): Promise<string | null> {
   const sql = await getSql();
   const rows = await sql<{ provider_ids: string }>`

@@ -1,7 +1,7 @@
 import type { IntentName, ParsedIntent, Risk, VoiceContext } from "./types.ts";
 import { HIGH_INTENTS, MEDIUM_INTENTS } from "./types.ts";
 import { parseSpokenHour } from "../calendar/range.ts";
-import { isPersonalCalendarCommand } from "../calendar/owner-event.ts";
+import { isPersonalCalendarCommand, isOwnerCalendarManageCommand } from "../calendar/owner-event.ts";
 import { parseSpokenFilter } from "../prospects/view-filter.ts";
 
 function riskOf(intent: IntentName): Risk {
@@ -215,12 +215,15 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (isPersonalCalendarCommand(stripped)) {
     return { ...base, intent: "CREATE_OWNER_CALENDAR_EVENT", risk: "LOW", confidence: 0.98 };
   }
+  if (isOwnerCalendarManageCommand(stripped)) {
+    return { ...base, intent: "UNKNOWN", risk: "LOW", confidence: 0.2 };
+  }
   if (hit(t, /when is my next (sales )?call|next sales call/)) return { ...base, intent: "NEXT_CALL", risk: "LOW" };
   if (hit(t, /what times am i (available|free)|available wednesday|free wednesday|open times/)) return { ...base, intent: "AVAILABILITY", risk: "LOW" };
   if (hit(t, /schedule (them|it|the call)|book (them|the call)/)) return { ...base, intent: "SCHEDULE_CALL", risk: "HIGH" };
   if (hit(t, /prepare me for the call|call prep|prep me/)) return { ...base, intent: "READ_CALL_OPENER", risk: "LOW", confidence: 0.95 };
 
-  if (hit(t, /pull up (my |the )?calendar|show( me)? (my |the )?calendar|open (my |the )?calendar|go to (my |the )?calendar|what('s| is) on my calendar/)) {
+  if (hit(t, /pull up (my |the )?calendar|show( me)? (my |the )?calendar|open (my |the )?calendar|go to (my |the )?calendar/)) {
     return { ...base, intent: "NAVIGATE_CALENDAR", risk: "LOW", confidence: 0.97 };
   }
   if (hit(t, /what (do i have|have i got) tomorrow|show( me)? tomorrow/)) {

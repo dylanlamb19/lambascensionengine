@@ -481,6 +481,388 @@ export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
     };
   });
 
+type OwnerManageInput = {
+  eventId?: string;
+  title?: string;
+  when?: string;
+  lastEvent?: boolean;
+  lastEventId?: string;
+  confirm?: boolean;
+  newTime?: string;
+  newTitle?: string;
+};
+
+export const listOwnerCalendarEventsFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: OwnerManageInput) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings, audit, listCallsInRange } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { listEvents, CALENDAR_VIEW_UNREADABLE } = await import("../google/calendar");
+    const {
+      resolveOwnerWindow,
+      ownerListSpeech,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const now = new Date();
+    const win = resolveOwnerWindow({ when: data.when, timezone, now });
+    const window = win.ok ? win : { from: now, to: new Date(now.getTime() + 24 * 3600 * 1000), label: "today", hasClock: false };
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        listed: false as const,
+        reason: "Calendar isn’t connected.",
+        spoken: "Calendar isn’t connected, so I couldn’t read your events.",
+        events: [] as { id: string; title: string; start: string; end: string; attendees: number; sales: boolean }[],
+      };
+    }
+    const listed = await listEvents(tokens.access_token, window.from, window.to);
+    if (!listed.ok) {
+      return {
+        ok: false as const,
+        listed: false as const,
+        reason: listed.reason || CALENDAR_VIEW_UNREADABLE,
+        spoken: listed.reason || CALENDAR_VIEW_UNREADABLE,
+        events: [] as { id: string; title: string; start: string; end: string; attendees: number; sales: boolean }[],
+      };
+    }
+    const salesRows = await listCallsInRange(context.userId, window.from, window.to);
+    const byGoogle = new Map(salesRows.filter((s) => s.google_event_id).map((s) => [s.google_event_id as string, s]));
+    const events = listed.events.map((ev) => ({
+      id: ev.id,
+      title: ev.title,
+      start: ev.start,
+      end: ev.end,
+      attendees: ev.attendees,
+      sales: Boolean(byGoogle.get(ev.id)),
+    }));
+    await audit(context.userId, "list_owner_calendar_events", `${window.label}:${events.length}`, { method: "VOICE" });
+    return {
+      ok: true as const,
+      listed: true as const,
+      label: window.label,
+      timezone,
+      spoken: ownerListSpeech(events, window.label, timezone, now),
+      events,
+    };
+  });
+
+export const deleteOwnerCalendarEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: OwnerManageInput) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings, audit, findBookedByGoogleEventId, cancelBookedCalendarEvent } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { listEvents, getEvent, deleteEvent } = await import("../google/calendar");
+    const {
+      ownerDeleteSuccessSpeech,
+      ownerSalesDeleteConfirmSpeech,
+      ownerGuestDeleteConfirmSpeech,
+      ownerAlreadyGoneSpeech,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const now = new Date();
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        deleted: false as const,
+        spoken: "Calendar isn’t connected, so nothing was deleted.",
+      };
+    }
+
+    const located = await locateOwnerEvent({
+      accessToken: tokens.access_token,
+      userId: context.userId,
+      timezone,
+      now,
+      eventId: data.eventId,
+      lastEventId: data.lastEventId,
+      lastEvent: data.lastEvent,
+      title: data.title,
+      when: data.when,
+      listEvents,
+      getEvent,
+      findBookedByGoogleEventId,
+    });
+    if (!located.ok) {
+      return {
+        ok: false as const,
+        deleted: false as const,
+        ambiguous: located.kind === "ambiguous",
+        spoken: located.spoken,
+        matches: located.events || [],
+      };
+    }
+
+    const sale = located.sales;
+    const needsConfirm = Boolean((sale && sale.status === "booked") || located.event.attendees > 0);
+    if (needsConfirm && !data.confirm) {
+      const spoken = sale && sale.status === "booked"
+        ? ownerSalesDeleteConfirmSpeech(located.event.title, located.event.attendees)
+        : ownerGuestDeleteConfirmSpeech(located.event.title);
+      return {
+        ok: false as const,
+        deleted: false as const,
+        needsConfirm: true as const,
+        eventId: located.event.id,
+        title: located.event.title,
+        sales: Boolean(sale && sale.status === "booked"),
+        attendees: located.event.attendees,
+        spoken,
+      };
+    }
+
+    const gone = await deleteEvent(tokens.access_token, located.event.id);
+    if (!gone.ok) {
+      await audit(context.userId, "delete_owner_calendar_event", `failed:${located.event.title}`, { method: "VOICE", providerIds: located.event.id });
+      return {
+        ok: false as const,
+        deleted: false as const,
+        spoken: "I couldn't update that event, so nothing changed.",
+        reason: gone.error,
+      };
+    }
+    if (sale && sale.status === "booked") {
+      await cancelBookedCalendarEvent(context.userId, located.event.id);
+    }
+    await audit(context.userId, "delete_owner_calendar_event", gone.alreadyGone ? `gone:${located.event.title}` : `deleted:${located.event.title}`, {
+      method: "VOICE",
+      providerIds: located.event.id,
+    });
+    return {
+      ok: true as const,
+      deleted: true as const,
+      alreadyGone: Boolean(gone.alreadyGone),
+      eventId: located.event.id,
+      title: located.event.title,
+      sales: Boolean(sale && sale.status === "booked"),
+      spoken: gone.alreadyGone ? ownerAlreadyGoneSpeech() : ownerDeleteSuccessSpeech(located.event.title),
+    };
+  });
+
+export const updateOwnerCalendarEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: OwnerManageInput) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings, audit, findBookedByGoogleEventId, updateBookedCalendarTimes } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { listEvents, getEvent, patchEvent } = await import("../google/calendar");
+    const {
+      resolveOwnerWhen,
+      formatOwnerWhen,
+      ownerUpdateSuccessSpeech,
+      ownerUpdateFailureSpeech,
+      ownerSalesUpdateConfirmSpeech,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const now = new Date();
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        updated: false as const,
+        spoken: ownerUpdateFailureSpeech(),
+      };
+    }
+
+    const located = await locateOwnerEvent({
+      accessToken: tokens.access_token,
+      userId: context.userId,
+      timezone,
+      now,
+      eventId: data.eventId,
+      lastEventId: data.lastEventId,
+      lastEvent: data.lastEvent,
+      title: data.title,
+      when: data.when,
+      listEvents,
+      getEvent,
+      findBookedByGoogleEventId,
+    });
+    if (!located.ok) {
+      return {
+        ok: false as const,
+        updated: false as const,
+        ambiguous: located.kind === "ambiguous",
+        spoken: located.kind === "ambiguous"
+          ? located.spoken.replace("Which should I delete?", "Which should I change?")
+          : "I couldn't find a matching event, so nothing changed.",
+        matches: located.events || [],
+      };
+    }
+
+    const sale = located.sales;
+    const needsConfirm = Boolean(sale && sale.status === "booked");
+    if (needsConfirm && !data.confirm) {
+      return {
+        ok: false as const,
+        updated: false as const,
+        needsConfirm: true as const,
+        eventId: located.event.id,
+        title: located.event.title,
+        sales: true as const,
+        spoken: ownerSalesUpdateConfirmSpeech(located.event.title),
+      };
+    }
+
+    const patch: { title?: string; start?: Date; end?: Date; timeZone?: string } = {};
+    const newTitle = (data.newTitle || "").trim();
+    if (newTitle) patch.title = newTitle.slice(0, 200);
+    if (data.newTime) {
+      const currentStart = new Date(located.event.start);
+      const currentEnd = new Date(located.event.end);
+      const durationMs = Number.isFinite(currentEnd.getTime()) && Number.isFinite(currentStart.getTime())
+        ? Math.max(5 * 60 * 1000, currentEnd.getTime() - currentStart.getTime())
+        : 30 * 60 * 1000;
+      const resolved = resolveOwnerWhen({
+        when: data.when,
+        time: data.newTime,
+        timezone,
+        now,
+      });
+      if (!resolved.ok) {
+        return {
+          ok: false as const,
+          updated: false as const,
+          spoken: resolved.question,
+          need: resolved.need,
+        };
+      }
+      patch.start = resolved.start;
+      patch.end = new Date(resolved.start.getTime() + durationMs);
+      patch.timeZone = timezone;
+    }
+    if (!patch.title && !patch.start) {
+      return {
+        ok: false as const,
+        updated: false as const,
+        spoken: "What should I change — the time or the name?",
+      };
+    }
+
+    const patched = await patchEvent(tokens.access_token, located.event.id, patch);
+    if (!patched.ok) {
+      await audit(context.userId, "update_owner_calendar_event", `failed:${located.event.title}`, { method: "VOICE", providerIds: located.event.id });
+      return {
+        ok: false as const,
+        updated: false as const,
+        spoken: ownerUpdateFailureSpeech(),
+        reason: patched.error,
+      };
+    }
+    if (sale && sale.status === "booked" && patch.start && patch.end) {
+      await updateBookedCalendarTimes(context.userId, located.event.id, patch.start, patch.end);
+    }
+    const whenLabel = formatOwnerWhen(new Date(patched.event.start), timezone, now);
+    await audit(context.userId, "update_owner_calendar_event", `updated:${patched.event.title}`, { method: "VOICE", providerIds: patched.event.id });
+    return {
+      ok: true as const,
+      updated: true as const,
+      eventId: patched.event.id,
+      title: patched.event.title,
+      whenLabel,
+      start: patched.event.start,
+      end: patched.event.end,
+      sales: Boolean(sale && sale.status === "booked"),
+      spoken: ownerUpdateSuccessSpeech(patched.event.title, whenLabel),
+    };
+  });
+
+async function locateOwnerEvent(opts: {
+  accessToken: string;
+  userId: string;
+  timezone: string;
+  now: Date;
+  eventId?: string;
+  lastEventId?: string;
+  lastEvent?: boolean;
+  title?: string;
+  when?: string;
+  listEvents: typeof import("../google/calendar").listEvents;
+  getEvent: typeof import("../google/calendar").getEvent;
+  findBookedByGoogleEventId: typeof import("./sql.server").findBookedByGoogleEventId;
+}): Promise<
+  | { ok: true; event: import("../google/calendar").GoogleCalEvent; sales: import("./sql.server").BookedCalendarRow | null }
+  | { ok: false; kind: "missing" | "ambiguous" | "unread"; spoken: string; events?: { id: string; title: string; start: string }[] }
+> {
+  const {
+    pickCalendarMatches,
+    resolveOwnerWindow,
+    ownerDeleteMissingSpeech,
+    ownerAmbiguousSpeech,
+    ownerAlreadyGoneSpeech,
+  } = await import("../calendar/owner-event");
+  const { CALENDAR_VIEW_UNREADABLE } = await import("../google/calendar");
+
+  const directId = (opts.eventId || (opts.lastEvent && !opts.title ? opts.lastEventId : "") || "").trim();
+  if (directId) {
+    const got = await opts.getEvent(opts.accessToken, directId);
+    if (!got.ok) {
+      return { ok: false, kind: "missing", spoken: got.missing ? ownerAlreadyGoneSpeech() : (got.reason || ownerDeleteMissingSpeech()) };
+    }
+    const sales = await opts.findBookedByGoogleEventId(opts.userId, got.event.id);
+    return { ok: true, event: got.event, sales };
+  }
+
+  const hasTitle = Boolean((opts.title || "").trim());
+  const win = resolveOwnerWindow({ when: opts.when, timezone: opts.timezone, now: opts.now });
+  const window = win.ok && (opts.when || !hasTitle)
+    ? win
+    : {
+      from: new Date(opts.now.getTime() - 24 * 3600 * 1000),
+      to: new Date(opts.now.getTime() + 14 * 86400000),
+      label: "the next two weeks",
+      hasClock: false as const,
+      start: undefined as Date | undefined,
+    };
+  const listed = await opts.listEvents(opts.accessToken, window.from, window.to);
+  if (!listed.ok) {
+    return { ok: false, kind: "unread", spoken: listed.reason || CALENDAR_VIEW_UNREADABLE };
+  }
+  if (opts.lastEvent && opts.lastEventId) {
+    const last = listed.events.find((e) => e.id === opts.lastEventId);
+    if (last) {
+      const sales = await opts.findBookedByGoogleEventId(opts.userId, last.id);
+      return { ok: true, event: last, sales };
+    }
+    const got = await opts.getEvent(opts.accessToken, opts.lastEventId);
+    if (got.ok) {
+      const sales = await opts.findBookedByGoogleEventId(opts.userId, got.event.id);
+      return { ok: true, event: got.event, sales };
+    }
+  }
+  const picked = pickCalendarMatches(listed.events, {
+    title: opts.title,
+    startMs: "start" in window && window.start ? window.start.getTime() : undefined,
+    windowMs: window.hasClock ? 90 * 60 * 1000 : undefined,
+  });
+  if (!picked.matches.length) {
+    return { ok: false, kind: "missing", spoken: ownerDeleteMissingSpeech() };
+  }
+  if (picked.ambiguous) {
+    return {
+      ok: false,
+      kind: "ambiguous",
+      spoken: ownerAmbiguousSpeech(picked.matches, opts.timezone, opts.now, "delete"),
+      events: picked.matches.map((e) => ({ id: e.id, title: e.title, start: e.start })),
+    };
+  }
+  const event = picked.matches[0];
+  const sales = await opts.findBookedByGoogleEventId(opts.userId, event.id);
+  return { ok: true, event, sales };
+}
+
 export type AgendaEvent = {
   id: string;
   title: string;

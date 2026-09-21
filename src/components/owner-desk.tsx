@@ -25,7 +25,7 @@ import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilter
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
@@ -65,7 +65,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarSpeech, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarManage, parseOwnerCalendarSpeech, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -306,6 +306,14 @@ export function OwnerDesk() {
   const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
   const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
   const pendingOwnerCalRef = useRef<{ title: string; when: string } | null>(null);
+  const pendingCalManageRef = useRef<{
+    kind: "delete" | "update";
+    eventId: string;
+    title: string;
+    when?: string;
+    newTime?: string;
+    newTitle?: string;
+  } | null>(null);
   const [layout, setLayout] = useState<HomeLayout>(DEFAULT_HOME_LAYOUT);
   const [visual, setVisual] = useState<VisualTheme>(DEFAULT_VISUAL_THEME);
   const [chrome, setChrome] = useState<DesignChrome>(DEFAULT_CHROME);
@@ -1138,6 +1146,24 @@ export function OwnerDesk() {
       .catch(() => setNextCall(null));
   }, [userId, view]);
 
+  function refreshCalendarAgenda() {
+    if (!userId) return;
+    const { from, to } = rangeFor(calView, calAnchor);
+    void calendarAgendaFn({ data: { from: from.toISOString(), to: to.toISOString() } })
+      .then((r) => {
+        setCalEvents(r.events || []);
+        setCalReason(r.ok ? "" : r.reason);
+        setCalConnected(Boolean(r.connected));
+      })
+      .catch(() => {});
+    void nextCallFn()
+      .then((r) => {
+        if (r.ok && r.call) setNextCall(r.call);
+        else setNextCall(null);
+      })
+      .catch(() => {});
+  }
+
   async function connectGoogle(kind: "gmail" | "calendar") {
     setGoogleErr("");
     setGoogleMsg("");
@@ -1321,6 +1347,9 @@ export function OwnerDesk() {
         ...ctx.availableActions,
         "create_owner_calendar_event",
         "get_last_owner_calendar_event",
+        "list_owner_calendar_events",
+        "delete_owner_calendar_event",
+        "update_owner_calendar_event",
       ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -1463,6 +1492,7 @@ export function OwnerDesk() {
         };
         lastOwnerEventRef.current = last;
         setLastOwnerEvent(last);
+        refreshCalendarAgenda();
         return {
           ok: true,
           created: true,
@@ -1492,16 +1522,153 @@ export function OwnerDesk() {
         };
       }
     }
+    if (result.plan.type === "owner_calendar_list") {
+      try {
+        const r = await listOwnerCalendarEventsFn({ data: { when: result.plan.when } });
+        return { ...result.output, ...r, spoken: r.spoken };
+      } catch {
+        return { ok: false, listed: false, spoken: "Lamb Ascension couldn’t read your Google Calendar. I’m not guessing what’s on it." };
+      }
+    }
+    if (result.plan.type === "owner_calendar_delete") {
+      try {
+        const r = await deleteOwnerCalendarEventFn({
+          data: {
+            eventId: result.plan.eventId,
+            title: result.plan.title,
+            when: result.plan.when,
+            lastEvent: result.plan.lastEvent,
+            lastEventId: lastOwnerEventRef.current?.id,
+            confirm: result.plan.confirm,
+          },
+        });
+        if (r.ok && r.deleted) {
+          if (lastOwnerEventRef.current?.id === r.eventId) {
+            lastOwnerEventRef.current = null;
+            setLastOwnerEvent(null);
+          }
+          if (r.eventId) gateRef.current.seen(`delete_owner_calendar_event:${r.eventId}`, 20_000);
+          refreshCalendarAgenda();
+        }
+        if ("needsConfirm" in r && r.needsConfirm && r.eventId) {
+          pendingCalManageRef.current = { kind: "delete", eventId: r.eventId, title: r.title, when: result.plan.when };
+        }
+        return { ...result.output, ...r };
+      } catch {
+        return { ok: false, deleted: false, spoken: "I couldn't update that event, so nothing changed." };
+      }
+    }
+    if (result.plan.type === "owner_calendar_update") {
+      try {
+        const r = await updateOwnerCalendarEventFn({
+          data: {
+            eventId: result.plan.eventId,
+            title: result.plan.title,
+            when: result.plan.when,
+            lastEvent: result.plan.lastEvent,
+            lastEventId: lastOwnerEventRef.current?.id,
+            newTime: result.plan.newTime,
+            newTitle: result.plan.newTitle,
+            confirm: result.plan.confirm,
+          },
+        });
+        if (r.ok && r.updated) {
+          const last: LastOwnerEvent = {
+            id: r.eventId,
+            title: r.title,
+            whenLabel: r.whenLabel,
+            start: r.start,
+            end: r.end,
+            fingerprint: lastOwnerEventRef.current?.fingerprint || `update:${r.eventId}`,
+          };
+          lastOwnerEventRef.current = last;
+          setLastOwnerEvent(last);
+          refreshCalendarAgenda();
+        }
+        if ("needsConfirm" in r && r.needsConfirm && r.eventId) {
+          pendingCalManageRef.current = {
+            kind: "update",
+            eventId: r.eventId,
+            title: r.title,
+            when: result.plan.when,
+            newTime: result.plan.newTime,
+            newTitle: result.plan.newTitle,
+          };
+        }
+        return { ...result.output, ...r };
+      } catch {
+        return { ok: false, updated: false, spoken: "I couldn't update that event, so nothing changed." };
+      }
+    }
     return result.output;
   }
 
   async function runOwnerPersonalCalendar(text: string): Promise<boolean> {
+    const pendingManage = pendingCalManageRef.current;
+    if (pendingManage && isOwnerCalendarConfirmYes(text)) {
+      araRef.current?.cancelResponse();
+      pendingCalManageRef.current = null;
+      const tool = pendingManage.kind === "delete" ? "delete_owner_calendar_event" : "update_owner_calendar_event";
+      const result = executeAllowlistedTool(tool, {
+        event_id: pendingManage.eventId,
+        title: pendingManage.title,
+        when: pendingManage.when,
+        new_time: pendingManage.newTime,
+        new_title: pendingManage.newTitle,
+        confirm: true,
+      }, araDesk(), "owner_session");
+      const output = await hydrateAraOutput(tool, result);
+      utter(String(output.spoken || "I couldn't update that event, so nothing changed."), "TOOL_RESULT");
+      return true;
+    }
+    if (pendingManage && isOwnerCalendarConfirmNo(text)) {
+      araRef.current?.cancelResponse();
+      pendingCalManageRef.current = null;
+      utter("Okay, I left it on your calendar.", "TOOL_RESULT");
+      return true;
+    }
+
     const lastAsk = /\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(text);
     if (lastAsk) {
       araRef.current?.cancelResponse();
       utter(ownerEventSpeechFromState(lastOwnerEventRef.current), "TOOL_RESULT");
       return true;
     }
+
+    const manage = parseOwnerCalendarManage(text);
+    if (manage.kind !== "none") {
+      pendingCalManageRef.current = null;
+      araRef.current?.cancelResponse();
+      if (manage.kind === "list") {
+        const result = executeAllowlistedTool("list_owner_calendar_events", { when: manage.when }, araDesk(), "owner_session");
+        const output = await hydrateAraOutput("list_owner_calendar_events", result);
+        utter(String(output.spoken || "I couldn’t read your Google Calendar."), "TOOL_RESULT");
+        return true;
+      }
+      if (manage.kind === "delete") {
+        const result = executeAllowlistedTool("delete_owner_calendar_event", {
+          title: manage.title,
+          when: manage.when,
+          last_event: manage.lastEvent,
+          event_id: manage.lastEvent ? lastOwnerEventRef.current?.id : undefined,
+        }, araDesk(), "owner_session");
+        const output = await hydrateAraOutput("delete_owner_calendar_event", result);
+        utter(String(output.spoken || "I couldn't find a matching event, so I didn't delete anything."), "TOOL_RESULT");
+        return true;
+      }
+      const result = executeAllowlistedTool("update_owner_calendar_event", {
+        title: manage.title,
+        when: manage.when,
+        last_event: manage.lastEvent,
+        event_id: manage.lastEvent ? lastOwnerEventRef.current?.id : undefined,
+        new_time: manage.newTime,
+        new_title: manage.newTitle,
+      }, araDesk(), "owner_session");
+      const output = await hydrateAraOutput("update_owner_calendar_event", result);
+      utter(String(output.spoken || "I couldn't update that event, so nothing changed."), "TOOL_RESULT");
+      return true;
+    }
+
     const pending = pendingOwnerCalRef.current;
     const parsed = parseOwnerCalendarSpeech(text);
     let title = "";
@@ -1747,7 +1914,7 @@ export function OwnerDesk() {
       stopSpeaking();
       return;
     }
-    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current)) {
+    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current) || pendingCalManageRef.current) {
       araRef.current?.cancelResponse();
     }
     if (!isFinal) return;
@@ -1985,6 +2152,10 @@ export function OwnerDesk() {
     if (stop.kind === "stop_task") {
       gateRef.current.cancel();
       stopSpeaking();
+      return;
+    }
+    if (pendingCalManageRef.current && (isOwnerCalendarConfirmYes(text) || isOwnerCalendarConfirmNo(text))) {
+      void runOwnerPersonalCalendar(text);
       return;
     }
     if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {

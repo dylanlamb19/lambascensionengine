@@ -22,6 +22,9 @@ export type GoogleCalEvent = {
   end: string;
   status: string;
   htmlLink?: string;
+  attendees: number;
+  location?: string;
+  description?: string;
 };
 
 export type FreeBusyMeta = {
@@ -132,7 +135,17 @@ export async function listEvents(
     }
     const json = (await res.json()) as {
       error?: { message?: string };
-      items?: { id?: string; summary?: string; status?: string; htmlLink?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string } }[];
+      items?: {
+        id?: string;
+        summary?: string;
+        status?: string;
+        htmlLink?: string;
+        location?: string;
+        description?: string;
+        attendees?: { email?: string }[];
+        start?: { dateTime?: string; date?: string };
+        end?: { dateTime?: string; date?: string };
+      }[];
     };
     if (json.error || !Array.isArray(json.items)) return { ok: false, reason: CALENDAR_VIEW_UNREADABLE, code: "FREEBUSY_FAILED" };
     const events: GoogleCalEvent[] = [];
@@ -149,6 +162,9 @@ export async function listEvents(
         end: end || start,
         status: item.status || "confirmed",
         htmlLink: item.htmlLink,
+        attendees: Array.isArray(item.attendees) ? item.attendees.length : 0,
+        location: item.location,
+        description: item.description,
       });
     }
     return { ok: true, events };
@@ -334,15 +350,119 @@ export async function deleteEvent(
   accessToken: string,
   eventId: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ ok: true } | { ok: false; error: string; code: CalendarFailureCode }> {
+): Promise<{ ok: true; alreadyGone?: boolean } | { ok: false; error: string; code: CalendarFailureCode }> {
   const id = encodeURIComponent(eventId);
   const res = await fetchImpl(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (res.ok || res.status === 410 || res.status === 404) return { ok: true };
+  if (res.status === 410 || res.status === 404) return { ok: true, alreadyGone: true };
+  if (res.ok) return { ok: true };
   const err = await readGoogleError(res);
   return { ok: false, error: calendarFailureReason(err.code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : err.code), code: err.code };
+}
+
+function itemToEvent(item: {
+  id?: string;
+  summary?: string;
+  status?: string;
+  htmlLink?: string;
+  location?: string;
+  description?: string;
+  attendees?: { email?: string }[];
+  start?: { dateTime?: string; date?: string; timeZone?: string };
+  end?: { dateTime?: string; date?: string; timeZone?: string };
+}): GoogleCalEvent | null {
+  if (!item.id) return null;
+  if ((item.status || "").toLowerCase() === "cancelled") return null;
+  const start = item.start?.dateTime || (item.start?.date ? `${item.start.date}T12:00:00` : "");
+  const end = item.end?.dateTime || item.end?.date || "";
+  if (!start) return null;
+  return {
+    id: item.id,
+    title: (item.summary || "(No title)").trim(),
+    start,
+    end: end || start,
+    status: item.status || "confirmed",
+    htmlLink: item.htmlLink,
+    attendees: Array.isArray(item.attendees) ? item.attendees.length : 0,
+    location: item.location,
+    description: item.description,
+  };
+}
+
+export async function getEvent(
+  accessToken: string,
+  eventId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; event: GoogleCalEvent } | { ok: false; missing?: boolean; reason: string; code: CalendarFailureCode }> {
+  const id = encodeURIComponent(eventId);
+  try {
+    const res = await fetchImpl(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.status === 404 || res.status === 410) {
+      return { ok: false, missing: true, reason: "That event is already gone.", code: "FREEBUSY_BAD_REQUEST" };
+    }
+    if (!res.ok) {
+      const err = await readGoogleError(res);
+      return { ok: false, reason: calendarFailureReason(err.code), code: err.code };
+    }
+    const json = (await res.json()) as Parameters<typeof itemToEvent>[0] & { error?: { message?: string } };
+    const event = itemToEvent(json);
+    if (!event) return { ok: false, missing: true, reason: "That event is already gone.", code: "FREEBUSY_BAD_REQUEST" };
+    return { ok: true, event };
+  } catch {
+    return { ok: false, reason: CALENDAR_VIEW_UNREADABLE, code: "FREEBUSY_PROVIDER_ERROR" };
+  }
+}
+
+export async function patchEvent(
+  accessToken: string,
+  eventId: string,
+  patch: {
+    title?: string;
+    start?: Date;
+    end?: Date;
+    timeZone?: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; event: GoogleCalEvent } | { ok: false; error: string; code: CalendarFailureCode }> {
+  const id = encodeURIComponent(eventId);
+  const body: Record<string, unknown> = {};
+  if (patch.title) body.summary = patch.title;
+  if (patch.start) {
+    body.start = patch.timeZone
+      ? { dateTime: toOffsetIso(patch.start, patch.timeZone), timeZone: patch.timeZone }
+      : { dateTime: patch.start.toISOString() };
+  }
+  if (patch.end) {
+    body.end = patch.timeZone
+      ? { dateTime: toOffsetIso(patch.end, patch.timeZone), timeZone: patch.timeZone }
+      : { dateTime: patch.end.toISOString() };
+  }
+  try {
+    const res = await fetchImpl(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${id}?sendUpdates=none`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text().catch(() => "");
+    if (!res.ok) {
+      const err = await readGoogleError(new Response(raw, { status: res.status }));
+      return { ok: false, error: calendarFailureReason(err.code === "FREEBUSY_FAILED" ? "EVENT_CREATE_FAILED" : err.code), code: err.code };
+    }
+    let json: Parameters<typeof itemToEvent>[0] = {};
+    try { json = raw ? JSON.parse(raw) as Parameters<typeof itemToEvent>[0] : {}; } catch { json = {}; }
+    const event = itemToEvent(json);
+    if (!event) return { ok: false, error: calendarFailureReason("EVENT_CREATE_FAILED"), code: "EVENT_CREATE_FAILED" };
+    return { ok: true, event };
+  } catch {
+    return { ok: false, error: calendarFailureReason("EVENT_CREATE_FAILED"), code: "EVENT_CREATE_FAILED" };
+  }
 }
 
 export async function probeFreeBusy(

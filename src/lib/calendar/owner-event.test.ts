@@ -5,6 +5,7 @@ import {
   fromZonedLocal,
   isOwnerCalendarFollowupTime,
   isPersonalCalendarCommand,
+  isOwnerCalendarManageCommand,
   isOwnerCalendarRefusalSpeech,
   shouldSilenceAraForOwnerCalendar,
   ownerEventFailureSpeech,
@@ -13,10 +14,18 @@ import {
   ownerEventSuccessSpeech,
   parseClock,
   parseOwnerCalendarSpeech,
+  parseOwnerCalendarManage,
+  pickCalendarMatches,
   resolveOwnerWhen,
+  resolveOwnerWindow,
   sanitizeOwnerTitle,
   toOffsetIso,
   ymdInTimezone,
+  ownerDeleteMissingSpeech,
+  ownerDeleteSuccessSpeech,
+  ownerUpdateSuccessSpeech,
+  ownerAmbiguousSpeech,
+  ownerSalesDeleteConfirmSpeech,
 } from "./owner-event.ts";
 
 /** Sunday, Sep 20, 2026 11:05 AM CDT */
@@ -182,7 +191,84 @@ describe("personal calendar speech parsing", () => {
     assert.equal(shouldSilenceAraForOwnerCalendar("2 PM", { title: "Dentist appointment", when: "tomorrow" }), true);
     assert.equal(shouldSilenceAraForOwnerCalendar("Pull up my calendar"), false);
     assert.equal(shouldSilenceAraForOwnerCalendar("Schedule the call"), false);
+    assert.equal(shouldSilenceAraForOwnerCalendar("Delete my dentist appointment tomorrow at 2"), true);
+    assert.equal(shouldSilenceAraForOwnerCalendar("What do I have tomorrow?"), true);
     assert.equal(isOwnerCalendarRefusalSpeech("I'll prepare that calendar booking for you. I can open your calendar or help with sales call bookings, but I don't have a tool to add personal reminders or events."), true);
+    assert.equal(isOwnerCalendarRefusalSpeech("I can remove calendar events, but only the ones I created myself. The only calendar tool I have is for adding personal reminders and events. I can't delete or remove anything from your Google Calendar."), true);
     assert.equal(isOwnerCalendarRefusalSpeech("Done — I added ‘Go to SouthState Bank and withdraw cash’ to your calendar for tomorrow at 4:00 PM."), false);
+  });
+});
+
+describe("owner calendar manage speech", () => {
+  it("parses delete / list / reschedule commands", () => {
+    const del = parseOwnerCalendarManage("Delete my dentist appointment tomorrow at 2.");
+    assert.equal(del.kind, "delete");
+    if (del.kind === "delete") {
+      assert.match(del.title, /dentist/i);
+      assert.match(del.when, /tomorrow/i);
+    }
+    const bank = parseOwnerCalendarManage("Remove the bank reminder tomorrow at 4.");
+    assert.equal(bank.kind, "delete");
+    const gym = parseOwnerCalendarManage("Cancel the gym event tonight.");
+    assert.equal(gym.kind, "delete");
+    const last = parseOwnerCalendarManage("Delete the event I just added.");
+    assert.equal(last.kind, "delete");
+    if (last.kind === "delete") assert.equal(last.lastEvent, true);
+    const list = parseOwnerCalendarManage("What do I have tomorrow?");
+    assert.equal(list.kind, "list");
+    const afternoon = parseOwnerCalendarManage("What's on my calendar this afternoon?");
+    assert.equal(afternoon.kind, "list");
+    const move = parseOwnerCalendarManage("Move my dentist appointment from 2 PM to 4 PM tomorrow.");
+    assert.equal(move.kind, "update");
+    if (move.kind === "update") {
+      assert.match(move.title, /dentist/i);
+      assert.match(String(move.newTime), /4/i);
+    }
+    const rename = parseOwnerCalendarManage("Change lunch Friday to noon.");
+    assert.equal(rename.kind, "update");
+    const that = parseOwnerCalendarManage("Move that to 5 PM.");
+    assert.equal(that.kind, "update");
+    if (that.kind === "update") assert.equal(that.lastEvent, true);
+  });
+
+  it("does not steal sales booking or visual move commands", () => {
+    assert.equal(isOwnerCalendarManageCommand("Schedule the call"), false);
+    assert.equal(isOwnerCalendarManageCommand("Pull up my calendar"), false);
+    assert.equal(isPersonalCalendarCommand("Delete my dentist appointment tomorrow at 2"), false);
+    assert.equal(isOwnerCalendarManageCommand("Move the focal point left"), false);
+    assert.equal(isOwnerCalendarManageCommand("Change the overlay"), false);
+  });
+
+  it("tomorrow at 2 PM window is America/Chicago, not UTC", () => {
+    const w = resolveOwnerWindow({ when: "dentist tomorrow at 2 PM", now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(w.ok, true);
+    if (!w.ok) return;
+    assert.equal(w.hasClock, true);
+    assert.equal(w.start?.toISOString(), "2026-09-21T19:00:00.000Z");
+    const afternoon = resolveOwnerWindow({ when: "this afternoon", now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(afternoon.ok, true);
+    if (!afternoon.ok) return;
+    assert.equal(ymdInTimezone(afternoon.from, OWNER_TZ_DEFAULT), "2026-09-20");
+  });
+
+  it("asks when two events match and refuses when none match", () => {
+    const events = [
+      { id: "a", title: "Dentist appointment", start: "2026-09-21T19:00:00.000Z" },
+      { id: "b", title: "Team call", start: "2026-09-21T19:00:00.000Z" },
+      { id: "c", title: "Gym", start: "2026-09-21T23:00:00.000Z" },
+    ];
+    const two = pickCalendarMatches(events, { title: "", startMs: Date.parse("2026-09-21T19:00:00.000Z"), windowMs: 90 * 60 * 1000 });
+    assert.equal(two.ambiguous, true);
+    assert.equal(two.matches.length, 2);
+    assert.match(ownerAmbiguousSpeech(two.matches, OWNER_TZ_DEFAULT, NOW, "delete"), /Which should I delete/);
+    const none = pickCalendarMatches(events, { title: "bank reminder", startMs: Date.parse("2026-09-21T19:00:00.000Z") });
+    assert.equal(none.matches.length, 0);
+    assert.match(ownerDeleteMissingSpeech(), /didn.t delete anything/);
+    const one = pickCalendarMatches(events, { title: "dentist", startMs: Date.parse("2026-09-21T19:00:00.000Z") });
+    assert.equal(one.ambiguous, false);
+    assert.equal(one.matches[0]?.id, "a");
+    assert.match(ownerDeleteSuccessSpeech("Dentist appointment"), /removed/);
+    assert.match(ownerUpdateSuccessSpeech("Dentist appointment", "tomorrow at 4:00 PM"), /moved/);
+    assert.match(ownerSalesDeleteConfirmSpeech("Sales call", 1), /booked sales call/);
   });
 });

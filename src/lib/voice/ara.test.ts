@@ -180,6 +180,9 @@ describe("Ara allowlisted tools", () => {
 
   it("personal owner calendar events are a real tool, not sales bookings", () => {
     assert.equal(isAllowedTool("create_owner_calendar_event"), true);
+    assert.equal(isAllowedTool("list_owner_calendar_events"), true);
+    assert.equal(isAllowedTool("delete_owner_calendar_event"), true);
+    assert.equal(isAllowedTool("update_owner_calendar_event"), true);
     const missingTime = executeAllowlistedTool("create_owner_calendar_event", { title: "Dentist appointment", when: "tomorrow" }, desk);
     assert.equal(missingTime.ok, false);
     assert.equal(missingTime.output.created, false);
@@ -230,14 +233,39 @@ describe("Ara allowlisted tools", () => {
       },
     });
     assert.match(String(after.output.spoken), /SouthState Bank/);
+
+    const listed = executeAllowlistedTool("list_owner_calendar_events", { when: "tomorrow" }, desk);
+    assert.equal(listed.ok, true);
+    assert.equal(listed.plan.type, "owner_calendar_list");
+    assert.equal(planToAction(listed.plan), null);
+
+    const del = executeAllowlistedTool("delete_owner_calendar_event", { title: "Dentist appointment", when: "tomorrow at 2" }, desk);
+    assert.equal(del.ok, true);
+    assert.equal(del.plan.type, "owner_calendar_delete");
+    assert.equal(planToAction(del.plan), null);
+    if (del.plan.type === "owner_calendar_delete") {
+      assert.match(String(del.plan.title), /dentist/i);
+    }
+
+    const move = executeAllowlistedTool("update_owner_calendar_event", {
+      title: "Move my dentist appointment from 2 PM to 4 PM tomorrow",
+    }, desk);
+    assert.equal(move.plan.type, "owner_calendar_update");
+    if (move.plan.type === "owner_calendar_update") {
+      assert.match(String(move.plan.newTime), /4/i);
+    }
   });
 
   it("Ara instructions distinguish personal calendar from sales booking", () => {
     const text = buildAraInstructions({ ...desk, timezone: "America/Chicago" });
     assert.match(text, /create_owner_calendar_event/);
+    assert.match(text, /list_owner_calendar_events/);
+    assert.match(text, /delete_owner_calendar_event/);
+    assert.match(text, /update_owner_calendar_event/);
     assert.match(text, /Do NOT use schedule_call for personal reminders/i);
     assert.match(text, /Owner timezone: America\/Chicago/);
     assert.match(text, /Never say you don.t have a tool for personal reminders/i);
+    assert.match(text, /Never say you can only remove events you created yourself/i);
     assert.match(text, /Always-available personal calendar tools/);
     assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
   });
@@ -248,6 +276,9 @@ describe("Ara allowlisted tools", () => {
     assert.match(src, /isOwnerCalendarRefusalSpeech/);
     assert.match(src, /runOwnerPersonalCalendar/);
     assert.match(src, /createOwnerCalendarEventFn/);
+    assert.match(src, /listOwnerCalendarEventsFn/);
+    assert.match(src, /deleteOwnerCalendarEventFn/);
+    assert.match(src, /updateOwnerCalendarEventFn/);
   });
 
   it("uppercase action names and prospect_uid still operate the UI", () => {

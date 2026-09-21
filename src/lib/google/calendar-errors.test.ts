@@ -110,3 +110,50 @@ test("owner personal createEvent never invites attendees and treats 409 as the s
   assert.equal(body.summary, "Go to SouthState Bank and withdraw cash");
   assert.deepEqual(body.reminders, { useDefault: false, overrides: [{ method: "popup", minutes: 0 }] });
 });
+
+test("deleteEvent 404/410 is already gone, not a fresh failure", async () => {
+  const { deleteEvent } = await import("./calendar.ts");
+  const gone404 = await deleteEvent("tok", "evt-1", (async () => new Response("", { status: 404 })) as typeof fetch);
+  assert.equal(gone404.ok, true);
+  if (gone404.ok) assert.equal(gone404.alreadyGone, true);
+  const gone410 = await deleteEvent("tok", "evt-1", (async () => new Response("", { status: 410 })) as typeof fetch);
+  assert.equal(gone410.ok, true);
+  if (gone410.ok) assert.equal(gone410.alreadyGone, true);
+  const ok = await deleteEvent("tok", "evt-1", (async () => new Response("", { status: 200 })) as typeof fetch);
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.equal(ok.alreadyGone, undefined);
+});
+
+test("getEvent 404 is missing and patchEvent only sends changed fields with sendUpdates=none", async () => {
+  const { getEvent, patchEvent } = await import("./calendar.ts");
+  const missing = await getEvent("tok", "evt-gone", (async () => new Response("{}", { status: 404 })) as typeof fetch);
+  assert.equal(missing.ok, false);
+  if (!missing.ok) assert.equal(missing.missing, true);
+
+  const urls: string[] = [];
+  const bodies: string[] = [];
+  const fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    urls.push(String(url));
+    bodies.push(String(init?.body || ""));
+    return new Response(JSON.stringify({
+      id: "evt-1",
+      summary: "Dentist appointment",
+      status: "confirmed",
+      start: { dateTime: "2026-09-21T21:00:00-05:00" },
+      end: { dateTime: "2026-09-21T21:30:00-05:00" },
+    }), { status: 200 });
+  }) as typeof fetch;
+  const patched = await patchEvent("tok", "evt-1", {
+    start: new Date("2026-09-21T21:00:00.000Z"),
+    end: new Date("2026-09-21T21:30:00.000Z"),
+    timeZone: "America/Chicago",
+  }, fetchImpl);
+  assert.equal(patched.ok, true);
+  if (patched.ok) assert.equal(patched.event.id, "evt-1");
+  assert.match(urls[0], /sendUpdates=none/);
+  const body = JSON.parse(bodies[0]) as Record<string, unknown>;
+  assert.equal("summary" in body, false);
+  assert.equal("attendees" in body, false);
+  assert.equal("description" in body, false);
+  assert.ok(body.start);
+});
