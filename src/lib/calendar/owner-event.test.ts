@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   OWNER_TZ_DEFAULT,
+  expandRangeToOwnerDays,
   fromZonedLocal,
   isOwnerCalendarFollowupTime,
   isOwnerCalendarFollowupName,
@@ -312,6 +313,36 @@ describe("generic call name ask and prospect-call manage", () => {
     assert.equal(shouldAllowCalendarViewChange("Can you hear me?"), false);
     assert.equal(shouldAllowCalendarViewChange("Show me tomorrow"), true);
     assert.equal(shouldAllowCalendarViewChange("What do I have tomorrow?"), false);
+  });
+
+  it("mixed add-call + correction + hear-me stays a create, not navigation", () => {
+    const blob = "I want you to add a call to my calendar for 11 AM tomorrow. That is not the name I wanted you to name that call. Ara, can you hear me?";
+    assert.equal(isPersonalCalendarCommand(blob), true);
+    assert.equal(isOwnerCalendarCorrection(blob), true);
+    assert.equal(isConversationalAside(blob), true);
+    assert.equal(isExplicitCalendarNavigate(blob), false);
+    assert.equal(shouldAllowCalendarNavigation(blob), false);
+    const parsed = parseOwnerCalendarSpeech(blob);
+    assert.equal(parsed.matched, true);
+    if (!parsed.matched) return;
+    assert.equal(parsed.generic, true);
+    assert.equal(/that is not the name/i.test(parsed.title), false);
+    assert.equal(/hear me/i.test(parsed.title), false);
+    const when = resolveOwnerWhen({ when: parsed.when, now: NOW, timezone: OWNER_TZ_DEFAULT });
+    assert.equal(when.ok, true);
+    if (when.ok) {
+      assert.equal(when.timeLabel, "11:00 AM");
+      assert.equal(ymdInTimezone(when.start, OWNER_TZ_DEFAULT), "2026-09-21");
+    }
+  });
+
+  it("week Sep 20–26 expands to Chicago midnights for Google events.list", () => {
+    const from = new Date("2026-09-20T17:00:00.000Z");
+    const to = new Date("2026-09-27T17:00:00.000Z");
+    const covered = expandRangeToOwnerDays(from, to, OWNER_TZ_DEFAULT);
+    assert.equal(covered.from.toISOString(), "2026-09-20T05:00:00.000Z");
+    assert.equal(covered.to.toISOString(), "2026-09-28T05:00:00.000Z");
+    assert.ok(covered.from.getTime() < covered.to.getTime());
   });
 
   it("parses cancel / move / when-is for a named prospect call", () => {

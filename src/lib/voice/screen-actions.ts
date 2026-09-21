@@ -64,7 +64,7 @@ const NAV: ScreenAction[] = [
   act("NAVIGATE_HOME", "navigate_home", "NAVIGATE_HOME", "Home", ["go home", "take me home", "home"]),
   act("NAVIGATE_PIPELINE", "navigate_pipeline", "NAVIGATE_PIPELINE", "Pipeline", ["open pipeline", "go to pipeline", "pipeline"]),
   act("NAVIGATE_SETTINGS", "navigate_settings", "NAVIGATE_SETTINGS", "Settings", ["open settings", "go to settings", "settings"]),
-  act("NAVIGATE_CALENDAR", "navigate_calendar", "NAVIGATE_CALENDAR", "Calendar", ["pull up my calendar", "show me my calendar", "open calendar", "calendar"]),
+  act("NAVIGATE_CALENDAR", "navigate_calendar", "NAVIGATE_CALENDAR", "Calendar", ["pull up my calendar", "show me my calendar", "open my calendar", "open calendar", "go to my calendar"]),
   act("OPEN_FIND_CLIENTS", "open_find_clients", "OPEN_FIND_CLIENTS", "Find Clients", ["find clients", "open find clients"]),
   act("START_TASKS", "start_my_tasks", "START_TASKS", "Start My Tasks", ["start my tasks", "start tasks"]),
   act("GO_BACK", "go_back", "GO_BACK", "Back", ["go back", "back"]),

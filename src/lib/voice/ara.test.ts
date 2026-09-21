@@ -296,6 +296,14 @@ describe("Ara allowlisted tools", () => {
     assert.match(text, /Always-available personal calendar tools/);
     assert.match(text, /ONLY those explicit navigation phrases/i);
     assert.match(text, /can you hear me/i);
+    const pendingText = buildAraInstructions({
+      ...desk,
+      timezone: "America/Chicago",
+      pendingOwnerCalendar: { title: "Call", when: "tomorrow at 11", need: "name", intent: "create", at: Date.now() },
+    });
+    assert.match(pendingText, /PENDING CALENDAR ACTION: CREATE_EVENT is waiting/);
+    assert.match(pendingText, /Do NOT call navigate_calendar/);
+    assert.match(pendingText, /tomorrow at 11/);
     assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
   });
 
@@ -311,6 +319,8 @@ describe("Ara allowlisted tools", () => {
     assert.match(src, /isOwnerCalendarCorrection/);
     assert.match(src, /shouldKeepPendingOwnerCalendar/);
     assert.match(src, /isConversationalAside/);
+    assert.match(src, /isPersonalCalendarCommand/);
+    assert.match(src, /writePendingOwnerCal/);
   });
 
   it("uppercase action names and prospect_uid still operate the UI", () => {

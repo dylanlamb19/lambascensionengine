@@ -13,6 +13,15 @@ export const NATIVE_RESEARCH_TOOLS = [
   { type: "x_search" },
 ] as const;
 
+function pendingCalendarInstruction(pending: AraDeskContext["pendingOwnerCalendar"]): string {
+  if (!pending) return "PENDING CALENDAR ACTION: none. Do not open Calendar unless Dylan explicitly says open/show/pull up/go to Calendar.";
+  const detail = typeof pending === "object" ? pending : null;
+  const when = detail?.when ? ` Stored when: ${detail.when}.` : " Date/time is already stored.";
+  const title = detail?.title ? ` Working title: ${detail.title}.` : " Title is unresolved.";
+  const need = detail?.need || "name";
+  return `PENDING CALENDAR ACTION: CREATE_EVENT is waiting (need=${need}).${when}${title} Do NOT call navigate_calendar. Do NOT create another event. If Dylan names the call, call create_owner_calendar_event with that title and the stored when. If he says can you hear me, answer yes and keep this pending. If he says that is not the name, ask what to name it.`;
+}
+
 export function buildAraInstructions(ctx: AraDeskContext): string {
   const open = ctx.prospects.find((p) => p.uid === ctx.openUid);
   const stages: Record<string, number> = {};
@@ -157,6 +166,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     ctx.lastOwnerEvent
       ? `Last personal calendar event Ara created: title="${ctx.lastOwnerEvent.title}" when="${ctx.lastOwnerEvent.whenLabel}" id=${ctx.lastOwnerEvent.id}. If Dylan asks what you just added, answer from this — it is not a sales call.`
       : "Last personal calendar event Ara created: none this session.",
+    pendingCalendarInstruction(ctx.pendingOwnerCalendar),
     `Selected prospect UID: ${ctx.openUid || "none"}.`,
     `Selected company name: ${ctx.companyName || "none"}.`,
     `Current task id: ${ctx.taskId || "none"}.`,

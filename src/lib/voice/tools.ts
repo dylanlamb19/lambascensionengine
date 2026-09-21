@@ -23,6 +23,7 @@ import {
   shouldAllowCalendarNavigation,
   shouldAllowCalendarViewChange,
   type LastOwnerEvent,
+  type PendingOwnerCal,
 } from "../calendar/owner-event.ts";
 import { matchProspectsBySpokenName } from "../prospects/dedupe.ts";
 import {
@@ -353,7 +354,7 @@ export type AraDeskContext = {
   lastDiscovery?: import("../prospects/last-discovery.ts").LastDiscovery | null;
   prospectFilter?: import("../prospects/view-filter.ts").ProspectViewFilter;
   lastOwnerUtterance?: string;
-  pendingOwnerCalendar?: boolean;
+  pendingOwnerCalendar?: boolean | PendingOwnerCal;
 };
 
 export type ToolPlan =
@@ -792,12 +793,19 @@ export function executeAllowlistedTool(
     const wanted = label.toLowerCase();
     const hits = (ctx.screenActions || []).filter((a) => {
       const keys = [a.label, ...a.aliases].map((x) => x.toLowerCase());
-      return keys.some((k) => k === wanted || wanted === `the ${k}` || k.includes(wanted) && wanted.length > 3);
+      return keys.some((k) => k === wanted || wanted === `the ${k}` || (k.includes(wanted) && wanted.length > 3));
     });
     if (hits.length > 1) {
       return { ok: false, tool, rejected: false, output: { ok: false, reason: `Which one — ${[...new Set(hits.map((h) => h.label))].join(" or ")}?` }, plan: { type: "none" } };
     }
     if (hits.length === 1 && hits[0].tool !== "computer_click") {
+      if (hits[0].tool === "navigate_calendar" && !shouldAllowCalendarNavigation(ctx.lastOwnerUtterance || label, ctx.pendingOwnerCalendar)) {
+        return {
+          ok: true, tool, rejected: false,
+          output: { view: ctx.view, changed: false, ignored: true, reason: "not_explicit_navigate" },
+          plan: { type: "none" },
+        };
+      }
       const extra = hits[0].tool === "explain_current_screen" || hits[0].tool === "show_explain_panel"
         ? { show_panel: true }
         : {};

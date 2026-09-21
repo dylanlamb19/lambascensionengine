@@ -65,7 +65,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { formatLong, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
-import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldAllowCalendarNavigation, shouldAllowCalendarViewChange, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
+import { OWNER_TZ_DEFAULT, extractOwnerFollowupTitle, isConversationalAside, isOwnerCalendarConfirmNo, isOwnerCalendarConfirmYes, isOwnerCalendarCorrection, isOwnerCalendarFollowupName, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerCalendarRenameQuestion, ownerEventSpeechFromState, ownerGenericNameQuestion, parseOwnerCalendarManage, parseOwnerCalendarSpeech, pendingOwnerCalExpired, shouldAllowCalendarNavigation, shouldAllowCalendarViewChange, shouldKeepPendingOwnerCalendar, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent, type PendingOwnerCal } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -317,6 +317,12 @@ export function OwnerDesk() {
   const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
   const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
   const pendingOwnerCalRef = useRef<PendingOwnerCal | null>(null);
+  const [pendingOwnerCal, setPendingOwnerCal] = useState<PendingOwnerCal | null>(null);
+
+  function writePendingOwnerCal(next: PendingOwnerCal | null) {
+    pendingOwnerCalRef.current = next;
+    setPendingOwnerCal(next);
+  }
   const pendingCalManageRef = useRef<{
     kind: "delete" | "update";
     eventId: string;
@@ -1494,7 +1500,9 @@ export function OwnerDesk() {
       lastDiscovery: live.lastDiscovery || null,
       prospectFilter: live.prospectFilter || {},
       lastOwnerUtterance: youSaidRef.current || live.youSaid || "",
-      pendingOwnerCalendar: Boolean(pendingOwnerCalRef.current && !pendingOwnerCalExpired(pendingOwnerCalRef.current)),
+      pendingOwnerCalendar: (pendingOwnerCalRef.current && !pendingOwnerCalExpired(pendingOwnerCalRef.current))
+        ? pendingOwnerCalRef.current
+        : false,
     };
   }
 
@@ -1790,27 +1798,28 @@ export function OwnerDesk() {
 
     const pending = pendingOwnerCalRef.current;
     if (pending && pendingOwnerCalExpired(pending)) {
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
     }
     const livePending = pendingOwnerCalRef.current;
+    const creating = isPersonalCalendarCommand(text);
 
-    if (isOwnerCalendarCorrection(text)) {
+    if (!creating && isOwnerCalendarCorrection(text)) {
       araRef.current?.cancelResponse();
       if (livePending && (livePending.need === "name" || livePending.need === "which" || !livePending.eventId)) {
-        pendingOwnerCalRef.current = { ...livePending, need: "name", intent: "create", at: Date.now() };
+        writePendingOwnerCal({ ...livePending, need: "name", intent: "create", at: Date.now() });
         utter(ownerGenericNameQuestion(livePending.title || "call"), "TOOL_RESULT");
         return true;
       }
       const last = lastOwnerEventRef.current;
       if (last?.id) {
-        pendingOwnerCalRef.current = {
+        writePendingOwnerCal({
           title: last.title,
           when: last.whenLabel,
           need: "name",
           intent: "rename",
           eventId: last.id,
           at: Date.now(),
-        };
+        });
         utter(ownerCalendarRenameQuestion(), "TOOL_RESULT");
         return true;
       }
@@ -1818,7 +1827,7 @@ export function OwnerDesk() {
       return true;
     }
 
-    if (livePending && isConversationalAside(text)) {
+    if (!creating && livePending && isConversationalAside(text)) {
       return false;
     }
 
@@ -1829,21 +1838,21 @@ export function OwnerDesk() {
     if (livePending?.intent === "rename" && livePending.eventId && isOwnerCalendarFollowupName(text)) {
       title = extractOwnerFollowupTitle(text);
       renameId = livePending.eventId;
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
     } else if (parsed.matched) {
       title = parsed.title;
       when = parsed.when;
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
     } else if (livePending && isOwnerCalendarFollowupTime(text)) {
       title = livePending.title;
       when = `${livePending.when} ${text}`.trim();
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
     } else if (livePending && (livePending.need === "name" || livePending.need === "which") && isOwnerCalendarFollowupName(text)) {
       title = extractOwnerFollowupTitle(text);
       when = livePending.when;
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
     } else if (livePending && /\b(cancel|never mind|forget it)\b/i.test(text) && text.trim().length < 24) {
-      pendingOwnerCalRef.current = null;
+      writePendingOwnerCal(null);
       araRef.current?.cancelResponse();
       utter("Okay, I won’t add that.", "TOOL_RESULT");
       return true;
@@ -1851,7 +1860,7 @@ export function OwnerDesk() {
       if (livePending && !shouldKeepPendingOwnerCalendar(text, livePending)) {
         const cmd = parseSpokenCommand(text);
         if (cmd.intent !== "UNKNOWN" && cmd.confidence >= 0.9) {
-          pendingOwnerCalRef.current = null;
+          writePendingOwnerCal(null);
         }
       }
       return false;
@@ -1868,7 +1877,7 @@ export function OwnerDesk() {
       return true;
     }
     if (!title && livePending) {
-      pendingOwnerCalRef.current = livePending;
+      writePendingOwnerCal(livePending);
       return false;
     }
     araRef.current?.cancelResponse();
@@ -1878,28 +1887,29 @@ export function OwnerDesk() {
       origin: typeof window !== "undefined" ? window.location.origin : undefined,
     }, araDesk(), "owner_session");
     if (!result.ok && result.output.need) {
-      pendingOwnerCalRef.current = {
+      writePendingOwnerCal({
         title: String(result.output.title || title),
         when: String(result.output.when || when),
         need: result.output.need as PendingOwnerCal["need"],
         intent: "create",
         at: Date.now(),
-      };
+      });
       utter(String(result.output.spoken || result.output.question || "What should I name the call?"), "TOOL_RESULT");
       return true;
     }
     const output = await hydrateAraOutput("create_owner_calendar_event", result);
     if (!output.ok && output.need) {
-      pendingOwnerCalRef.current = {
+      writePendingOwnerCal({
         title: String(output.title || title),
         when: String(output.when || when),
         need: output.need as PendingOwnerCal["need"],
         intent: "create",
         at: Date.now(),
-      };
+      });
       utter(String(output.spoken || output.question || "What should I name the call?"), "TOOL_RESULT");
       return true;
     }
+    writePendingOwnerCal(null);
     utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
     return true;
   }
@@ -2004,11 +2014,12 @@ export function OwnerDesk() {
           handleAraOwnerTranscript(text, isFinal);
         },
         onAraTranscript: (text) => {
+          if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
+            araRef.current?.cancelResponse();
+            return;
+          }
           setVoiceReply(text);
           if (isOwnerCalendarRefusalSpeech(text)) {
-            araRef.current?.cancelResponse();
-          }
-          if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
             araRef.current?.cancelResponse();
           }
         },
@@ -2133,7 +2144,21 @@ export function OwnerDesk() {
       || (pendingCalManageRef.current && (isOwnerCalendarConfirmYes(text) || isOwnerCalendarConfirmNo(text)))) {
       araRef.current?.cancelResponse();
     }
-    if (!isFinal) return;
+    if (!isFinal) {
+      if (isPersonalCalendarCommand(text)) {
+        const parsed = parseOwnerCalendarSpeech(text);
+        if (parsed.matched && parsed.generic && (!pendingOwnerCalRef.current || pendingOwnerCalExpired(pendingOwnerCalRef.current))) {
+          writePendingOwnerCal({
+            title: parsed.title || "Call",
+            when: parsed.when,
+            need: "name",
+            intent: "create",
+            at: Date.now(),
+          });
+        }
+      }
+      return;
+    }
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
@@ -2296,7 +2321,7 @@ export function OwnerDesk() {
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal]);
 
   useEffect(() => {
     if (!userId) return;

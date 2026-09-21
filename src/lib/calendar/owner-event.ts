@@ -335,10 +335,21 @@ function stripWakeWord(raw: string): string {
   let t = collapseDuplicateSpeech(raw);
   t = t.replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").trim();
   t = t.replace(/^(please[, ]+)+/i, "").trim();
-  if (!/\b(hear me|are you there|are you listening)\b/i.test(t)) {
+  const pureAside = /^(can you hear me|are you (there|listening|on)|you there|you listening|hear me)$/i.test(
+    t.toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim(),
+  );
+  if (!pureAside) {
     t = t.replace(/^((i want you to|i need you to|i(?:'d| would) like you to|can you please|could you please|can you|could you|would you|will you)\s+)+/i, "").trim();
   }
   t = t.replace(/^(please[, ]+)+/i, "").trim();
+  return t.replace(/\s+/g, " ").trim();
+}
+
+function clipTrailingCalendarAsides(raw: string): string {
+  let t = raw;
+  t = t.replace(/\bthat('s| is) not (the name|what i|the one)[\s\S]*$/i, " ");
+  t = t.replace(/\bnot the name i wanted[\s\S]*$/i, " ");
+  t = t.replace(/\b(ara[,:]?\s*)?(can you hear me|are you (there|listening|on)|you there)[\s\S]*$/i, " ");
   return t.replace(/\s+/g, " ").trim();
 }
 
@@ -405,8 +416,8 @@ function extractSubjectTitle(rawTitle: string): string {
 }
 
 export function parseOwnerCalendarSpeech(raw: string): OwnerCalendarSpeech {
-  const stripped = stripWakeWord(raw);
-  if (!isPersonalCalendarCommand(stripped)) return { matched: false };
+  const stripped = clipTrailingCalendarAsides(stripWakeWord(raw));
+  if (!isPersonalCalendarCommand(stripped) && !isPersonalCalendarCommand(raw)) return { matched: false };
 
   const quoted = stripped.match(/['"“”‘’](.+?)['"“”‘’]/);
   const thatNeed = stripped.match(/\bthat i (?:need to |have to |should )?(.+)$/i);
@@ -553,9 +564,16 @@ export function shouldAllowCalendarViewChange(raw: string, pending?: boolean | P
 
 export function expandRangeToOwnerDays(from: Date, to: Date, timeZone = OWNER_TZ_DEFAULT): { from: Date; to: Date } {
   const startYmd = ymdInTimezone(from, timeZone);
-  const [y, m, d] = startYmd.split("-").map(Number);
-  const start = fromZonedLocal(y, m, d, 0, 0, timeZone);
-  const end = to.getTime() > start.getTime() ? to : new Date(start.getTime() + 24 * 3600 * 1000);
+  const lastInstant = new Date(Math.max(from.getTime(), to.getTime() - 1));
+  const endYmd = ymdInTimezone(lastInstant, timeZone);
+  const [sy, sm, sd] = startYmd.split("-").map(Number);
+  const [ey, em, ed] = endYmd.split("-").map(Number);
+  const start = fromZonedLocal(sy, sm, sd, 0, 0, timeZone);
+  const endDay = fromZonedLocal(ey, em, ed, 0, 0, timeZone);
+  const end = new Date(endDay.getTime() + 24 * 60 * 60 * 1000);
+  if (!(end.getTime() > start.getTime())) {
+    return { from: start, to: new Date(start.getTime() + 24 * 60 * 60 * 1000) };
+  }
   return { from: start, to: end };
 }
 

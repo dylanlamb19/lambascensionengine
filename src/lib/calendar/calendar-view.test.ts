@@ -167,6 +167,18 @@ describe("Calendar screen + explain", () => {
     assert.equal(hearView.plan.type, "none");
     const next = executeAllowlistedTool("calendar_next", {}, desk);
     assert.equal(next.plan.type, "calendar_next");
+    const clickCal = executeAllowlistedTool("computer_click", { name: "Calendar" }, {
+      ...desk,
+      lastOwnerUtterance: "Add a call to my calendar for 11 AM tomorrow",
+      screenActions: [{ id: "NAVIGATE_CALENDAR", label: "Calendar", aliases: ["calendar"], risk: "LOW", tool: "navigate_calendar" }],
+    });
+    assert.equal(clickCal.plan.type, "none");
+    const clickOpen = executeAllowlistedTool("computer_click", { name: "Calendar" }, {
+      ...desk,
+      lastOwnerUtterance: "Open my Calendar",
+      screenActions: [{ id: "NAVIGATE_CALENDAR", label: "Calendar", aliases: ["open my calendar"], risk: "LOW", tool: "navigate_calendar" }],
+    });
+    assert.equal(clickOpen.plan.type, "navigate");
   });
 
   it("tomorrow is a day view, not a guessed event", () => {
