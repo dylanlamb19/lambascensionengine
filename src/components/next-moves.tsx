@@ -52,7 +52,7 @@ export function NextMoves({
     {
       key: "research",
       label: `Needs research (${counts.research})`,
-      hint: "Look them up so you know who you're pitching.",
+      hint: "Look them up so you know who you’re pitching.",
       filter: { replace: true, reach: ["NEEDS_RESEARCH"], sort: "needs_attention" },
       show: true,
     },

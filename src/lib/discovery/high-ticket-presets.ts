@@ -1,5 +1,5 @@
 /**
- * High-ticket Find Clients presets for Dylan's Texas ICP.
+ * High-ticket Find Clients presets for Dylan’s Texas ICP.
  * Map onto Find form fields: vertical → vert, location → city, limit → findLimit.
  * Places search only — no invented businesses, emails, or ROAS.
  */
