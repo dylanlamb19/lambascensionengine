@@ -1,0 +1,34 @@
+name: Apply campaigns b
+on:
+  workflow_dispatch:
+  push:
+    branches: [email-campaigns-os]
+    paths:
+      - "build-assets/email-campaigns/apply-campaigns-b.yml.files.json.p2"
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: email-campaigns-os
+      - name: Join decode commit
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import base64, json, pathlib
+          root = pathlib.Path("build-assets/email-campaigns")
+          raw = (root / "apply-campaigns-b.yml.files.json.p1").read_text() + (root / "apply-campaigns-b.yml.files.json.p2").read_text()
+          files = json.loads(raw)
+          for path, b64 in files.items():
+              p = pathlib.Path(path)
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_bytes(base64.b64decode(b64))
+              print("wrote", path, p.stat().st_size)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/campaigns/sql.server.ts src/lib/campaigns/service.server.ts
+          if git diff --cached --quiet; then echo none; else git commit -m "feat(campaigns): apply batch b" && git push; fi
