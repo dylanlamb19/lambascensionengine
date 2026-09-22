@@ -27,4 +27,5 @@ export const NEXT_MOVE: Record<string, string> = {
   NEEDS_CONTACT_INFO: "Find a real contact before you pitch.",
   NEEDS_RESEARCH: "Look them up before you spend time on outreach.",
   BLOCKED: "Leave them alone — Do Not Contact.",
+  SUPPRESSED: "Suppressed — do not restart outreach.",
 };

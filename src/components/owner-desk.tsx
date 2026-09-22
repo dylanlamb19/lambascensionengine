@@ -36,6 +36,13 @@ import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/ide
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { contactSummary, ownerQualify } from "@/lib/prospects/qualify";
 import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilterEmpty, type ProspectViewFilter } from "@/lib/prospects/view-filter";
+import {
+  defaultActivePipelineFilter,
+  filterForQueue,
+  QUEUE_LABEL,
+  type PipelineQueue,
+} from "@/lib/prospects/pipeline-queues";
+import { contactEligibleProspectsFn } from "@/lib/prospects/eligible.server";
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";
@@ -284,7 +291,7 @@ export function OwnerDesk() {
   const [findLimit, setFindLimit] = useState(8);
   const [findMore, setFindMore] = useState(false);
   const [lastDiscovery, setLastDiscovery] = useState<LastDiscovery | null>(() => loadLastDiscovery());
-  const [prospectFilter, setProspectFilter] = useState<ProspectViewFilter>({});
+  const [prospectFilter, setProspectFilter] = useState<ProspectViewFilter>(() => defaultActivePipelineFilter());
   const [radiusMiles, setRadiusMiles] = useState(25);
   const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
@@ -1041,6 +1048,12 @@ export function OwnerDesk() {
       void runFind({ vertical: effect.vertical, location: effect.location, limit: effect.count });
       return;
     }
+    if (effect.type === "contact_eligible") {
+      void contactEligibleProspectsFn().catch(() => {
+        /* Persist eligibility snapshot. Client already spoke live counts. Never send. */
+      });
+      return;
+    }
     if (effect.type === "research") {
       void researchFurther(effect.uid);
       return;
@@ -1552,6 +1565,7 @@ export function OwnerDesk() {
         "get_system_health",
         "navigate_health",
         "update_prospect_information",
+        "contact_eligible_prospects",
       ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -3342,12 +3356,16 @@ export function OwnerDesk() {
             <h3 className="font-display text-lg">Pipeline</h3>
             <button className="la-btn la-btn-quiet" onClick={() => dispatchAction({ name: "NAVIGATE_PIPELINE" })}>Open</button>
           </div>
-          {rows.slice(0, 4).map((c) => (
-            <button key={c.uid || c.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
-              <span className="la-list-name"><b>{c.name}</b></span>
-              <span className="text-sm text-muted">{c.stage_plain}</span>
+          {visibleRows.slice(0, 4).map((c) => {
+            const full = rows.find((r) => r.uid === c.uid);
+            if (!full) return null;
+            return (
+            <button key={full.uid || full.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: full.uid })}>
+              <span className="la-list-name"><b>{full.name}</b></span>
+              <span className="text-sm text-muted">{full.stage_plain}</span>
             </button>
-          ))}
+            );
+          })}
         </section>
       );
     }
@@ -3680,6 +3698,26 @@ export function OwnerDesk() {
           <section className="la-card">
             <p className="la-kicker">Pipeline</p>
             <h2 className="font-display mb-2 mt-2 text-2xl">Pipeline</h2>
+            <div className="mb-3 flex flex-wrap gap-2" data-acq-queues="1">
+              {([
+                "ACTIVE_PIPELINE",
+                "NEEDS_DYLAN",
+                "NEEDS_CONTACT_INFORMATION",
+                "NEEDS_RESEARCH",
+                "SUPPRESSED",
+                "ARCHIVE_NOT_PURSUING",
+              ] as PipelineQueue[]).map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="la-btn la-btn-quiet"
+                  data-on={prospectFilter.queue === q ? "1" : "0"}
+                  onClick={() => dispatchAction({ name: "FILTER_PROSPECTS", filter: filterForQueue(q) })}
+                >
+                  {QUEUE_LABEL[q]}
+                </button>
+              ))}
+            </div>
             <NextMoves
               prospects={rows.map(fromProspect)}
               onFilter={(filter) => dispatchAction({ name: "FILTER_PROSPECTS", filter })}

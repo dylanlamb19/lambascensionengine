@@ -37,6 +37,8 @@ import {
   toolArgsToFilter,
 } from "../prospects/view-filter.ts";
 import { hasChanges, pickKnownChanges, whatToAddSpeech, whichProspectSpeech } from "../prospects/owner-edit.ts";
+import { evaluateContactability } from "../prospects/contactability.ts";
+import { spokenEligibleReport } from "../prospects/pipeline-queues.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
@@ -55,6 +57,7 @@ export const ALLOWED_TOOLS = [
   "set_find_clients_form",
   "run_find_clients",
   "filter_prospects",
+  "contact_eligible_prospects",
   "start_tasks",
   "start_my_tasks",
   "go_back",
@@ -183,6 +186,7 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   SET_FIND_CLIENTS_FORM: "set_find_clients_form",
   RUN_FIND_CLIENTS: "run_find_clients",
   FILTER_PROSPECTS: "filter_prospects",
+  CONTACT_ELIGIBLE_PROSPECTS: "contact_eligible_prospects",
   DRAFT_OUTREACH: "draft_outreach",
   OPEN_OUTREACH: "open_outreach",
   NAVIGATE_CALENDAR: "navigate_calendar",
@@ -388,6 +392,7 @@ export type ToolPlan =
   | { type: "find"; vertical: string; location: string; count: number }
   | { type: "fill_find"; vertical: string; location: string; count: number }
   | { type: "filter"; filter: import("../prospects/view-filter.ts").ProspectViewFilter; ask?: string; unknown?: string }
+  | { type: "contact_eligible" }
   | { type: "research"; uid: string }
   | { type: "find_contact"; uid: string }
   | { type: "open_website"; uid: string }
@@ -520,7 +525,8 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "set_find_clients_form", description: "Fill Find Clients fields without searching yet.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } } } },
     { type: "function", name: "run_find_clients", description: "Run Find Clients using the form (or provided fields). Discovers NEW real Google businesses. Do NOT use to show or filter companies already found — use filter_prospects.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } } } },
     { type: "function", name: "find_clients", description: "Fill Find Clients and run it. Same as the Find Clients button. Use ONLY to discover NEW companies. Do NOT use this to show, filter, or sort companies already on the list.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } }, required: ["location"] } },
-    { type: "function", name: "filter_prospects", description: "Filter, sort, or show the Pipeline VIEW. Does not search Google Places, does not change records, does not send email. REFINE (compose=true) only when Dylan refers to the current set: those/these/the ones/of those/only/just/now show the ones. A fully specified new query REPLACES previous filters: pass compose=false and last_discovery=false. Examples of REPLACE: ‘show me good-fit roofing companies in Fort Worth that need contact info’, ‘show me med spas in Dallas’, ‘show companies added today’. Do not keep leftover filters he did not mention. For ‘those/these/just found’, set last_discovery=true.", parameters: { type: "object", properties: { compose: { type: "boolean", description: "true only when narrowing the CURRENT view. false or omit for a new fully specified query (replaces previous filters)." }, clear: { type: "boolean", description: "Clear all view filters and show the full list." }, last_discovery: { type: "boolean", description: "Restrict to the prospect UIDs from the latest Find Clients search. Do not re-run Places. Use only when Dylan refers to those/these/the ones you just found. Do NOT set this for a new standalone query." }, vertical: { type: "array", items: { type: "string" } }, city: { type: "string" }, location: { type: "string" }, fit: { type: "array", items: { type: "string", enum: ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] } }, research: { type: "array", items: { type: "string", enum: ["done", "unavailable", "not_started"] } }, reach: { type: "array", items: { type: "string", enum: ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED"] } }, has_phone: { type: "boolean" }, has_email: { type: "boolean" }, has_website: { type: "boolean" }, has_decision_maker: { type: "boolean" }, exclude_test: { type: "boolean" }, exclude_demo: { type: "boolean" }, added_after: { type: "string" }, min_reviews: { type: "number" }, min_rating: { type: "number" }, sort: { type: "string", enum: ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] }, limit: { type: "number" }, prospect_uids: { type: "array", items: { type: "string" } } } } },
+    { type: "function", name: "contact_eligible_prospects", description: "Report how many prospects are currently CONTACTABLE by usable EMAIL (Acquisition OS). Test Mode gated. Never sends. Never invents counts. Use for ‘how many can we contact’, ‘contact all eligible’ (report only until Autopilot ships).", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "filter_prospects", description: "Filter, sort, or show the Pipeline VIEW. Does not search Google Places, does not change records, does not send email. REFINE (compose=true) only when Dylan refers to the current set: those/these/the ones/of those/only/just/now show the ones. A fully specified new query REPLACES previous filters: pass compose=false and last_discovery=false. Examples of REPLACE: ‘show me good-fit roofing companies in Fort Worth that need contact info’, ‘show me med spas in Dallas’, ‘show companies added today’. Do not keep leftover filters he did not mention. For ‘those/these/just found’, set last_discovery=true.", parameters: { type: "object", properties: { compose: { type: "boolean", description: "true only when narrowing the CURRENT view. false or omit for a new fully specified query (replaces previous filters)." }, clear: { type: "boolean", description: "Clear all view filters and show the full list." }, last_discovery: { type: "boolean", description: "Restrict to the prospect UIDs from the latest Find Clients search. Do not re-run Places. Use only when Dylan refers to those/these/the ones you just found. Do NOT set this for a new standalone query." }, vertical: { type: "array", items: { type: "string" } }, city: { type: "string" }, location: { type: "string" }, fit: { type: "array", items: { type: "string", enum: ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] } }, research: { type: "array", items: { type: "string", enum: ["done", "unavailable", "not_started"] } }, reach: { type: "array", items: { type: "string", enum: ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED", "SUPPRESSED"] } }, queue: { type: "string", enum: ["ACTIVE_PIPELINE", "NEEDS_CONTACT_INFORMATION", "NEEDS_RESEARCH", "NEEDS_DYLAN", "ARCHIVE_NOT_PURSUING", "SUPPRESSED"] }, has_phone: { type: "boolean" }, has_email: { type: "boolean" }, has_website: { type: "boolean" }, has_decision_maker: { type: "boolean" }, exclude_test: { type: "boolean" }, exclude_demo: { type: "boolean" }, added_after: { type: "string" }, min_reviews: { type: "number" }, min_rating: { type: "number" }, sort: { type: "string", enum: ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] }, limit: { type: "number" }, prospect_uids: { type: "array", items: { type: "string" } } } } },
     { type: "function", name: "research_prospect", description: "Run deep research on a prospect.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "research_further", description: "Same as Research further.", parameters: { type: "object", properties: uid } },
     { type: "function", name: "find_contact", description: "Find a legitimate public decision-maker or outreach method. Same as Find Contact. Does not invent emails.", parameters: { type: "object", properties: uid } },
@@ -1327,6 +1333,64 @@ export function executeAllowlistedTool(
       ok: true, tool, rejected: false,
       output: { ok: true, ...f, changed: true },
       plan: { type: "find", vertical: f.vertical, location: f.location, count: f.count },
+    };
+  }
+  if (tool === "contact_eligible_prospects") {
+    let contactable = 0, needsContact = 0, needsResearch = 0, blocked = 0, suppressed = 0;
+    const contactableUids: string[] = [];
+    for (const row of ctx.prospects || []) {
+      const reconstructed = {
+        id: 0,
+        uid: row.uid,
+        name: row.name,
+        vertical: row.vertical || "",
+        city: row.city || "",
+        website: row.website || "UNKNOWN",
+        phone: row.phone || "UNKNOWN",
+        review_count: row.review_count || 0,
+        google_rating: row.google_rating || "UNKNOWN",
+        job_value_est: 0,
+        score: row.score || 0,
+        fit: "possible" as const,
+        fit_plain: row.fit_plain || "",
+        stage: row.stage || "New",
+        stage_plain: row.stage_plain || "",
+        research_status: row.research_status || "none",
+        findings: [],
+        contacts: row.recipient
+          ? [{ name: row.decisionMaker || "UNKNOWN", title: "UNKNOWN", email: row.recipient, email_status: "unverified" as const, profile_url: "", source: "prospect record", last_verified: "" }]
+          : [],
+        is_demo: Boolean(row.is_demo),
+        suppressed: row.reach === "SUPPRESSED",
+        readiness: row.fit_headline === "GOOD FIT"
+          ? "STRONG CANDIDATE FOR FURTHER QUALIFICATION" as const
+          : row.fit_headline === "POSSIBLE FIT" ? "POSSIBLE CANDIDATE" as const : undefined,
+      };
+      const c = evaluateContactability(reconstructed);
+      if (c.status === "CONTACTABLE" && c.contactable) {
+        contactable += 1;
+        if (row.uid) contactableUids.push(row.uid);
+      } else if (c.status === "NEEDS_CONTACT_INFORMATION") needsContact += 1;
+      else if (c.status === "NEEDS_RESEARCH") needsResearch += 1;
+      else if (c.status === "BLOCKED") blocked += 1;
+      else if (c.status === "SUPPRESSED") suppressed += 1;
+    }
+    const spoken = spokenEligibleReport(
+      { contactable, needsContact, needsResearch, blocked, suppressed },
+      Boolean(ctx.testMode),
+    );
+    return {
+      ok: true, tool, rejected: false,
+      output: {
+        ok: true,
+        counts: { contactable, needsContactInformation: needsContact, needsResearch, blocked, suppressed },
+        contactableUids,
+        testMode: Boolean(ctx.testMode),
+        spoken,
+        emailSent: false,
+        changed: false,
+      },
+      plan: { type: "contact_eligible" },
     };
   }
   if (tool === "filter_prospects") {

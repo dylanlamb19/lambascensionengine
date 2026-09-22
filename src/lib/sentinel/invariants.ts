@@ -1,5 +1,6 @@
 import { makeFinding } from "./ledger.ts";
 import type { InvariantSnapshot, SentinelFinding } from "./types.ts";
+import { evaluateContactabilityInvariants } from "./contactability-check.ts";
 
 export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
   const out: SentinelFinding[] = [];
@@ -91,6 +92,7 @@ export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
     ));
   }
 
+  if (snap.prospects?.length) out.push(...evaluateContactabilityInvariants(snap.prospects));
   return out;
 }
 

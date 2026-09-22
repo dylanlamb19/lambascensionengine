@@ -29,6 +29,8 @@ export const SENTINEL_CODES = [
   "DNC_SEQUENCE_ACTIVE",
   "BOUNCE_FUTURE_SEND_SCHEDULED",
   "HTTP_UNHEALTHY",
+  "CONTACTABILITY_MISMATCH",
+  "CONTACTABLE_WITHOUT_EMAIL",
   "SENTINEL_OK",
 ] as const;
 
@@ -87,6 +89,8 @@ export function defaultSeverity(code: SentinelCode): SentinelSeverity {
     case "ARA_VOICE_PROVIDER_UNAVAILABLE":
     case "ARA_VOICE_NETWORK_FAILED":
     case "HTTP_UNHEALTHY":
+    case "CONTACTABILITY_MISMATCH":
+    case "CONTACTABLE_WITHOUT_EMAIL":
       return "high";
     case "CALENDAR_NOT_AUTHORIZED":
     case "GMAIL_NOT_CONNECTED":
@@ -116,6 +120,8 @@ export function featureForCode(code: SentinelCode): SentinelFeature {
     || code === "FOLLOWUP_NOT_CANCELLED_AFTER_REPLY"
     || code === "DNC_SEQUENCE_ACTIVE"
     || code === "BOUNCE_FUTURE_SEND_SCHEDULED"
+    || code === "CONTACTABILITY_MISMATCH"
+    || code === "CONTACTABLE_WITHOUT_EMAIL"
   ) return "pipeline";
   return "sentinel";
 }
@@ -150,6 +156,8 @@ export function ownerLabel(code: SentinelCode): string {
     case "DNC_SEQUENCE_ACTIVE": return "A Do Not Contact company still has an active sequence";
     case "BOUNCE_FUTURE_SEND_SCHEDULED": return "A bounced address still has future sends";
     case "HTTP_UNHEALTHY": return "The live site did not respond";
+    case "CONTACTABILITY_MISMATCH": return "Contactability labels disagree with the email route";
+    case "CONTACTABLE_WITHOUT_EMAIL": return "A prospect was marked contactable without an email";
     default: return "Sentinel noted a check";
   }
 }

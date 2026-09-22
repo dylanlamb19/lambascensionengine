@@ -1,5 +1,5 @@
 import type { Finding, Prospect } from "./review-brief";
-import { LINKEDIN_DENTAL_BATCH_2026_09_22 } from "./linkedin-batch-2026-09-22";
+import { LINKEDIN_DENTAL_BATCH_2026_09_22 } from "./linkedin-batch-2026-09-22.ts";
 
 const ALIGN_FINDINGS: Finding[] = [
   { id: "resolves", result: "HTTP 200", status: "VERIFIED", source: "HTTP GET homepage" },

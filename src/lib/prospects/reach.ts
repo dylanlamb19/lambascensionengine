@@ -1,7 +1,7 @@
 import type { DecisionMaker } from "../research/types.ts";
 import type { Prospect } from "../review-brief.ts";
 
-export type ReachKind = "READY_TO_CONTACT" | "NEEDS_CONTACT_INFO" | "NEEDS_RESEARCH" | "BLOCKED";
+export type ReachKind = "READY_TO_CONTACT" | "NEEDS_CONTACT_INFO" | "NEEDS_RESEARCH" | "BLOCKED" | "SUPPRESSED";
 
 export type Provenance = "VERIFIED" | "FOUND PUBLICLY" | "ENRICHED" | "OWNER PROVIDED" | "UNKNOWN";
 
@@ -176,13 +176,12 @@ export function contactFields(p: Prospect): ContactField[] {
 }
 
 export function reachKind(p: Prospect): ReachKind {
-  if (p.suppressed || p.stage === "Do Not Contact") return "BLOCKED";
+  // Acquisition OS Part 1: EMAIL-only READY TO CONTACT.
+  // Phone / LinkedIn / contact-form do not count as autonomous contactability.
+  if (p.suppressed) return "SUPPRESSED";
+  if (p.stage === "Do Not Contact") return "BLOCKED";
   const email = usefulEmail(p);
-  const person = namedPeople(p).length > 0;
-  const dmPhone = (p.contacts || []).some((c) => c.phone && c.phone.replace(/\D/g, "").length >= 10);
   if (email) return "READY_TO_CONTACT";
-  if (person && listingPhone(p)) return "READY_TO_CONTACT";
-  if (person && dmPhone) return "READY_TO_CONTACT";
   const researched = p.research_status === "complete" || p.research_status === "partial"
     || p.research_status === "blocked" || p.research_status === "failed";
   if (!researched && !listingPhone(p) && !verifiedWebsite(p)) return "NEEDS_RESEARCH";
@@ -193,15 +192,16 @@ export function reachKind(p: Prospect): ReachKind {
 export function reachLabel(kind: ReachKind): string {
   switch (kind) {
     case "READY_TO_CONTACT": return "READY TO CONTACT";
-    case "NEEDS_CONTACT_INFO": return "NEEDS CONTACT INFO";
-    case "NEEDS_RESEARCH": return "NEEDS MORE RESEARCH";
+    case "NEEDS_CONTACT_INFO": return "NEEDS CONTACT INFORMATION";
+    case "NEEDS_RESEARCH": return "NEEDS RESEARCH";
     case "BLOCKED": return "BLOCKED";
+    case "SUPPRESSED": return "SUPPRESSED";
   }
 }
 
 export function reachTone(kind: ReachKind): "good" | "warn" | "bad" {
   if (kind === "READY_TO_CONTACT") return "good";
-  if (kind === "BLOCKED") return "bad";
+  if (kind === "BLOCKED" || kind === "SUPPRESSED") return "bad";
   return "warn";
 }
 
@@ -237,27 +237,27 @@ export function whatWeKnow(p: Prospect): string[] {
 
 export function araRecommend(p: Prospect): string {
   const kind = reachKind(p);
+  if (kind === "SUPPRESSED") return "This company is suppressed. Leave them alone.";
   if (kind === "BLOCKED") return "This company is on Do Not Contact. Leave them alone.";
   if (kind === "READY_TO_CONTACT") {
     const person = decisionMaker(p);
     const email = usefulEmail(p);
-    const phone = listingPhone(p);
     if (email) return `Draft outreach to ${email.value}${person ? ` (${person.value})` : ""}. Nothing sends until you confirm.`;
-    if (phone) return `Call ${phone.value}${person ? ` and ask for ${person.value}` : " and ask for the owner"}.`;
-    return "You have enough to start a conversation. Draft outreach, then you approve the send.";
+    return "You have a usable email route. Draft outreach, then you approve the send.";
   }
   if (kind === "NEEDS_RESEARCH") return "Look them up before you spend time on outreach.";
   if (listingPhone(p) || verifiedWebsite(p)) {
-    return "Find the owner or a real outreach method before sending. You can still call the listing number or open the site.";
+    return "Find a usable email before autonomous outreach. You can still call the listing number or open the site.";
   }
-  return "Find a legitimate public contact before outreach. Do not guess an email.";
+  return "Find a legitimate public email before outreach. Do not guess an email.";
 }
 
 export function prospectActions(p: Prospect, opts?: { gmailConnected?: boolean }): ProspectAction[] {
-  if (reachKind(p) === "BLOCKED") {
+  const blocked = reachKind(p);
+  if (blocked === "BLOCKED" || blocked === "SUPPRESSED") {
     return [{ id: "learn_more", label: "Learn More", primary: true }];
   }
-  const kind = reachKind(p);
+  const kind = blocked;
   const site = verifiedWebsite(p);
   const phone = listingPhone(p);
   const email = usefulEmail(p);

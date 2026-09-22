@@ -8,10 +8,12 @@ import { fitHeadline, websiteResearchState, type FitHeadline } from "./qualify.t
 import { listingPhone, namedPeople, reachKind, usefulEmail, verifiedWebsite, type ReachKind } from "./reach.ts";
 import type { Prospect } from "../review-brief.ts";
 import type { LastDiscovery } from "./last-discovery.ts";
+import { matchesQueue, QUEUE_LABEL, type PipelineQueue } from "./pipeline-queues.ts";
 
 export const FIT_FILTER = ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] as const;
 export const RESEARCH_FILTER = ["done", "unavailable", "not_started"] as const;
-export const REACH_FILTER = ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED"] as const;
+export const REACH_FILTER = ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED", "SUPPRESSED"] as const;
+export const QUEUE_FILTER = ["ACTIVE_PIPELINE", "NEEDS_CONTACT_INFORMATION", "NEEDS_RESEARCH", "NEEDS_DYLAN", "ARCHIVE_NOT_PURSUING", "SUPPRESSED"] as const;
 export const SORT_FILTER = ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] as const;
 
 export type ProspectViewFilter = {
@@ -20,6 +22,7 @@ export type ProspectViewFilter = {
   fit?: FitHeadline[];
   research?: (typeof RESEARCH_FILTER)[number][];
   reach?: ReachKind[];
+  queue?: PipelineQueue;
   stage?: string[];
   hasPhone?: boolean;
   hasEmail?: boolean;
@@ -70,7 +73,7 @@ export type SpokenFilterResult =
   | { kind: "none" };
 
 const ALLOWED_KEYS = new Set([
-  "vertical", "city", "fit", "research", "reach", "stage",
+  "vertical", "city", "fit", "research", "reach", "queue", "stage",
   "hasPhone", "hasEmail", "hasWebsite", "hasDecisionMaker",
   "source", "excludeTest", "excludeDemo", "addedAfter",
   "minReviews", "minRating", "prospectUids", "lastDiscovery",
@@ -184,6 +187,8 @@ export function validateProspectFilter(raw: unknown): { filter: ProspectViewFilt
   if (research) filter.research = research;
   const reach = pickEnum(input.reach, REACH_FILTER);
   if (reach) filter.reach = reach as ReachKind[];
+  const queue = pickEnum(input.queue, QUEUE_FILTER)?.[0];
+  if (queue) filter.queue = queue as PipelineQueue;
   const stage = asStringArray(input.stage);
   if (stage) filter.stage = stage;
   const hasPhone = asBool(input.hasPhone);
@@ -238,7 +243,7 @@ export function composeProspectFilter(current: ProspectViewFilter, incoming: Pro
 export type FilterIntentMode = "refine" | "replace";
 
 const SEMANTIC_KEYS: (keyof ProspectViewFilter)[] = [
-  "vertical", "city", "fit", "research", "reach", "stage",
+  "vertical", "city", "fit", "research", "reach", "queue", "stage",
   "hasPhone", "hasEmail", "hasWebsite", "hasDecisionMaker",
   "source", "excludeTest", "excludeDemo", "addedAfter",
   "minReviews", "minRating", "prospectUids",
@@ -374,6 +379,7 @@ function matches(p: FilterableProspect, f: ProspectViewFilter, last: LastDiscove
   if (f.fit?.length && !f.fit.includes(p.fitHeadline)) return false;
   if (f.research?.length && !f.research.includes(p.research)) return false;
   if (f.reach?.length && !f.reach.includes(p.reach)) return false;
+  if (f.queue && !matchesQueue(p, f.queue)) return false;
   if (f.stage?.length && !f.stage.some((s) => p.stage === s || (p.stage_plain || "").toLowerCase() === s.toLowerCase())) return false;
   if (f.hasPhone === true && !p.hasPhone) return false;
   if (f.hasPhone === false && p.hasPhone) return false;
@@ -405,7 +411,8 @@ const ATTN_RANK: Record<ReachKind, number> = {
   NEEDS_RESEARCH: 0,
   NEEDS_CONTACT_INFO: 1,
   BLOCKED: 2,
-  READY_TO_CONTACT: 3,
+  SUPPRESSED: 3,
+  READY_TO_CONTACT: 4,
 };
 
 export function applyProspectFilter(
@@ -445,8 +452,15 @@ export function filterChips(f: ProspectViewFilter, last: LastDiscovery | null = 
     chips.push(r === "not_started" ? "Needs research" : r === "unavailable" ? "Website research unavailable" : "Researched");
   }
   for (const r of f.reach || []) {
-    chips.push(r === "NEEDS_CONTACT_INFO" ? "Needs Contact Info" : r === "READY_TO_CONTACT" ? "Ready to contact" : r === "NEEDS_RESEARCH" ? "Needs research" : "Blocked");
+    chips.push(
+      r === "NEEDS_CONTACT_INFO" ? "Needs Contact Info"
+        : r === "READY_TO_CONTACT" ? "Ready to contact"
+          : r === "NEEDS_RESEARCH" ? "Needs research"
+            : r === "SUPPRESSED" ? "Suppressed"
+              : "Blocked",
+    );
   }
+  if (f.queue) chips.push(QUEUE_LABEL[f.queue]);
   if (f.hasPhone === true) chips.push("Has phone");
   if (f.hasPhone === false) chips.push("No phone");
   if (f.hasEmail === true) chips.push("Has email");
@@ -502,6 +516,7 @@ function hasListIntent(t: string): boolean {
   if (refersToCurrentSet(t) && /\b(show|filter|only|which|hide|sort|just)\b/.test(t)) return true;
   if (/\b(sort|filter|only show|show only|hide test|hide demo|real (businesses|prospects|companies))\b/.test(t)) return true;
   if (/\bshow( me)? (companies|prospects|roofers|roofing|hvac|plumbers?|med spas?|dentists?|lawyers?)\b/.test(t)) return true;
+  if (/\b(actionable|needs dylan|active pipeline|needs contact information|who can'?t we contact|prospects that need me)\b/.test(t)) return true;
   if (/\b(need(s|ing)? (more )?(research|contact)|with (a )?(phone|website|email)|decision maker|owner is still unknown|good[- ]fit|possible[- ]fit|added today|more than \d+ reviews)\b/.test(t)) {
     return /\b(show|only|which|filter|hide|sort)\b/.test(t);
   }
@@ -540,6 +555,21 @@ export function parseSpokenFilter(raw: string): SpokenFilterResult {
 
   if (referringLast) filter.lastDiscovery = true;
   if (referringSet) filter.replace = false;
+
+  if (/\b(only (show )?actionable|show (me )?(only )?(the )?actionable|active pipeline|prospects we can (actually )?(contact|act on)|only (the )?(ones|prospects) (we can|ready))\b/.test(t)
+    && !/\bneed(s|ing)? contact\b/.test(t)) {
+    filter.queue = "ACTIVE_PIPELINE";
+    filter.excludeTest = true;
+    filter.excludeDemo = true;
+  } else if (/\b(show (me )?(the )?(prospects that )?need me|needs dylan)\b/.test(t)) {
+    filter.queue = "NEEDS_DYLAN";
+  } else if (/\b(who can'?t we contact|show (me )?needs contact( information| info)?)\b/.test(t)) {
+    filter.queue = "NEEDS_CONTACT_INFORMATION";
+  } else if (/\bshow (me )?(the )?suppressed\b/.test(t)) {
+    filter.queue = "SUPPRESSED";
+  } else if (/\b(archive|not pursuing)\b/.test(t) && /\b(show|filter|open)\b/.test(t)) {
+    filter.queue = "ARCHIVE_NOT_PURSUING";
+  }
 
   const mapped = mapSpokenVertical(t);
   if (mapped && mapped !== "Other" && /\b(roof|hvac|plumb|sewer|drain|foundat|remod|solar|spa|dent|law|injur|consult|saas|software)/.test(t)) {
@@ -623,6 +653,7 @@ export function toolArgsToFilter(args: Record<string, unknown>): { filter: Prosp
     fit: args.fit,
     research: args.research ?? args.researchState ?? args.research_state,
     reach: args.reach ?? args.contactState ?? args.contact_state,
+    queue: args.queue,
     stage: args.stage,
     hasPhone: args.has_phone ?? args.hasPhone,
     hasEmail: args.has_email ?? args.hasEmail,

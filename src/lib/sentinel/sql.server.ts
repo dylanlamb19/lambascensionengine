@@ -167,6 +167,11 @@ export async function loadInvariantSnapshot(userId: string): Promise<InvariantSn
     snap.duplicateActivity = dupActs.map((r) => ({ action: r.action, detail: r.detail, count: r.n }));
   } catch { /* ignore */ }
 
+  try {
+    const { listProspects } = await import("@/lib/prospects/repo.server");
+    snap.prospects = await listProspects(userId);
+  } catch { /* ignore */ }
+
   return snap;
 }
 

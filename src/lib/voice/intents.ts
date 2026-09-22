@@ -272,6 +272,18 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /is lascengine healthy|are there any bugs|what broke( today)?|did the last (deploy|deployment) pass|is the worker running|what is sentinel watching/)) {
     return { ...base, intent: "GET_SYSTEM_HEALTH", risk: "LOW", confidence: 0.97 };
   }
+  if (hit(t, /how many (prospects )?(can we|could we|are (currently )?)(contact|contactable)|how many (are )?(currently )?(contactable|ready to (contact|send))|who can we contact|contact all (the )?(prospects |ones )?(we can|eligible)|reach out to everyone ready|contact all eligible/)) {
+    return { ...base, intent: "CONTACT_ELIGIBLE_PROSPECTS", risk: "LOW", confidence: 0.97 };
+  }
+  if (hit(t, /show (me )?(the )?(prospects that )?need me|show needs dylan/)) {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.97, filter: { queue: "NEEDS_DYLAN", replace: true, excludeTest: true, excludeDemo: true } };
+  }
+  if (hit(t, /show (me )?(only )?(actionable|the active pipeline)|show only (the )?(ones |prospects )?(we can|ready)|show (me )?actionable prospects/)) {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.97, filter: { queue: "ACTIVE_PIPELINE", replace: true, excludeTest: true, excludeDemo: true, sort: "needs_attention" } };
+  }
+  if (hit(t, /who can'?t we contact|show (me )?needs contact( information| info)?|show (me )?who we can'?t contact/)) {
+    return { ...base, intent: "FILTER_PROSPECTS", risk: "LOW", confidence: 0.97, filter: { queue: "NEEDS_CONTACT_INFORMATION", replace: true, excludeTest: true, excludeDemo: true } };
+  }
 
   if (hit(t, /what('s| is) next|start my tasks|start tasks|what needs me|what do i need|good morning/)) {
     if (hit(t, /what('s| is) next/)) return { ...base, intent: "NEXT_TASK", risk: "LOW" };
