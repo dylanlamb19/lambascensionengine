@@ -16,31 +16,56 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
-      - name: Assemble resolved owner-desk
+      - name: Restore owner-desk LinkedIn + FindVerticalField + NextMoves
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, zlib
+          # Pre-merge tip already had LinkedInAgentChat + NextMoves + FindPresets + FindVerticalField.
+          # Merge rebuild lost chat/NextMoves imports; restore that blob (keep both feature sets).
+          GOOD=ea6d8028c4d1bcb26cc0dafd53e0a4caecce2cbf
+          git show "$GOOD:src/components/owner-desk.tsx" > src/components/owner-desk.tsx
+          python3 - <<'PY'
           from pathlib import Path
-          prefix = Path("mcp-push/find-select-owner-pr2")
-          meta = json.loads((prefix / "meta.json").read_text())
-          blob = "".join((prefix / f"part{i}.b64").read_text().replace("\n", "").strip() for i in range(meta["parts"]))
-          raw = zlib.decompress(base64.b64decode(blob))
-          assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
-          assert b"LinkedInAgentChat" in raw and b"NextMoves" in raw and b"FindVerticalField" in raw
-          assert b"FindPresets" in raw and b"runHighTicketFill" in raw
-          Path(meta["target"]).write_bytes(raw)
-          print("owner-desk", len(raw))
+          raw = Path("src/components/owner-desk.tsx").read_bytes()
+          for m in (b"LinkedInAgentChat", b"NextMoves", b"FindPresets", b"FindVerticalField",
+                    b"runHighTicketFill", b"createLinkedInAgentOrderFn", b"repairBookingInvariantFn"):
+              assert m in raw, m
+          print("owner-desk ok", len(raw))
           vf = Path("src/lib/prospects/view-filter.ts")
           if vf.exists():
-            t = vf.read_text().replace('filter.sort || "score"', 'filter.sort || "needs_attention"')
-            vf.write_text(t)
+              t = vf.read_text()
+              t2 = t.replace('filter.sort || "score"', 'filter.sort || "needs_attention"')
+              vf.write_text(t2)
+              print("view-filter needs_attention", "needs_attention" in t2)
+          PY
+          # If all 21 zlib parts are present, prefer that known-good assemble (sha d205eb0d).
+          python3 - <<'PY' || true
+          import base64, hashlib, json, zlib, sys
+          from pathlib import Path
+          prefix = Path("mcp-push/find-select-owner-pr2")
+          if not (prefix / "meta.json").exists():
+              print("no meta; keeping git-show")
+              sys.exit(0)
+          meta = json.loads((prefix / "meta.json").read_text())
+          parts = list(range(meta["parts"]))
+          if not all((prefix / f"part{i}.b64").exists() for i in parts):
+              print("parts incomplete; keeping git-show restore")
+              sys.exit(0)
+          blob = "".join((prefix / f"part{i}.b64").read_text().replace("\n", "").strip() for i in parts)
+          raw = zlib.decompress(base64.b64decode(blob))
+          assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
+          for m in (b"LinkedInAgentChat", b"NextMoves", b"FindVerticalField", b"FindPresets"):
+              assert m in raw
+          Path(meta["target"]).write_bytes(raw)
+          print("assembled blob", len(raw), meta["sha256"][:12])
           PY
           git fetch origin main || true
-          test -f src/components/find-vertical-field.tsx || git show origin/main:src/components/find-vertical-field.tsx > src/components/find-vertical-field.tsx || true
+          test -f src/components/find-vertical-field.tsx || git show origin/main:src/components/find-vertical-field.tsx > src/components/find-vertical-field.tsx
           grep -q linkedin_agent_order src/lib/voice/tools.ts
+          grep -q LinkedInAgentChat src/components/owner-desk.tsx
+          grep -q NextMoves src/components/owner-desk.tsx
+          grep -q FindVerticalField src/components/owner-desk.tsx
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/components/owner-desk.tsx src/components/find-vertical-field.tsx src/lib/prospects/view-filter.ts
-          git diff --cached --quiet || git commit -m "fix(pr2): restore owner-desk with LinkedIn + FindVerticalField + NextMoves"
+          git diff --cached --quiet || git commit -m "fix(pr2): restore owner-desk LinkedIn chat + NextMoves + FindVerticalField (preserve both)"
           git push origin HEAD:linkedin-agent-in-app
