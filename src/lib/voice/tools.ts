@@ -1,4 +1,4 @@
-import { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk } from "./intents.ts";
+import { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk as confirmPhraseOkBase } from "./intents.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
 import type { IntentName } from "./types.ts";
 import { clickAllowed, selectorRejected, controlRisk } from "../ara-computer/guard.ts";
@@ -141,6 +141,7 @@ export const ALLOWED_TOOLS = [
   "get_current_design",
   "apply_design_operations",
   "update_prospect_information",
+  "linkedin_agent_order",
 ] as const;
 
 export type AllowedTool = (typeof ALLOWED_TOOLS)[number];
@@ -464,7 +465,8 @@ export type ToolPlan =
   | { type: "pick_background"; nsfw?: boolean }
   | { type: "web_research"; query: string; mode: "quick" | "deep"; uid?: string }
   | { type: "read_page"; url: string }
-  | { type: "design"; operations: DesignOp[]; preview?: boolean };
+  | { type: "design"; operations: DesignOp[]; preview?: boolean }
+  | { type: "linkedin_agent_order"; kind: string; payload: Record<string, unknown>; confirmRequired?: boolean };
 
 export type ToolResult = {
   ok: boolean;
@@ -493,6 +495,8 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "navigate_health", description: "Open System Health / Sentinel. Same as opening the System Health page. Inspect-only.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_system_health", description: "Answer from Sentinel’s persisted evidence only: is production healthy, open bugs, last deploy, worker, what Sentinel watches. NEVER invent health. If already_spoken, remain silent.", parameters: { type: "object", properties: { topic: { type: "string" } } } },
     { type: "function", name: "update_prospect_information", description: "Add or edit known prospect fields the owner just provided. Allowlisted fields only. Never invent values. Never send email. Provenance is OWNER PROVIDED. If Dylan said ‘add information’ without the values, call this with prompt_only=true. Use the currently open prospect_uid.", parameters: { type: "object", properties: { ...uid, prompt_only: { type: "boolean" }, decision_maker_name: { type: "string" }, decision_maker_role: { type: "string" }, business_email: { type: "string" }, business_phone: { type: "string" }, decision_maker_phone: { type: "string" }, website: { type: "string" }, contact_page: { type: "string" }, linkedin: { type: "string" }, profile_url: { type: "string" }, industry: { type: "string" }, city: { type: "string" }, notes: { type: "string" }, clear_fields: { type: "array", items: { type: "string" } }, confirm_destructive: { type: "boolean" } } } },
+
+    { type: "function", name: "linkedin_agent_order", description: "Queue work for the LinkedIn Grok Bot agent (fill_leads, enrich, outreach, chat_reply, custom). Does not scrape LinkedIn. Does not send Gmail. Outreach orders draft/request LinkedIn connects under soft caps and require confirm=true (or owner says Confirm LinkedIn order).", parameters: { type: "object", properties: { kind: { type: "string", description: "fill_leads | enrich | outreach | chat_reply | custom" }, note: { type: "string" }, vertical: { type: "string" }, city: { type: "string" }, prospect_uid: { type: "string" }, payload: { type: "object" }, confirm: { type: "boolean", description: "Required true for outreach (HIGH)." } }, required: ["kind"] } },
     { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. ONLY when the owner explicitly says pull up / show / open / go to my calendar as this turn’s command. NEVER because an earlier scheduling command mentioned calendar. NEVER for ‘add a call’, ‘can you hear me’, or name corrections.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_today", description: "Jump the Calendar to today.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_next", description: "Move Calendar forward: next day, next week, or next month depending on the current view.", parameters: { type: "object", properties: {} } },
@@ -1619,6 +1623,61 @@ export function executeAllowlistedTool(
       plan: { type: "arm", intent: "SEND_EMAIL", uid: target.uid, confirmPhrase: "Confirm send" },
     };
   }
+  if (tool === "linkedin_agent_order") {
+    const kind = String(args.kind || args.order_kind || "custom").trim().toLowerCase().replace(/\s+/g, "_");
+    const allowed = ["fill_leads", "enrich", "outreach", "chat_reply", "custom"];
+    const normalized = kind === "fill" || kind === "leads" || kind === "high_ticket" || kind === "high-ticket"
+      ? "fill_leads"
+      : kind === "connect" || kind === "linkedin_outreach"
+        ? "outreach"
+        : kind;
+    if (!allowed.includes(normalized)) {
+      return { ok: false, tool, rejected: false, output: { ok: false, reason: "Unknown LinkedIn order kind." }, plan: { type: "none" } };
+    }
+    const payload: Record<string, unknown> = {
+      ...(args.payload && typeof args.payload === "object" && !Array.isArray(args.payload)
+        ? (args.payload as Record<string, unknown>)
+        : {}),
+    };
+    if (args.note) payload.note = String(args.note).slice(0, 2000);
+    if (args.vertical) payload.vertical = String(args.vertical);
+    if (args.city || args.location) payload.city = String(args.city || args.location);
+    if (args.prospect_uid || args.uid) payload.prospect_uid = String(args.prospect_uid || args.uid);
+    if (normalized === "outreach") {
+      payload.safety_note = "draft/request LinkedIn connects under soft caps";
+      payload.auto_send = false;
+      payload.gmail_auto_send = false;
+    }
+    const confirm = args.confirm === true;
+    if (normalized === "outreach" && !confirm) {
+      return {
+        ok: true, tool, rejected: false,
+        output: {
+          ok: false,
+          status: "REQUIRES_CONFIRMATION",
+          needsConfirm: true,
+          phrase: "Confirm LinkedIn order",
+          kind: normalized,
+          payload,
+          spoken: "Outreach is HIGH risk. Say Confirm LinkedIn order to queue draft/request connects under soft caps. Nothing was sent.",
+        },
+        plan: { type: "linkedin_agent_order", kind: normalized, payload, confirmRequired: true },
+      };
+    }
+    return {
+      ok: true, tool, rejected: false,
+      output: {
+        ok: true,
+        pending: true,
+        kind: normalized,
+        spoken: normalized === "outreach"
+          ? "Queued LinkedIn outreach drafts under soft caps. No auto-send."
+          : `Queued LinkedIn agent order: ${normalized}.`,
+      },
+      plan: { type: "linkedin_agent_order", kind: normalized, payload, confirmRequired: false },
+    };
+  }
+
   return reject(name, "That tool is not on the allowlist.");
 }
 
@@ -1636,4 +1695,10 @@ export function planProspectUid(plan: ToolPlan, fallback: string | null): string
   return fallback;
 }
 
-export { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk };
+export function confirmPhraseOk(text: string): boolean {
+  const t = (text || "").toLowerCase().replace(/[?.!,]/g, "").trim().replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").trim();
+  if (t === "confirm linkedin order") return true;
+  return confirmPhraseOkBase(text);
+}
+
+export { confirmSendPhraseOk, confirmSchedulePhraseOk };

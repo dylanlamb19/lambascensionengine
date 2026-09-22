@@ -1,0 +1,6 @@
+/* Native pickers on iOS/Android — Find Clients vertical select */
+select.la-field {
+  appearance: auto;
+  -webkit-appearance: menulist;
+  background-image: none;
+}
