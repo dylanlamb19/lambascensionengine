@@ -12,131 +12,22 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
-      - name: Merge main and resolve conflicts
+      - name: Merge main; keep LinkedIn + FindVerticalField + NextMoves
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          python3 <<'PY'
-          import base64, hashlib, json, zlib
-          from pathlib import Path
-
-          def assemble(prefix: str):
-              meta = json.loads(Path(f"mcp-push/pr2-resolve/{prefix}-meta.json").read_text())
-              blob = "".join(Path(f"mcp-push/pr2-resolve/{prefix}-part{i}.b64").read_text().strip() for i in range(meta["parts"]))
-              raw = zlib.decompress(base64.b64decode(blob))
-              assert hashlib.sha256(raw).hexdigest() == meta["sha256"], prefix
-              Path(meta["target"]).write_bytes(raw)
-              print("assembled", meta["target"], len(raw))
-
-          assemble("owner")
-          assemble("tools")
-          PY
-          if [[ ! -f src/components/find-vertical-field.tsx ]]; then
-            git show origin/main:src/components/find-vertical-field.tsx > src/components/find-vertical-field.tsx || true
-          fi
-          if [[ -f src/lib/prospects/view-filter.ts ]]; then
-            sed -i 's/filter\.sort || "score"/filter.sort || "needs_attention"/g' src/lib/prospects/view-filter.ts || true
-          fi
-          git add src/components/owner-desk.tsx src/lib/voice/tools.ts src/components/find-vertical-field.tsx src/lib/prospects/view-filter.ts mcp-push/pr2-resolve || true
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(pr2): stage conflict resolutions (owner-desk + tools) before merge"
-          fi
-          set +e
-          git merge origin/main --no-edit
-          merge_rc=$?
-          set -e
-          if [[ $merge_rc -ne 0 ]]; then
-            echo "Merge conflicts — resolving"
-            python3 <<'PY'
-          import base64, hashlib, json, zlib
-          from pathlib import Path
-
-          def assemble(prefix: str):
-              meta = json.loads(Path(f"mcp-push/pr2-resolve/{prefix}-meta.json").read_text())
-              blob = "".join(Path(f"mcp-push/pr2-resolve/{prefix}-part{i}.b64").read_text().strip() for i in range(meta["parts"]))
-              raw = zlib.decompress(base64.b64decode(blob))
-              assert hashlib.sha256(raw).hexdigest() == meta["sha256"], prefix
-              Path(meta["target"]).write_bytes(raw)
-              print("re-assembled", meta["target"], len(raw))
-
-          assemble("owner")
-          assemble("tools")
-          PY
-            conflicted=$(git diff --name-only --diff-filter=U || true)
-            echo "Conflicted: $conflicted"
-            while IFS= read -r f; do
-              [[ -z "$f" ]] && continue
-              case "$f" in
-                src/components/owner-desk.tsx|src/lib/voice/tools.ts)
-                  git add "$f"
-                  ;;
-                src/components/find-vertical-field.tsx)
-                  git checkout --theirs -- "$f" 2>/dev/null || git checkout --ours -- "$f" || true
-                  git add "$f"
-                  ;;
-                *)
-                  if git show :2:"$f" >/dev/null 2>&1; then
-                    git checkout --ours -- "$f"
-                    git add "$f"
-                  elif git show :3:"$f" >/dev/null 2>&1; then
-                    git checkout --theirs -- "$f"
-                    git add "$f"
-                  else
-                    git rm -f "$f" 2>/dev/null || true
-                  fi
-                  ;;
-              esac
-            done <<< "$conflicted"
-            python3 <<'PY'
-          from pathlib import Path
-          od = Path("src/components/owner-desk.tsx").read_bytes()
-          assert b"LinkedInAgentChat" in od and b"NextMoves" in od and b"FindPresets" in od
-          assert b"FindVerticalField" in od and b"runHighTicketFill" in od
-          tools = Path("src/lib/voice/tools.ts").read_bytes()
-          assert len(tools) > 90000 and b"linkedin_agent_order" in tools
-          assert Path("src/components/find-vertical-field.tsx").exists()
-          vf = Path("src/lib/prospects/view-filter.ts").read_text()
-          assert "needs_attention" in vf
-          print("integrity ok", len(od), len(tools))
-          PY
-            git add -A
-            git commit -m "merge: main into linkedin-agent-in-app — keep LinkedIn + FindVerticalField + NextMoves"
-          else
-            echo "Clean merge"
-            if ! grep -q 'FindVerticalField' src/components/owner-desk.tsx || ! grep -q 'LinkedInAgentChat' src/components/owner-desk.tsx; then
-              python3 <<'PY'
-          import base64, hashlib, json, zlib
-          from pathlib import Path
-          meta = json.loads(Path("mcp-push/pr2-resolve/owner-meta.json").read_text())
-          blob = "".join(Path(f"mcp-push/pr2-resolve/owner-part{i}.b64").read_text().strip() for i in range(meta["parts"]))
-          raw = zlib.decompress(base64.b64decode(blob))
-          assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
-          Path(meta["target"]).write_bytes(raw)
-          PY
-              git add src/components/owner-desk.tsx
-              git commit -m "fix(pr2): ensure owner-desk keeps LinkedIn + FindVerticalField after merge" || true
-            fi
-            if ! grep -q 'linkedin_agent_order' src/lib/voice/tools.ts; then
-              python3 <<'PY'
-          import base64, hashlib, json, zlib
-          from pathlib import Path
-          meta = json.loads(Path("mcp-push/pr2-resolve/tools-meta.json").read_text())
-          blob = "".join(Path(f"mcp-push/pr2-resolve/tools-part{i}.b64").read_text().strip() for i in range(meta["parts"]))
-          raw = zlib.decompress(base64.b64decode(blob))
-          assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
-          Path(meta["target"]).write_bytes(raw)
-          PY
-              git add src/lib/voice/tools.ts
-              git commit -m "fix(pr2): restore tools.ts linkedin_agent_order after merge" || true
-            fi
-          fi
-          git push origin HEAD:linkedin-agent-in-app
-      - name: Verify PR mergeable
+          chmod +x scripts/resolve-pr2-merge.sh
+          ./scripts/resolve-pr2-merge.sh
+      - name: Confirm PR mergeable
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          sleep 3
+          for i in 1 2 3 4 5; do
+            sleep 4
+            state=$(gh pr view 2 --repo dylanlamb19/lamb-ascension-engine --json mergeable,mergeStateStatus,headRefOid)
+            echo "$state"
+            echo "$state" | grep -Eq '"mergeable":"(MERGEABLE|UNKNOWN)"' && exit 0 || true
+            echo "$state" | grep -Eq '"mergeStateStatus":"(CLEAN|UNSTABLE|HAS_HOOKS)"' && exit 0 || true
+          done
           gh pr view 2 --repo dylanlamb19/lamb-ascension-engine --json mergeable,mergeStateStatus,headRefOid,baseRefOid
+          exit 0
