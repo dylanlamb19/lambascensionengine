@@ -213,10 +213,10 @@ export function whySurfaced(p: Prospect): string {
     return "Website research unavailable (timeout or error). Public listing facts remain. We did not invent findings.";
   }
   if (p.research_status === "queued" || p.research_status === "none" || !p.research_status) {
-    return "They’re on your list. We haven’t opened their website yet.";
+    return "They\u2019re on your list. We haven\u2019t opened their website yet.";
   }
   if (p.fit_plain) return p.fit_plain;
-  return "They’re a real company in a market you sell into.";
+  return "They\u2019re a real company in a market you sell into.";
 }
 
 export function whatWeKnow(p: Prospect): string[] {
@@ -371,7 +371,7 @@ export function taskForProspect(p: Prospect): {
     return {
       severity: "yellow",
       title: `Look up ${p.name}`,
-      plain: whatWeKnow(p).join(" · ") || "They’re on your list. We haven’t opened their website yet.",
+      plain: whatWeKnow(p).join(" · ") || "They\u2019re on your list. We haven\u2019t opened their website yet.",
       why: whySurfaced(p),
       recommend: araRecommend(p),
       button: "Learn More",

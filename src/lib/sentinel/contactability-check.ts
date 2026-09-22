@@ -10,12 +10,14 @@ export function evaluateContactabilityInvariants(prospects: Prospect[]): Sentine
   for (const p of prospects) {
     const c = evaluateContactability(p);
     const reach = reachKind(p);
+    const key = p.uid || p.name || "";
+    const uid = p.uid || "";
     if (reach === "READY_TO_CONTACT" && !c.emailRoute) {
       out.push(makeFinding(
         "CONTACTABLE_WITHOUT_EMAIL",
         `${p.name} is marked ready to contact without a usable email route.`,
-        { uid: p.uid || "", reach },
-        { extraKey: p.uid || p.name || "unknown", affected: [{ uid: p.uid || "" }] },
+        { uid: p.uid, reach },
+        { extraKey: key, affected: [{ uid }] },
       ));
     }
     const mapped = c.status === "CONTACTABLE" ? "READY_TO_CONTACT"
@@ -27,8 +29,8 @@ export function evaluateContactabilityInvariants(prospects: Prospect[]): Sentine
       out.push(makeFinding(
         "CONTACTABILITY_MISMATCH",
         `${p.name}: reach=${reach} vs contactability=${c.status}.`,
-        { uid: p.uid || "", reach, status: c.status },
-        { extraKey: p.uid || p.name || "unknown", affected: [{ uid: p.uid || "" }] },
+        { uid: p.uid, reach, status: c.status },
+        { extraKey: key, affected: [{ uid }] },
       ));
     }
   }

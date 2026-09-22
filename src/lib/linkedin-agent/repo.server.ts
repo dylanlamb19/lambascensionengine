@@ -9,6 +9,7 @@ import type {
   LinkedInAgentOrderKind,
   LinkedInAgentOrderStatus,
   LinkedInAgentRole,
+  JsonValue,
 } from "./types";
 
 type MsgRow = {
@@ -38,12 +39,12 @@ function iso(value: unknown): string {
   return "";
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+function asRecord(value: unknown): { [key: string]: JsonValue } {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as { [key: string]: JsonValue };
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as { [key: string]: JsonValue };
     } catch { /* ignore */ }
   }
   return {};
@@ -91,7 +92,7 @@ export async function postMessage(
   userId: string,
   role: LinkedInAgentRole,
   body: string,
-  meta: Record<string, unknown> = {},
+  meta: { [key: string]: JsonValue } = {},
 ): Promise<LinkedInAgentMessage> {
   const sql = await getSql();
   const id = newUid();
@@ -144,7 +145,7 @@ export async function listOrders(
 export async function createOrder(
   userId: string,
   kind: LinkedInAgentOrderKind,
-  payload: Record<string, unknown> = {},
+  payload: { [key: string]: JsonValue } = {},
 ): Promise<LinkedInAgentOrder> {
   const sql = await getSql();
   const id = newUid();
@@ -192,7 +193,7 @@ export async function claimNextOrder(opts: { userId?: string } = {}): Promise<Li
 export async function completeOrder(
   userId: string,
   orderId: string,
-  opts: { status?: "done" | "failed" | "cancelled"; result?: Record<string, unknown> } = {},
+  opts: { status?: "done" | "failed" | "cancelled"; result?: { [key: string]: JsonValue } } = {},
 ): Promise<LinkedInAgentOrder | null> {
   const sql = await getSql();
   const status = opts.status || "done";

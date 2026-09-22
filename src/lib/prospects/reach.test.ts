@@ -35,7 +35,7 @@ test("Firefighter Roofing is not a dead end after website research fails", () =>
   assert.ok(ids.includes("skip"));
   const task = taskForProspect(p);
   assert.match(task.title, /needs a contact/i);
-  assert.match(whySurfaced(p), /blocked|didn’t finish/i);
+  assert.match(whySurfaced(p), /blocked|didn.t finish/i);
 });
 
 test("prospect with website + no phone still gets Open Website and Find Contact", () => {

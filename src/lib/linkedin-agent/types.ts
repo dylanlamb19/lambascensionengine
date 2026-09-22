@@ -1,3 +1,12 @@
+/** JSON-safe values for TanStack server-fn serialization. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 /** LinkedIn agent chat + order types. No invented emails/ROAS. */
 
 export type LinkedInAgentRole = "user" | "linkedin" | "ara" | "system";
@@ -22,7 +31,7 @@ export type LinkedInAgentMessage = {
   role: LinkedInAgentRole;
   body: string;
   created_at: string;
-  meta: Record<string, unknown>;
+  meta: { [key: string]: JsonValue };
 };
 
 export type LinkedInAgentOrder = {
@@ -30,8 +39,8 @@ export type LinkedInAgentOrder = {
   user_id: string;
   status: LinkedInAgentOrderStatus;
   kind: LinkedInAgentOrderKind;
-  payload: Record<string, unknown>;
-  result: Record<string, unknown>;
+  payload: { [key: string]: JsonValue };
+  result: { [key: string]: JsonValue };
   created_at: string;
   updated_at: string;
   claimed_at: string | null;

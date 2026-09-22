@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const dir = join(root, "acq-src-chunks");
+const manifest = JSON.parse(readFileSync(join(dir, "MANIFEST.json"), "utf8"));
+for (const entry of manifest) {
+  const b64 = entry.parts.map((p) => readFileSync(join(dir, p), "utf8").trim()).join("");
+  const body = Buffer.from(b64, "base64").toString("utf8");
+  const abs = join(root, entry.dest);
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, body);
+  console.log("joined", entry.dest, body.length);
+}
+const patch = join(root, "scripts/apply-acquisition-os-patches.mjs");
+const viewFilter = join(root, "src/lib/prospects/view-filter.ts");
+if (existsSync(patch) && existsSync(viewFilter)) {
+  const r = spawnSync(process.execPath, [patch], { cwd: root, stdio: "inherit" });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+} else {
+  console.log("skip patches (repo files not present in this workspace)");
+}
+console.log("join-acq-src-chunks: done");

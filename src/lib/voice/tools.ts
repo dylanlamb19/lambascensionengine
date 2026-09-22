@@ -325,6 +325,7 @@ export type AraProspectSnap = {
   owner_notes?: string;
   is_demo?: boolean;
   is_test?: boolean;
+  suppressed?: boolean;
   discovered_at?: string;
   google_rating?: string;
   provider?: string;

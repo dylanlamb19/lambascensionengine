@@ -1,0 +1,1 @@
+{"parts": 8, "files": ["src/lib/prospects/contactability.ts", "src/lib/prospects/contactability.test.ts", "src/lib/prospects/pipeline-queues.ts", "src/lib/prospects/eligible.server.ts", "src/lib/prospects/reach.ts", "src/lib/prospects/reach.test.ts", "scripts/apply-acquisition-os-patches.mjs", "ACQUISITION-OS-INSPECTION.md"], "total": 90421}
