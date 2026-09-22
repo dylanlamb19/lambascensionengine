@@ -1,0 +1,19 @@
+--- a/src/components/owner-desk.tsx
++++ b/src/components/owner-desk.tsx
+@@ -48,6 +48,8 @@
+ import { ProspectReachCard } from "@/components/prospect-reach";
+ import { VoiceBar } from "@/components/voice-bar";
+ import { LinkedInAgentChat } from "@/components/linkedin-agent-chat";
++import { NextMoves } from "@/components/next-moves";
++import { FindPresets } from "@/components/find-presets";
+ import { CalendarDesk } from "@/components/calendar-desk";
+ import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
+ import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
+@@ -296,6 +298,7 @@
+   const [testLoop, setTestLoop] = useState<TestLoopState>(EMPTY_TEST_LOOP);
+   const [sentinel, setSentinel] = useState<SentinelSnapshot | null>(null);
+   const [sentinelBusy, setSentinelBusy] = useState(false);
++  const [repairBusy, setRepairBusy] = useState(false);
+   const [minRating, setMinRating] = useState(0);
+   const [minReviews, setMinReviews] = useState(0);
+   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
