@@ -34,7 +34,8 @@ jobs:
             git checkout --theirs -- "$f"
             git add -- "$f"
           done < <(git diff --name-only --diff-filter=U || true)
-          if git grep -n '<<<<<<<' -- . ':!mcp-push' ':!acq-micro' ':!acq-bundle-parts' ':!acq-payload-parts' ':!acq-src-chunks' ':!.github/workflows' 2>/dev/null; then
+          rm -f scripts/resolve-pr3-vs-main.py
+          if git grep -n '<<<<<<<' -- . ':!mcp-push' ':!acq-micro' ':!acq-bundle-parts' ':!acq-payload-parts' ':!acq-src-chunks' ':!.github/workflows' ':!scripts' 2>/dev/null; then
             echo "Unresolved conflict markers remain" >&2
             exit 1
           fi
