@@ -319,7 +319,7 @@ export function OwnerDesk() {
   const [voiceListening, setVoiceListening] = useState(false);
   const gateRef = useRef(new ActionGate());
   const araRef = useRef<AraRealtime | null>(null);
-  const pendingLinkedInOrderRef = useRef<{ kind: string; payload: Record<string, unknown> } | null>(null);
+  const pendingLinkedInOrderRef = useRef<{ kind: string; payload: Record<string, string | number | boolean | null | string[]> } | null>(null);
   const araGen = useRef(0);
   const araReconnects = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1658,17 +1658,18 @@ export function OwnerDesk() {
     }
     if (result.plan.type === "linkedin_agent_order") {
       const plan = result.plan;
+      const payload = (plan.payload || {}) as Record<string, string | number | boolean | null | string[]>;
       if (plan.confirmRequired) {
-        pendingLinkedInOrderRef.current = { kind: plan.kind, payload: plan.payload || {} };
+        pendingLinkedInOrderRef.current = { kind: plan.kind, payload };
         const spoken = "Outreach is HIGH risk. Say Confirm LinkedIn order to queue draft connects under soft caps. Nothing was sent.";
         setVoiceReply(spoken);
         utter(spoken, "CONFIRM");
-        return;
+        return { ...result.output, ok: true, spoken, staysOnScreen: true, changed: false };
       }
       void (async () => {
         try {
           const created = await createLinkedInAgentOrderFn({
-            data: { kind: plan.kind, payload: plan.payload || {} },
+            data: { kind: plan.kind, payload },
           });
           const spoken = created.ok
             ? (String(result.output?.spoken || `Queued LinkedIn agent order: ${plan.kind}.`))
@@ -1681,7 +1682,7 @@ export function OwnerDesk() {
           utter(spoken, "LINKEDIN_ORDER");
         }
       })();
-      return;
+      return { ...result.output, ok: true, staysOnScreen: true, changed: false };
     }
     if (result.plan.type === "sentinel_status") {
       try {
