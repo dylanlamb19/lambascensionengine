@@ -1,0 +1,38 @@
+name: Assemble email-campaigns mid
+on:
+  push:
+    branches: [email-campaigns-os]
+    paths:
+      - "build-assets/email-campaigns-mid/part02.b64"
+      - "build-assets/email-campaigns-mid/meta.json"
+  workflow_dispatch:
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: email-campaigns-os
+      - name: Assemble
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import base64, hashlib, json, pathlib, zlib
+          root = pathlib.Path("build-assets/email-campaigns-mid")
+          meta = json.loads((root / "meta.json").read_text())
+          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
+          blob = base64.b64decode("".join(parts))
+          assert hashlib.sha256(blob).hexdigest() == meta["sha256"], (hashlib.sha256(blob).hexdigest(), meta["sha256"])
+          bundle = json.loads(zlib.decompress(blob).decode())
+          for path, content in bundle.items():
+              p = pathlib.Path(path)
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(content)
+              print("wrote", path, len(content))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/mail/live.server.ts src/components/email-campaigns-panel.tsx
+          if git diff --cached --quiet; then echo none; else git commit -m "feat(campaigns): assemble live worker hook + Campaigns panel" && git push; fi
