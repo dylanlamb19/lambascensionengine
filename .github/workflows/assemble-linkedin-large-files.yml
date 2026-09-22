@@ -3,8 +3,8 @@ on:
   push:
     branches: [linkedin-agent-in-app]
     paths:
-      - 'build-assets/linkedin-agent/tools-zlib/**'
-      - 'build-assets/linkedin-agent/owner-zlib/**'
+      - 'build-assets/linkedin-agent/tools-linkedin.patch'
+      - 'build-assets/linkedin-agent/owner-linkedin.patch'
       - 'build-assets/linkedin-agent/ASSEMBLE_TRIGGER'
       - '.github/workflows/assemble-linkedin-large-files.yml'
   workflow_dispatch:
@@ -23,33 +23,25 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
-      - name: Assemble tools.ts (zlib+b64)
+      - name: Restore tools.ts + owner-desk.tsx from main + patches
         run: |
           set -euo pipefail
+          git fetch origin main
+          git show origin/main:src/lib/voice/tools.ts > src/lib/voice/tools.ts
+          git show origin/main:src/components/owner-desk.tsx > src/components/owner-desk.tsx
+          patch -p1 < build-assets/linkedin-agent/tools-linkedin.patch
+          patch -p1 < build-assets/linkedin-agent/owner-linkedin.patch
           python3 <<'PY'
-          import base64, hashlib, json, pathlib, zlib
-          root = pathlib.Path("build-assets/linkedin-agent/tools-zlib")
-          meta = json.loads((root / "meta.json").read_text())
-          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
-          raw = zlib.decompress(base64.b64decode("".join(parts)))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          pathlib.Path("src/lib/voice/tools.ts").write_bytes(raw)
-          print("wrote tools.ts", len(raw), digest)
-          PY
-      - name: Assemble owner-desk.tsx (zlib+b64)
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, pathlib, zlib
-          root = pathlib.Path("build-assets/linkedin-agent/owner-zlib")
-          meta = json.loads((root / "meta.json").read_text())
-          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
-          raw = zlib.decompress(base64.b64decode("".join(parts)))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          pathlib.Path("src/components/owner-desk.tsx").write_bytes(raw)
-          print("wrote owner-desk.tsx", len(raw), digest)
+          import hashlib, pathlib
+          checks = [
+            ("src/lib/voice/tools.ts", 100574, "c2efbd32136bd540fb5a03d03b6f35d1cad5531baf94fe39ca2957d715ae0cd6"),
+            ("src/components/owner-desk.tsx", 172983, "349d592e50d86c97a8cbeb304ef9c5b939ea6de79df0e9029f95e1cc05a8d2f8"),
+          ]
+          for path, size, digest in checks:
+            raw = pathlib.Path(path).read_bytes()
+            got = hashlib.sha256(raw).hexdigest()
+            assert len(raw) == size and got == digest, (path, len(raw), got)
+            print(path, "ok", len(raw), got)
           PY
       - name: Commit assembled files
         run: |
@@ -63,6 +55,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "feat(linkedin-agent): restore tools.ts + owner-desk.tsx via zlib assemble"
+            git commit -m "feat(linkedin-agent): restore tools.ts + owner-desk.tsx via main+patch"
             git push origin HEAD:linkedin-agent-in-app
           fi
