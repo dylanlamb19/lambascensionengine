@@ -46,6 +46,7 @@ import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
 import { VoiceBar } from "@/components/voice-bar";
+import { FindVerticalField } from "@/components/find-vertical-field";
 import { CalendarDesk } from "@/components/calendar-desk";
 import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
 import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
@@ -3505,17 +3506,7 @@ export function OwnerDesk() {
                 Live Find Clients is off because Google Places is not configured. Add GOOGLE_PLACES_API_KEY on the server, and enable Places API (New) plus Geocoding API. We will not invent businesses. You can still add a company you already know.
               </div>
             ) : null}
-            <label className="la-label">What kind of company?</label>
-            <input
-              className="la-field mb-3"
-              list="la-verticals"
-              value={vert}
-              onChange={(e) => setVert(e.target.value)}
-              placeholder="Roofing companies, cosmetic dentists, …"
-            />
-            <datalist id="la-verticals">
-              {["Roofing", "HVAC", "Plumbing / sewer", "Foundation repair", "Solar", "Med spa / cosmetic", "Dental", "Law / personal injury", "B2B consulting", "SaaS / software"].map((x) => <option key={x} value={x} />)}
-            </datalist>
+            <FindVerticalField value={vert} onChange={setVert} />
             <label className="la-label">Where?</label>
             <input className="la-field mb-3" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Fort Worth, Texas" />
             <label className="la-label">How many?</label>
