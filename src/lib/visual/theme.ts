@@ -547,8 +547,8 @@ export function visualCssVars(page: PageTheme): Record<string, string> {
     "--la-accent": String(page.accent),
     "--la-focus": FOCUS_POS[page.focus] || "center center",
     "--la-scene-url": url ? `url("${url}")` : "none",
-    "--color-gold": `color-mix(in oklab, #c9a24a ${gold}%, #8b909a)`,
-    "--color-gold2": `color-mix(in oklab, #ead9a8 ${gold}%, #c5c8ce)`,
+    "--color-gold": `color-mix(in oklab, #4a8fd4 ${gold}%, #8b909a)`,
+    "--color-gold2": `color-mix(in oklab, #b8d4f0 ${gold}%, #c5c8ce)`,
   };
 }
 

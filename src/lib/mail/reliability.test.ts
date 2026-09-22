@@ -315,8 +315,8 @@ test("missing production job secret prevents worker execution", () => {
   if (!missing.ok) assert.equal(missing.status, 503);
   const wrong = allowOutreachJob({ secret: "abc", header: "xyz", production: true });
   assert.equal(wrong.ok, false);
-  const ok = allowOutreachJob({ secret: "abc", header: "abc", production: true });
-  assert.equal(ok.ok, true);
+  const extra = allowOutreachJob({ secret: "job", extraSecrets: ["cron"], header: "cron", production: true });
+  assert.equal(extra.ok, true);
 });
 
 test("Calendar connection does not silently grant/store Gmail access", () => {

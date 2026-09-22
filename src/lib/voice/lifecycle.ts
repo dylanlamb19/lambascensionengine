@@ -1,3 +1,5 @@
+import { realtimeErrorText } from "./voice-failure.ts";
+
 export type VoiceState =
   | "IDLE"
   | "LISTENING"
@@ -141,6 +143,11 @@ export function classifyVoiceError(message: string): VoiceErrorClass {
     return "fatal";
   }
   return "recoverable";
+}
+
+/** Cancel / no-active-response errors must not take Conversation Mode down. */
+export function shouldFailClosedOnRealtimeError(ev: Record<string, unknown>): boolean {
+  return classifyVoiceError(realtimeErrorText(ev)) === "fatal";
 }
 
 export type ChunkGate = {

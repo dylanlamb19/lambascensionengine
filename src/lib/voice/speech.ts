@@ -1,5 +1,3 @@
-import { unlockAraOutput } from "./audio-out.ts";
-
 export type SpeechHooks = {
   onPartial?: (text: string) => void;
   onFinal: (text: string) => void;
@@ -20,6 +18,8 @@ type Recog = {
   onend: (() => void) | null;
 };
 
+export const SYSTEM_READER_KEY = "la-system-reader";
+
 export function speechSupported(): boolean {
   if (typeof window === "undefined") return false;
   const w = window as unknown as { SpeechRecognition?: new () => Recog; webkitSpeechRecognition?: new () => Recog };
@@ -28,6 +28,14 @@ export function speechSupported(): boolean {
 
 export function ttsSupported(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
+}
+
+export function systemReaderEnabled(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(SYSTEM_READER_KEY) === "on";
+  } catch {
+    return false;
+  }
 }
 
 export function createRecognizer(): Recog | null {
@@ -42,9 +50,18 @@ export function createRecognizer(): Recog | null {
   return r;
 }
 
-export function speak(text: string, muted: boolean): void {
-  if (muted || !ttsSupported()) return;
-  unlockAraOutput();
+/**
+ * Browser speechSynthesis is not Ara.
+ * This used to be the automatic fallback and produced a robotic male voice.
+ * It is now a no-op so leftover callers cannot change Ara's identity.
+ */
+export function speak(_text: string, _muted: boolean): void {
+  /* no-op — Ara speech goes through AraSpeechController / xAI Ara only */
+}
+
+/** Emergency SYSTEM READER. Off by default. Never masquerades as Ara. */
+export function speakSystemReader(text: string): void {
+  if (!text.trim() || !systemReaderEnabled() || !ttsSupported()) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1;
@@ -56,9 +73,13 @@ export function stopSpeaking(): void {
   if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 
+export function browserTtsActive(): boolean {
+  return typeof window !== "undefined" && "speechSynthesis" in window && Boolean(window.speechSynthesis.speaking);
+}
+
 export function permissionDeniedPlain(error?: string): string {
   if (error === "not-allowed" || error === "permission-denied") {
-    return "Lamb Ascension cannot hear you because microphone permission is off. Use the buttons, or allow the microphone and try again.";
+    return "Microphone access is blocked. Enable it in your browser permissions to talk to Ara.";
   }
   if (error === "no-speech") return "I didn't catch that. Can you say it again?";
   return "Voice isn’t working in this browser. Everything still works with the buttons.";

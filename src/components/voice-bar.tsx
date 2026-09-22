@@ -4,7 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff } from "lucide-react";
 import type { VoiceMode } from "@/lib/voice/types";
 import type { AraStatus } from "@/lib/voice/ara-client";
-import { createRecognizer, permissionDeniedPlain, stopSpeaking, speechSupported, ttsSupported } from "@/lib/voice/speech";
+import type { MicPermission } from "@/lib/voice/mic";
+import { createRecognizer, permissionDeniedPlain, speechSupported } from "@/lib/voice/speech";
+import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
+import { araSpeech } from "@/lib/voice/speech-controller";
+import { micStatusLabel } from "@/lib/voice/mic";
 
 const MIN_REAL_CONFIDENCE = 0.4;
 
@@ -21,6 +25,14 @@ export function VoiceBar({
   onStop,
   araStatus = "ready",
   araError = "",
+  micPermission = "UNKNOWN",
+  micStreamActive = false,
+  voiceSessionReady = false,
+  voiceUnavailable = false,
+  outputSpeaking = false,
+  onEnableMic,
+  onReconnectVoice,
+  onReadPage,
 }: {
   mode: VoiceMode;
   onMode: (m: VoiceMode) => void;
@@ -34,16 +46,33 @@ export function VoiceBar({
   onStop: () => void;
   araStatus?: AraStatus;
   araError?: string;
+  micPermission?: MicPermission;
+  micStreamActive?: boolean;
+  voiceSessionReady?: boolean;
+  voiceUnavailable?: boolean;
+  outputSpeaking?: boolean;
+  onEnableMic?: () => void;
+  onReconnectVoice?: () => void;
+  onReadPage?: () => void;
 }) {
   const recRef = useRef<ReturnType<typeof createRecognizer>>(null);
   const [avail, setAvail] = useState(true);
   const [err, setErr] = useState("");
   const activeRef = useRef(false);
   const active = mode === "conversation";
-  const live = listening || araStatus === "listening" || araStatus === "speaking" || araStatus === "connecting";
+  const trulyListening =
+    active
+    && araStatus === "listening"
+    && micPermission !== "DENIED"
+    && micPermission !== "BLOCKED"
+    && micPermission !== "UNAVAILABLE"
+    && micStreamActive
+    && voiceSessionReady;
+  const live = trulyListening || araStatus === "speaking" || outputSpeaking || araStatus === "connecting";
 
   useEffect(() => {
     setAvail(speechSupported());
+    teardownAraOutput();
   }, []);
 
   useEffect(() => {
@@ -51,7 +80,7 @@ export function VoiceBar({
       activeRef.current = false;
       recRef.current?.abort();
       if (mode === "off") {
-        stopSpeaking();
+        araSpeech().stop();
         onListening?.(false);
       }
       return;
@@ -63,6 +92,7 @@ export function VoiceBar({
 
   function pttDown() {
     setErr("");
+    unlockAraOutput();
     if (!speechSupported()) {
       setErr("Voice isn’t available in this browser. Use the buttons.");
       return;
@@ -97,21 +127,53 @@ export function VoiceBar({
     recRef.current?.stop();
   }
 
+  const micBlocked = micPermission === "DENIED" || micPermission === "BLOCKED" || araStatus === "mic_needed";
   const statusLabel =
-    mode === "conversation" && araStatus === "connecting"
-      ? "Connecting…"
-      : mode === "conversation" && araStatus === "speaking"
-        ? "Speaking…"
-        : mode === "conversation" && (listening || araStatus === "listening")
-          ? "Listening…"
-          : mode === "ptt" && listening
+    voiceUnavailable
+      ? "Voice unavailable"
+      : mode === "conversation" && araStatus === "connecting"
+        ? "Connecting…"
+        : mode === "conversation" && (araStatus === "speaking" || outputSpeaking)
+          ? "Speaking…"
+          : trulyListening
             ? "Listening…"
-            : araError
-              ? "Hold to speak"
-              : "Ready";
+            : mode === "conversation" && micBlocked
+              ? micStatusLabel(micPermission === "UNKNOWN" ? "DENIED" : micPermission)
+              : mode === "ptt" && listening
+                ? "Listening…"
+                : araError && !/microphone/i.test(araError)
+                  ? "Hold to speak"
+                  : "Ready";
+
+  const tag =
+    trulyListening
+      ? "Listening with you"
+      : mode === "conversation" && micBlocked
+        ? "Voice input unavailable"
+        : "Your AI operator";
+
+  const micMessage = mode === "conversation" && micBlocked
+    ? (micPermission === "BLOCKED"
+      ? "Microphone access is blocked. Enable it in your browser permissions to talk to Ara."
+      : "Microphone permission is needed to talk to Ara. You can still hear Ara read the screen.")
+    : "";
 
   return (
-    <div className="la-ara min-w-0" data-ara-bar="1" data-ara-active={active ? "1" : "0"} data-ara-compact="1">
+    <div
+      className="la-ara min-w-0"
+      data-ara-bar="1"
+      data-ara-active={active ? "1" : "0"}
+      data-ara-compact="1"
+      data-ara-listening={trulyListening ? "1" : "0"}
+      data-mic-permission={micPermission}
+      data-voice-provider="xAI"
+      data-voice-name="Ara"
+      data-voice-session-ready={voiceSessionReady ? "1" : "0"}
+      data-mic-stream-active={micStreamActive ? "1" : "0"}
+      data-output-audio={outputSpeaking ? "1" : "0"}
+      data-browser-tts="0"
+      data-browser-tts-active="0"
+    >
       <div className="la-ara-row">
         <button type="button" className="la-ara-id" aria-label="Ara">
           <span className={`la-ara-orb ${live ? "is-live" : "is-ready"}`} aria-hidden />
@@ -120,21 +182,26 @@ export function VoiceBar({
             <p className="la-ara-status">{statusLabel}</p>
           </div>
         </button>
-        <p className="la-ara-tag">{active ? "Listening with you" : "Your AI operator"}</p>
+        <p className="la-ara-tag">{tag}</p>
         <div className="la-ara-actions">
           {active ? (
             <>
-              <button className="la-btn la-btn-ghost" onClick={() => { onMuted(!muted); if (!muted) stopSpeaking(); }}>
+              <button className="la-btn la-btn-ghost" onClick={() => { onMuted(!muted); if (!muted) araSpeech().stop({ keepConversation: true }); }}>
                 {muted ? "Unmute" : "Mute"}
               </button>
               <button className="la-btn la-btn-ghost" onClick={onStop}>Stop</button>
             </>
           ) : (
-            <button className="la-btn la-btn-primary" onClick={() => onMode("conversation")}>
+            <button className="la-btn la-btn-primary" onClick={() => { unlockAraOutput(); araSpeech().unlock(); onMode("conversation"); }}>
               {muted ? <MicOff size={16} strokeWidth={2} /> : <Mic size={16} strokeWidth={2} />}
               Conversation
             </button>
           )}
+          {onReadPage ? (
+            <button className="la-btn la-btn-ghost" onClick={() => { unlockAraOutput(); araSpeech().unlock(); onReadPage(); }}>
+              Read page
+            </button>
+          ) : null}
           <button
             className="la-btn la-btn-ghost touch-none"
             style={{ touchAction: "none" }}
@@ -154,9 +221,28 @@ export function VoiceBar({
         </div>
       ) : null}
       {err ? <p className="mt-2 text-sm text-bad">{err}</p> : null}
-      {araError ? <p className="mt-2 text-sm text-muted">{araError}</p> : null}
+      {micMessage ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm text-muted">{micMessage}</p>
+          {onEnableMic && micPermission !== "BLOCKED" ? (
+            <button type="button" className="la-btn la-btn-primary" onClick={() => { unlockAraOutput(); onEnableMic(); }}>
+              Enable Microphone
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {voiceUnavailable ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm text-muted">{araError || "Ara's voice isn't available right now."}</p>
+          {onReconnectVoice ? (
+            <button type="button" className="la-btn la-btn-primary" onClick={() => { unlockAraOutput(); araSpeech().unlock(); onReconnectVoice(); }}>
+              Reconnect Ara Voice
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {araError && !/microphone/i.test(araError) && !voiceUnavailable ? <p className="mt-2 text-sm text-muted">{araError}</p> : null}
       {!avail && mode === "ptt" ? <p className="mt-2 text-sm">Voice isn’t available here. Buttons still work.</p> : null}
-      {mode === "ptt" && !ttsSupported() ? <p className="mt-1 text-xs text-muted">This browser won’t speak replies aloud. You can still read them.</p> : null}
     </div>
   );
 }

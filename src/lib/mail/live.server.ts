@@ -27,6 +27,7 @@ import {
   seenReplyIds,
   stopSequencesForProspect,
   updateMessageStatus,
+  countScheduledFollowups,
 } from "./sql.server";
 import { getProspectByUid } from "@/lib/prospects/repo.server";
 import { emailCannotBecomeCommand } from "./untrusted";
@@ -34,6 +35,7 @@ import { inboundReplies } from "./inbound";
 import { decideFollowupSend } from "./worker";
 import { freezeSnapshot } from "./snapshot";
 import { allowSendRecipient, effectiveCaps } from "./test-mode";
+import { isTestWorkflowUid } from "./test-loop";
 import type { OauthKind } from "./oauth-state";
 
 export async function accessFor(userId: string, kind: OauthKind = "gmail"): Promise<GoogleTokens | null> {
@@ -59,7 +61,7 @@ export async function sendLive(opts: {
   firstApproved: boolean;
   threadId?: string | null;
   sequenceId?: string | null;
-}): Promise<{ ok: true; threadId: string; messageId: string } | { ok: false; reason: string }> {
+}): Promise<{ ok: true; threadId: string; messageId: string } | { ok: false; reason: string; code?: string }> {
   const uid = opts.prospect.uid || "";
   const tokens = await accessFor(opts.userId, "gmail");
   const usage = await getUsage(opts.userId);
@@ -67,12 +69,13 @@ export async function sendLive(opts: {
   const allow = allowSendRecipient({ testMode: settings.testMode, allowlist: settings.allowlist, recipient: opts.to });
   if (!allow.ok) {
     await audit(opts.userId, "send_blocked", allow.reason, { prospectUid: uid, method: opts.method });
-    return { ok: false, reason: allow.reason };
+    return { ok: false, reason: allow.reason, code: "NOT_ALLOWLISTED" };
   }
   const caps = effectiveCaps(settings);
   const seq = await activeSequence(opts.userId, uid);
   const key = idempotencyKey(opts.userId, uid, opts.kind, opts.sequenceId || undefined);
   const gmail = tokens ? liveGmail(tokens.access_token) : null;
+  const testRecord = isTestWorkflowUid(uid);
   const result = await sendMail({
     userId: opts.userId,
     prospect: {
@@ -116,7 +119,11 @@ export async function sendLive(opts: {
           inputMethod: opts.method,
           sequenceId: opts.sequenceId,
         }),
-      reserveCap: (k) => reserveSendCap(opts.userId, k, { ...caps, minDelayMinutes: settings.minDelayMinutes }),
+      reserveCap: (k) => reserveSendCap(opts.userId, k, {
+        ...caps,
+        minDelayMinutes: testRecord ? 0 : settings.minDelayMinutes,
+      }),
+      skipHours: testRecord,
     },
   });
   if (!result.ok) {
@@ -124,7 +131,7 @@ export async function sendLive(opts: {
       await updateMessageStatus(opts.userId, key, result.record.status);
     }
     await audit(opts.userId, "send_failed", result.reason, { prospectUid: uid, method: opts.method });
-    return { ok: false, reason: result.reason };
+    return { ok: false, reason: result.reason, code: result.code };
   }
   await updateMessageStatus(opts.userId, key, "SENT", result.record.gmailMessageId || undefined, result.record.gmailThreadId || undefined);
   await audit(opts.userId, "sent", `${opts.kind} sent`, {
@@ -152,6 +159,13 @@ export async function runDueFollowups(): Promise<{ sent: number; skipped: number
       sequenceId: job.sequence_id,
     });
     snapshot.contentHash = job.content_hash || snapshot.contentHash;
+    if (isTestWorkflowUid(job.prospect_uid)) {
+      await audit(job.user_id, "worker_claimed", `${job.step} claimed by worker`, {
+        prospectUid: job.prospect_uid,
+        method: "AUTOMATION",
+        sequenceId: job.sequence_id,
+      });
+    }
     const decision = decideFollowupSend({
       prospect: prospect
         ? { uid: prospect.uid || job.prospect_uid, name: prospect.name, suppressed: prospect.suppressed, stage: prospect.stage }
@@ -168,6 +182,7 @@ export async function runDueFollowups(): Promise<{ sent: number; skipped: number
       gmailConnected: Boolean(await loadTokens(job.user_id, "gmail")),
       testMode: settings.testMode,
       allowlist: settings.allowlist,
+      skipHours: isTestWorkflowUid(job.prospect_uid),
     });
     if (decision.action === "reschedule") {
       await finishFollowup(job.id, "scheduled", decision.dueAt);
@@ -194,9 +209,25 @@ export async function runDueFollowups(): Promise<{ sent: number; skipped: number
     if (result.ok) {
       await finishFollowup(job.id, "sent");
       sent += 1;
+      if (isTestWorkflowUid(job.prospect_uid)) {
+        await audit(job.user_id, "test_followup_sent", `${job.step} sent by worker`, {
+          prospectUid: job.prospect_uid,
+          method: "AUTOMATION",
+          sequenceId: job.sequence_id,
+          providerIds: result.messageId,
+        });
+      }
     } else if (/working hours|wait/i.test(result.reason)) {
       await finishFollowup(job.id, "scheduled", decision.dueAt);
       rescheduled += 1;
+    } else if (result.code === "UNKNOWN_DELIVERY") {
+      await finishFollowup(job.id, "failed");
+      await audit(job.user_id, "UNKNOWN_DELIVERY", result.reason, {
+        prospectUid: job.prospect_uid,
+        method: "AUTOMATION",
+        sequenceId: job.sequence_id,
+      });
+      skipped += 1;
     } else {
       await finishFollowup(job.id, "failed");
       skipped += 1;
@@ -225,7 +256,13 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
       seen.add(m.id);
       n += 1;
       await stopSequencesForProspect(userId, t.prospect_uid);
-      await audit(userId, "reply", `${cls}: follow-ups stopped`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
+      const left = await countScheduledFollowups(userId, t.prospect_uid);
+      if (left > 0) {
+        await audit(userId, "FOLLOWUP_CANCEL_FAILED", `${left} follow-up(s) still pending after reply`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
+      } else {
+        await audit(userId, "followups_cancelled", "remaining follow-ups cancelled", { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
+      }
+      await audit(userId, "reply", `${cls}: inbound reply detected`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
       const prospect = await getProspectByUid(userId, t.prospect_uid);
       if (cls === "UNSUBSCRIBE" && prospect) {
         prospect.suppressed = true;
@@ -239,19 +276,30 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
   return { ok: true, replies: n };
 }
 
-export async function tickOutreachWorker(source = "in-process"): Promise<{ runId: string; sawTest: number }> {
+export async function tickOutreachWorker(source = "in-process"): Promise<{
+  runId: string;
+  sawTest: number;
+  sent: number;
+  followupsSkipped: number;
+  rescheduled: number;
+  skippedReason?: string;
+}> {
   const { newUid } = await import("../prospects/ids");
   const runId = newUid();
-  await startWorkerHeartbeat(runId, source);
+  const started = await startWorkerHeartbeat(runId, source);
+  if (!started) {
+    return { runId, sawTest: 0, sent: 0, followupsSkipped: 0, rescheduled: 0, skippedReason: "already-running" };
+  }
   try {
     const users = await listGmailUsers();
     for (const userId of users) {
       await syncRepliesForUser(userId);
     }
-    await runDueFollowups();
+    const due = await runDueFollowups();
     const sawTest = await markTestWorkflowSeen(runId);
-    await finishWorkerHeartbeat(runId, sawTest ? "ok:test-seen" : "ok");
-    return { runId, sawTest };
+    const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled}`;
+    await finishWorkerHeartbeat(runId, sawTest ? `${summary} test-seen` : summary);
+    return { runId, sawTest, sent: due.sent, followupsSkipped: due.skipped, rescheduled: due.rescheduled };
   } catch (err) {
     await finishWorkerHeartbeat(runId, "error", err instanceof Error ? err.message : "worker failed");
     throw err;

@@ -18,11 +18,11 @@ import { executeAllowlistedTool, type AraDeskContext } from "./tools.ts";
 
 const world: DeskWorld = {
   prospects: [
-    { uid: "uid-fire", name: "Firefighter Roofing", score: 88, stage_plain: "New" },
+    { uid: "uid-fire", name: "Firefighter Roofing", score: 88, stage_plain: "New", website: "https://firefighterroofing.com/", phone: "(817) 479-8999" },
     { uid: "uid-saas", name: "Northstar SaaS", score: 70, stage_plain: "New" },
   ],
   tasks: [
-    { title: "Firefighter Roofing", plain: "Website research didn’t finish.", uid: "uid-fire", id: "fail-uid-fire", retry: true },
+    { title: "Firefighter Roofing needs a contact", plain: "Website research didn’t finish.", uid: "uid-fire", id: "fail-uid-fire", retry: true },
     { title: "Your email is ready", plain: "Preview then approve.", uid: "uid-saas", id: "out-uid-saas", retry: false },
   ],
 };
@@ -214,7 +214,7 @@ describe("Ara operates Owner Mode via allowlisted actions", () => {
     assert.equal(ctx.screen, "TASKS");
     assert.ok(ctx.availableActions.includes("review_current_task"));
     assert.ok(ctx.availableActions.includes("retry_current_task"));
-    assert.ok(ctx.screenActions?.some((a) => a.label === "Review"));
+    assert.ok(ctx.screenActions?.some((a) => a.label === "Learn More"));
 
     r = run(state, "Press Review.");
     state = r.state;
@@ -478,5 +478,80 @@ describe("Ara operates Owner Mode via allowlisted actions", () => {
     const looking = spokenToAction("What am I looking at?", emptyDesk(), world);
     assert.ok("action" in looking);
     if ("action" in looking) assert.equal(looking.action.name, "EXPLAIN");
+  });
+
+  it("Firefighter Roofing is not a dead end — Find Contact / Open Website / Call", () => {
+    const home = emptyDesk({ view: "home", openUid: "uid-fire" });
+    const labels = labeledActionsFor(home, world).map((a) => a.label);
+    assert.ok(labels.includes("Learn More"));
+    assert.ok(labels.includes("Find Contact"));
+    assert.ok(labels.includes("Open Website"));
+    assert.ok(labels.includes("Call"));
+
+    const find = run(home, "Find the owner.");
+    assert.equal(find.effect.type, "research");
+    if (find.effect.type === "research") assert.equal(find.effect.uid, "uid-fire");
+    assert.match(find.state.lastSpoken, /decision maker|owner/i);
+
+    const site = run(home, "Open their website.");
+    assert.equal(site.effect.type, "open_url");
+    if (site.effect.type === "open_url") assert.match(site.effect.url, /firefighterroofing\.com/);
+
+    const call = run(home, "Call them.");
+    assert.equal(call.effect.type, "dial");
+    if (call.effect.type === "dial") assert.match(call.effect.phone, /817/);
+
+    const more = run(home, "Tell me more about them.");
+    assert.equal(more.state.view, "detail");
+    assert.equal(more.state.openUid, "uid-fire");
+
+    const advise = run(home, "What should I do with Firefighter Roofing?");
+    assert.match(advise.state.lastSpoken, /Firefighter Roofing/i);
+    assert.match(advise.state.lastSpoken, /contact|website|phone/i);
+  });
+
+  it("does not invent a website or phone when none is on file", () => {
+    const state = emptyDesk({ view: "detail", openUid: "uid-saas" });
+    const site = applyDeskAction(state, { name: "OPEN_WEBSITE", uid: "uid-saas" }, world);
+    assert.equal(site.effect.type, "none");
+    assert.match(site.state.lastSpoken, /no verified website/i);
+    const call = applyDeskAction(state, { name: "CALL_PROSPECT", uid: "uid-saas" }, world);
+    assert.equal(call.effect.type, "none");
+    assert.match(call.state.lastSpoken, /no phone/i);
+  });
+
+  it("read this page uses exact screen content, including Find Clients blocker", () => {
+    const page = run(emptyDesk({ view: "find" }), "Read this page.");
+    assert.match(page.state.lastSpoken, /Find Clients/i);
+    const blocked = applyDeskAction(
+      emptyDesk({ view: "find" }),
+      { name: "READ_PAGE", readMode: "page" },
+      { ...world, discoveryConfigured: false },
+    );
+    assert.match(blocked.state.lastSpoken, /Google Places is not configured/i);
+    const tool = executeAllowlistedTool("read_current_screen", {}, {
+      view: "settings",
+      openUid: null,
+      companyName: null,
+      pipelineStage: null,
+      taskTitle: null,
+      tasks: [],
+      prospects: [],
+      gmail: "missing",
+      calendar: "missing",
+      testMode: true,
+      allowlist: [],
+      availableActions: ["read_current_screen"],
+      confirmationOpen: false,
+      evidenceOpen: false,
+      lookingAt: "You’re in Settings.",
+      important: "Google isn’t configured yet. The OAuth Client ID, Client Secret, APP_SECRET, and outreach job secret are missing, so Gmail and Calendar can’t connect yet.",
+      nextFocus: "Connect anything that’s missing.",
+      screen: "SETTINGS",
+      screenFacts: [{ kind: "ERROR", text: "Gmail isn’t connected." }],
+    });
+    assert.equal(tool.ok, true);
+    assert.equal(tool.output.already_spoken, true);
+    assert.match(String(tool.output.spoken), /Google isn’t configured yet/);
   });
 });

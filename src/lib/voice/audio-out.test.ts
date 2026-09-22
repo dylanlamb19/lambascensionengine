@@ -55,19 +55,28 @@ describe("Ara audio pipeline", () => {
     assert.ok(out.every((s) => s >= -32768 && s <= 32767));
   });
 
-  it("plays WAV through the phone media mixer instead of Web Audio Bluetooth", () => {
+  it("never mounts a visible native audio player", () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "audio-out.ts"), "utf8");
     assert.match(src, /unlockAraOutput/);
+    assert.match(src, /teardownAraOutput/);
+    assert.match(src, /pcm16ToWav/);
+    assert.match(src, /controls = false/);
+    assert.doesNotMatch(src, /controls\s*=\s*true/);
+    assert.doesNotMatch(src, /className = "la-ara-player"/);
+    assert.doesNotMatch(src, /z-index:2147483000/);
+    assert.doesNotMatch(src, /appendChild\(el\)/);
+  });
+
+  it("plays WAV through the phone media mixer instead of Web Audio Bluetooth", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "audio-out.ts"), "utf8");
     assert.match(src, /pcm16ToWav/);
     assert.match(src, /audio\/wav/);
     assert.match(src, /phoneMicConstraints/);
     assert.match(src, /ARA_WAV_RATE = 44100/);
     assert.match(src, /replayAraOutput/);
-    assert.match(src, /la-ara-voice-out/);
     assert.match(src, /startHold/);
     assert.match(src, /onHostEnded/);
     assert.doesNotMatch(src, /new AudioContext\(\{\s*sampleRate:\s*24000/);
-    assert.doesNotMatch(src, /const el = new Audio\(\)/);
   });
 
   it("pcm16ToWav writes a real RIFF WAVE blob", async () => {

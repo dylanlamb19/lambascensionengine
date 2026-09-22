@@ -4,11 +4,11 @@
   --color-bg: #080a10;
   --color-surface: #10141c;
   --color-surface2: #171c27;
-  --color-fg: #f3f0e7;
+  --color-fg: #e8eef6;
   --color-muted: #8e97a8;
-  --color-gold: #c9a24a;
-  --color-gold2: #ead9a8;
-  --color-gold-ink: #16120a;
+  --color-gold: #4a8fd4;
+  --color-gold2: #b8d4f0;
+  --color-gold-ink: #f4f8ff;
   --color-line: #2a3142;
   --color-good: #3dba7a;
   --color-warn: #d4a017;
@@ -240,18 +240,6 @@
     color: var(--color-gold2);
     background: color-mix(in oklab, var(--color-gold) 14%, transparent);
     font-weight: 600;
-  }
-
-  .la-ara-player {
-    display: block;
-    position: fixed;
-    left: 10px;
-    top: 8px;
-    width: min(22rem, calc(100vw - 20px));
-    height: 36px;
-    z-index: 40;
-    border-radius: 8px;
-    background: #111;
   }
 
   .la-ara {
@@ -739,6 +727,43 @@
     border-color: color-mix(in oklab, var(--color-bad) 40%, var(--color-line));
     background: color-mix(in oklab, var(--color-bad) 10%, var(--color-bg));
     color: var(--color-fg);
+  }
+  .la-ribbon-good {
+    border-radius: var(--radius-md);
+    border-color: color-mix(in oklab, var(--color-good) 40%, var(--color-line));
+    background: color-mix(in oklab, var(--color-good) 10%, var(--color-bg));
+    color: var(--color-fg);
+  }
+
+  .la-reach-state {
+    margin-top: 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+  }
+  .la-contact-grid {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .la-contact-row {
+    display: grid;
+    gap: 0.1rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid color-mix(in oklab, var(--color-line) 80%, transparent);
+  }
+  .la-contact-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .la-contact-value {
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
+  }
+  .la-contact-src {
+    font-size: 0.75rem;
+    color: var(--color-muted);
   }
 
   .la-attention {

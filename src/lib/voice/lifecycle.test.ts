@@ -13,6 +13,7 @@ import {
   RESPONSE_KICK_TIMEOUT_MS,
   RESPONSE_START_TIMEOUT_MS,
   sessionLooksConfigured,
+  shouldFailClosedOnRealtimeError,
   uiStatus,
   VoiceMachine,
 } from "./lifecycle.ts";
@@ -224,6 +225,12 @@ describe("Ara voice lifecycle", () => {
     assert.equal(classifyVoiceError("Unknown parameter: turn_detection.foo"), "fatal");
     assert.equal(classifyVoiceError("invalid session configuration"), "fatal");
     assert.equal(classifyVoiceError("response generation failed"), "recoverable");
+    const cancel = {
+      type: "error",
+      error: { code: "response_cancel_not_active", message: "Cancellation failed: no active response" },
+    };
+    assert.equal(shouldFailClosedOnRealtimeError(cancel), false);
+    assert.equal(shouldFailClosedOnRealtimeError({ type: "error", error: { message: "invalid auth token" } }), true);
   });
 });
 

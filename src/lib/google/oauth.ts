@@ -19,6 +19,20 @@ export function googleOAuthConfigured(): boolean {
   return Boolean(env("GOOGLE_OAUTH_CLIENT_ID") && env("GOOGLE_OAUTH_CLIENT_SECRET"));
 }
 
+function present(key: string, forbidden: string[] = []): boolean {
+  const v = env(key);
+  if (!v) return false;
+  return !forbidden.includes(v);
+}
+
+export function googleOAuthSetup(): { name: string; ready: boolean }[] {
+  return [
+    { name: "Google OAuth Client ID", ready: present("GOOGLE_OAUTH_CLIENT_ID") },
+    { name: "Google OAuth Client Secret", ready: present("GOOGLE_OAUTH_CLIENT_SECRET") },
+    { name: "APP_SECRET", ready: present("APP_SECRET", ["dev-preview-only-not-for-production", "changeme"]) },
+  ];
+}
+
 export function redirectUri(requestUrl: string): string {
   const explicit = env("GOOGLE_OAUTH_REDIRECT_URI");
   if (explicit) return explicit;
@@ -30,7 +44,7 @@ export function scopesFor(kind: OauthKind): string[] {
   return kind === "calendar" ? [...CALENDAR_SCOPES] : [...GMAIL_SCOPES];
 }
 
-export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl: string }): string {
+export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl: string; loginHint?: string }): string {
   const clientId = env("GOOGLE_OAUTH_CLIENT_ID") || "";
   const unique = [...new Set(scopesFor(opts.kind))];
   const p = new URLSearchParams({
@@ -40,8 +54,10 @@ export function authorizeUrl(opts: { state: string; kind: OauthKind; requestUrl:
     scope: unique.join(" "),
     access_type: "offline",
     prompt: "consent",
+    include_granted_scopes: "false",
     state: opts.state,
   });
+  if (opts.loginHint) p.set("login_hint", opts.loginHint);
   return `https://accounts.google.com/o/oauth2/v2/auth?${p.toString()}`;
 }
 
@@ -130,6 +146,7 @@ export async function ensureFreshAccess(
     next.refresh_token = tokens.refresh_token;
     next.email = tokens.email;
     next.sub = tokens.sub;
+    next.scope = next.scope || tokens.scope || "";
     return { ok: true, tokens: next, refreshed: true };
   } catch {
     return { ok: false, error: "Calendar needs to be reconnected." };

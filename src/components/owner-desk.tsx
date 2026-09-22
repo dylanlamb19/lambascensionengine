@@ -20,16 +20,25 @@ import { listProspectsFn, importProspectsFn, upsertProspectsFn } from "@/lib/pro
 import { matchExisting } from "@/lib/prospects/dedupe";
 import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/identity";
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
-import { findClientsFn } from "@/lib/discovery/run";
+import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
+import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
+import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
 import { TestDesk } from "@/components/test-desk";
+import { ProspectReachCard } from "@/components/prospect-reach";
 import { VoiceBar } from "@/components/voice-bar";
 import { CalendarDesk } from "@/components/calendar-desk";
 import { ActionGate, makeActionId } from "@/lib/voice/idempotency";
-import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool } from "@/lib/voice/intents";
-import { speak, stopSpeaking } from "@/lib/voice/speech";
+import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
+import { stopSpeaking } from "@/lib/voice/speech";
+import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
+import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
+import { announceToAra, announceSource } from "@/lib/voice/announce";
+import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
+import { buildScreenContext } from "@/lib/voice/screen-context";
+import { queryMicPermission, requestMicrophone, stopMicStream, type MicPermission } from "@/lib/voice/mic";
 import type { OwnerView, VoiceMode } from "@/lib/voice/types";
 import { AraRealtime, type AraStatus } from "@/lib/voice/ara-client";
 import { executeAllowlistedTool, planProspectUid, type AraDeskContext, type ToolResult } from "@/lib/voice/tools";
@@ -45,6 +54,7 @@ import {
   type NavFrame,
 } from "@/lib/voice/desk-actions";
 import { createAraSessionFn, logVoiceAuditFn } from "@/lib/voice/ara-session";
+import { voiceFailureReason } from "@/lib/voice/voice-failure";
 import { makeVoiceAudit } from "@/lib/voice/audit";
 import { araWebResearchFn } from "@/lib/voice/web-research/actions";
 import { wrapUntrustedWeb } from "@/lib/voice/web-research/parse";
@@ -52,6 +62,7 @@ import type { AraSource } from "@/lib/voice/web-research/types";
 import { authClient, rememberSessionToken, signOut as realSignOut } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
+import { OWNER_TZ_DEFAULT, isOwnerCalendarFollowupTime, isOwnerCalendarRefusalSpeech, isPersonalCalendarCommand, ownerEventSpeechFromState, parseOwnerCalendarSpeech, shouldSilenceAraForOwnerCalendar, type LastOwnerEvent } from "@/lib/calendar/owner-event";
 import { DEFAULT_HOME_LAYOUT, loadHomeLayout, saveHomeLayout, visibleOrder, type HomeLayout, type HomeWidget } from "@/lib/voice/layout";
 import {
   DEFAULT_VISUAL_THEME,
@@ -76,6 +87,20 @@ import {
 import { ImageDock } from "@/components/image-dock";
 import { DesignDirectorBar } from "@/components/design-director";
 import { FLAGS } from "@/lib/flags";
+import {
+  araRecommend,
+  listingPhone,
+  mergeContacts,
+  nextResearchStatus,
+  reachKind,
+  reachLabel,
+  telHref,
+  taskForProspect,
+  usefulEmail,
+  verifiedWebsite,
+  type ProspectActionId,
+} from "@/lib/prospects/reach";
+import { startGoogleOAuth, isGoogleOauthMessage, type OauthMissing } from "@/lib/google/launch";
 import {
   applyDesignOps,
   cloneDesign,
@@ -157,57 +182,48 @@ function buildTasks(rows: Prospect[]): Task[] {
       plain: "Your list is empty.", why: "Nothing to supervise until there are real names.",
       recommend: "Add a company you already know.", button: "Add Client", action: "add",
     });
+    return tasks;
   }
-  rows.filter((c) => c.research_status === "blocked" || c.research_status === "failed").forEach((c) => {
-    tasks.push({
-      id: "fail-" + (c.uid || c.id), severity: "red", title: `${c.name}: website research didn’t finish`,
-      plain: "We couldn’t read their site. We did not invent an audit.",
-      why: "Without a site check you’re guessing about their funnel.",
-      recommend: "Open the review to see what we actually know, then Skip or try later.",
-      button: "Review", action: "open", company_uid: c.uid, retry: true,
-    });
-  });
-  rows.filter((c) => c.research_status === "queued").forEach((c) => {
-    tasks.push({
-      id: "res-" + (c.uid || c.id), severity: "yellow", title: `Look up ${c.name}`,
-      plain: "They’re on your list. We haven’t opened their website yet.",
-      why: "A site check tells you if they’re worth a conversation.",
-      recommend: "Open the company. Live website research is not run from this button in Owner Mode.",
-      button: "Open", action: "open", company_uid: c.uid,
-    });
-  });
-  rows.filter((c) => (c.fit === "strong" || c.fit === "priority") && (c.research_status === "complete" || c.research_status === "partial")).forEach((c) => {
-    if (c.stage === "Approved for Outreach" || c.stage === "Do Not Contact" || c.stage === "Contacted" || c.stage === "Replied" || c.stage === "Call Booked") return;
-    tasks.push({
-      id: "rev-" + (c.uid || c.id), severity: "yellow", title: `Decide on ${c.name}`,
-      plain: `${c.fit_plain}. ${c.is_demo ? "DEMO. " : ""}Public reviews: ${c.review_count}.`,
-      why: "Research is done. The next step is your judgment.",
-      recommend: "Read the review, then Approve or Skip.",
-      button: "Review", action: "open", company_uid: c.uid,
-    });
-  });
-  rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed).forEach((c) => {
-    tasks.push({
-      id: "out-" + (c.uid || c.id), severity: "yellow",
-      title: `Your message for ${c.name} is ready.`,
-      plain: c.is_demo ? "DEMO record. Preview, edit, then approve. Nothing is sent automatically." : "Preview, edit, then approve. Nothing is sent automatically.",
-      why: "The note was written from verified research. You still decide.",
-      recommend: "Preview the message.",
-      button: "Preview", action: "outreach", company_uid: c.uid,
-    });
-  });
-  rows.filter((c) => c.stage === "Call Booked").forEach((c) => {
-    tasks.push({
-      id: "prep-" + (c.uid || c.id), severity: "yellow", title: `Prepare for the ${c.name} call`,
-      plain: "A short prep page is ready. Answers are questions, not facts we already know.",
-      why: "Don’t walk in cold.", recommend: "Open call prep.", button: "Call prep", action: "prep", company_uid: c.uid,
-    });
-  });
+  const active = rows.filter((c) => !c.suppressed && c.stage !== "Do Not Contact");
+  const rank = (c: Prospect) => {
+    if (c.stage === "Call Booked") return 0;
+    if (c.stage === "Replied") return 1;
+    if (c.stage === "Contacted") return 2;
+    if (c.stage === "Approved for Outreach") return 3;
+    const k = reachKind(c);
+    if (k === "READY_TO_CONTACT") return 4;
+    if (k === "NEEDS_CONTACT_INFO") return 5;
+    if (k === "NEEDS_RESEARCH") return 6;
+    return 7;
+  };
+  const toTask = (c: Prospect): Task => {
+    if (c.stage === "Contacted" || c.stage === "Replied") {
+      return {
+        id: "follow-" + (c.uid || c.id),
+        severity: "yellow",
+        title: c.stage === "Replied" ? `${c.name} replied` : `Follow up with ${c.name}`,
+        plain: c.stage_plain,
+        why: "A live conversation is more valuable than a new first email.",
+        recommend: "Open the thread and decide the next move.",
+        button: "Learn More",
+        action: "open",
+        company_uid: c.uid,
+      };
+    }
+    const t = taskForProspect(c);
+    const prefix = c.stage === "Call Booked" ? "prep-" : c.stage === "Approved for Outreach" ? "out-" : "reach-";
+    return { id: prefix + (c.uid || c.id), ...t, company_uid: c.uid };
+  };
+  const reachBoost = (c: Prospect) =>
+    (usefulEmail(c) ? 4 : 0) + (listingPhone(c) ? 2 : 0) + (verifiedWebsite(c) ? 1 : 0);
+  const real = active.filter((c) => !c.is_demo && !isTestWorkflowUid(c.uid)).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
+  const demo = active.filter((c) => c.is_demo && !isTestWorkflowUid(c.uid)).sort((a, b) => rank(a) - rank(b) || reachBoost(b) - reachBoost(a) || b.score - a.score);
+  for (const c of [...real, ...demo]) tasks.push(toTask(c));
   return tasks;
 }
 
-function healthClass(s: "connected" | "missing" | "attention") {
-  return s === "connected" ? "la-dot-good" : s === "attention" ? "la-dot-warn" : "la-dot-bad";
+function healthClass(s: ConnectionHealth) {
+  return s === "connected" ? "la-dot-good" : s === "attention" || s === "unknown" ? "la-dot-warn" : "la-dot-bad";
 }
 
 export function OwnerDesk() {
@@ -238,10 +254,17 @@ export function OwnerDesk() {
   const [findMsg, setFindMsg] = useState("");
   const [findLimit, setFindLimit] = useState(20);
   const [findMore, setFindMore] = useState(false);
-  const [google, setGoogle] = useState({ gmail: "missing" as "connected" | "missing" | "attention", calendar: "missing" as "connected" | "missing" | "attention", configured: false, gmailEmail: "", error: "" });
+  const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
+  const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
+  const [googleMsg, setGoogleMsg] = useState("");
+  const [googleErr, setGoogleErr] = useState("");
+  const [googleMissing, setGoogleMissing] = useState<OauthMissing[]>([]);
+  const [googleNext, setGoogleNext] = useState("");
+  const [googleUrl, setGoogleUrl] = useState("");
   const [testModeOn, setTestModeOn] = useState(true);
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [sales, setSales] = useState({ ready: 0, followups: 0, replies: 0, calls: 0 });
+  const [testLoop, setTestLoop] = useState<TestLoopState>(EMPTY_TEST_LOOP);
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,6 +280,12 @@ export function OwnerDesk() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [araStatus, setAraStatus] = useState<AraStatus>("ready");
   const [araErr, setAraErr] = useState("");
+  const [micPermission, setMicPermission] = useState<MicPermission>("UNKNOWN");
+  const [micStreamActive, setMicStreamActive] = useState(false);
+  const [voiceUnavailable, setVoiceUnavailable] = useState(false);
+  const [outputSpeaking, setOutputSpeaking] = useState(false);
+  const [discoveryConfigured, setDiscoveryConfigured] = useState<boolean | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
   const [araSources, setAraSources] = useState<AraSource[]>([]);
   const [calView, setCalView] = useState<CalView>("week");
   const [calAnchor, setCalAnchor] = useState(ymdInTz());
@@ -266,6 +295,9 @@ export function OwnerDesk() {
   const [calLoading, setCalLoading] = useState(false);
   const [calConnected, setCalConnected] = useState(false);
   const [nextCall, setNextCall] = useState<{ prospect_uid: string; start_at: string; title: string } | null>(null);
+  const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
+  const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
+  const pendingOwnerCalRef = useRef<{ title: string; when: string } | null>(null);
   const [layout, setLayout] = useState<HomeLayout>(DEFAULT_HOME_LAYOUT);
   const [visual, setVisual] = useState<VisualTheme>(DEFAULT_VISUAL_THEME);
   const [chrome, setChrome] = useState<DesignChrome>(DEFAULT_CHROME);
@@ -290,16 +322,17 @@ export function OwnerDesk() {
 
   const tasks = useMemo(() => buildTasks(rows), [rows]);
   const liveRef = useRef({
-    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
+    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
     calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
+    discoveryConfigured, googleMissing, integration, lastOwnerEvent,
   });
   liveRef.current = {
-    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales,
+    rows, openUid, view, tasks, google, testModeOn, taskIx, allowlist, sales, testLoop,
     evidence, advanced, stack, vert, city, findLimit, findMsg, voiceReply, explain,
-    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery,
+    calView, calAnchor, calEventId, calEvents, calReason, calConnected, nextCall, layout, visual, voiceMode, gallery, discoveryConfigured, googleMissing, integration, lastOwnerEvent,
   };
-  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed).length;
+  const readyN = rows.filter((c) => c.stage === "Approved for Outreach" && !c.suppressed && !c.is_demo && !isTestWorkflowUid(c.uid)).length;
   const light: Light = tasks.some((t) => t.severity === "red") ? "red" : tasks.some((t) => t.severity === "yellow") ? "yellow" : "green";
   const headline = light === "red" ? "Needs attention" : light === "yellow" ? "Needs your approval" : "Everything is good";
   const blurb =
@@ -341,13 +374,17 @@ export function OwnerDesk() {
         if (!cancelled) setSyncErr("");
         try {
           const [g, s] = await Promise.all([googleStatusFn(), salesCountsFn()]);
-          if (!cancelled && g.ok) setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, error: g.error });
+          if (!cancelled && g.ok) {
+            if (g.integration) applyIntegration(g.integration);
+            else setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, calendarEmail: g.calendarEmail || "", error: g.error });
+          }
           if (!cancelled && s.ok) setSales({ ready: s.ready, followups: s.followups, replies: s.replies, calls: s.calls });
           try {
             const t = await testSettingsFn();
             if (!cancelled && t.ok) {
               setTestModeOn(t.testMode);
               setAllowlist(t.allowlist || []);
+              if (t.testLoop) setTestLoop(t.testLoop);
             }
           } catch { /* keep default on */ }
           try {
@@ -404,6 +441,66 @@ export function OwnerDesk() {
   }, [userId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const flag = new URLSearchParams(window.location.search).get("google");
+    if (!flag) return;
+    if (flag === "connected") {
+      setGoogleMsg("Google connected. Gmail identity will show once we verify the account.");
+      void refreshIntegration()
+        .then(() => {
+          const live = liveRef.current;
+          if (live.google.gmail === "connected") {
+            setGoogleMsg(`Gmail connected${live.google.gmailEmail ? ` · ${live.google.gmailEmail}` : ""}.`);
+          } else if (live.google.calendar === "connected") {
+            setGoogleMsg("Google Calendar connected.");
+          }
+        })
+        .catch(() => { /* keep last status */ });
+    } else if (flag === "denied") {
+      setGoogleErr("Google sign-in was cancelled. Nothing was connected.");
+    } else if (flag === "failed" || flag === "bad_state") {
+      setGoogleErr("Google sign-in didn’t finish. Nothing was connected. Press Connect Gmail to try again.");
+    }
+    window.history.replaceState({}, "", window.location.pathname || "/");
+    // refreshIntegration is a stable function declaration; this effect is a one-shot OAuth return.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      if (!isGoogleOauthMessage(e.data)) return;
+      if (e.data.status === "connected") {
+        setGoogleErr("");
+        setGoogleMsg("Google connected. Checking Gmail identity…");
+        void refreshIntegration()
+          .then(() => {
+            const live = liveRef.current;
+            if (live.google.gmail === "connected") {
+              setGoogleMsg(`Gmail connected${live.google.gmailEmail ? ` · ${live.google.gmailEmail}` : ""}.`);
+            } else if (live.google.calendar === "connected") {
+              setGoogleMsg("Google Calendar connected.");
+            }
+          })
+          .catch(() => { /* keep last status */ });
+      } else {
+        setGoogleErr("Google sign-in didn’t finish. Nothing was connected. Press Connect Gmail to try again.");
+      }
+    }
+    function onFocus() {
+      void refreshIntegration().catch(() => { /* ignore */ });
+    }
+    window.addEventListener("message", onMsg);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("message", onMsg);
+      window.removeEventListener("focus", onFocus);
+    };
+    // refreshIntegration is a stable function declaration used as an event handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     const applyVp = () => {
       const vp = detectViewport();
       setViewport(vp);
@@ -432,15 +529,50 @@ export function OwnerDesk() {
     }, 400);
   }, [rows, hydrated, syncReady, userId]);
 
+  function applyIntegration(status: IntegrationStatus) {
+    setIntegration(status);
+    setGoogle({
+      gmail: gmailHealth(status),
+      calendar: calendarHealth(status),
+      configured: status.google_oauth_configured,
+      gmailEmail: status.gmail_identity,
+      calendarEmail: status.calendar_identity,
+      error: "",
+    });
+    setTestModeOn(status.test_mode);
+    if (status.gmail_connected) {
+      setVoiceReply((prev) => {
+        if (!prev) return prev;
+        if (/Gmail isn’t connected/i.test(prev) && !/token is valid/i.test(prev)) return "";
+        return prev;
+      });
+    }
+  }
+
+  async function refreshIntegration() {
+    const g = await googleStatusFn();
+    if (g.ok && g.integration) applyIntegration(g.integration);
+    else if (g.ok) {
+      setGoogle({ gmail: g.gmail, calendar: g.calendar, configured: g.configured, gmailEmail: g.gmailEmail, calendarEmail: g.calendarEmail || "", error: g.error });
+    }
+  }
+
   function deskWorld(): DeskWorld {
     const live = liveRef.current;
     const next = live.nextCall;
     const companyFor = (uid: string) => live.rows.find((p) => p.uid === uid);
     return {
-      prospects: live.rows.map((p) => ({ uid: p.uid || "", name: p.name, score: p.score, stage_plain: p.stage_plain })),
+      prospects: live.rows.map((p) => ({
+        uid: p.uid || "",
+        name: p.name,
+        score: p.score,
+        stage_plain: p.stage_plain,
+        website: p.website,
+        phone: p.phone,
+      })),
       tasks: live.tasks.map((t) => ({ title: t.title, plain: t.plain, uid: t.company_uid, id: t.id, retry: t.retry })),
-      gmail: live.google.gmail,
-      calendarStatus: live.google.calendar,
+      gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
+      calendarStatus: live.integration ? calendarHealth(live.integration) : live.google.calendar,
       calendarUnreadable: Boolean(live.calReason) && live.calConnected,
       calendarReason: live.calReason,
       calendarRange: rangeFor(live.calView, live.calAnchor).label,
@@ -464,6 +596,10 @@ export function OwnerDesk() {
         : null,
       findMsg: live.findMsg,
       testMode: live.testModeOn,
+      discoveryConfigured: live.discoveryConfigured,
+      missingIntegrations: live.googleMissing,
+      integration: live.integration || undefined,
+      testLoop: live.testLoop,
     };
   }
 
@@ -534,9 +670,15 @@ export function OwnerDesk() {
       saveGalleryLocal(next.gallery);
     }
     if (next.lastSpoken && next.lastAction !== "CLOSE_EXPLAIN") {
-      if (liveRef.current.voiceMode !== "conversation") {
-        setVoiceReply(next.lastSpoken);
-        speak(next.lastSpoken, voiceMuted);
+      const nav = /^(NAVIGATE_|OPEN_FIND|OPEN_ADD|GO_BACK|START_TASKS|CALENDAR_)/.test(next.lastAction || "");
+      const explain = next.lastAction === "EXPLAIN";
+      const read = /^READ_/.test(next.lastAction || "");
+      setVoiceReply(next.lastSpoken);
+      if (liveRef.current.voiceMode === "conversation" && (nav || explain) && !read) {
+        /* Conversation Mode: the model narrates tool results. Exact reads still go through Ara TTS. */
+      } else {
+        const source: SpeechSource = read ? "SCREEN_READER" : nav ? "NAVIGATION" : explain ? "SCREEN_READER" : "TOOL_RESULT";
+        utter(next.lastSpoken, source, read ? `read:${next.lastAction}:${next.view}` : undefined);
       }
     }
     if (next.explainOpen) {
@@ -649,7 +791,7 @@ export function OwnerDesk() {
       }
       if (r.spoken) {
         setVoiceReply(r.spoken);
-        if (liveRef.current.voiceMode !== "conversation") speak(r.spoken, voiceMuted);
+        utter(r.spoken, "TOOL_RESULT");
       }
     } catch {
       setDdSpoken("ChatGPT Design Director could not finish.");
@@ -673,7 +815,7 @@ export function OwnerDesk() {
     }
     setDdSpoken(applied.spoken);
     setVoiceReply(applied.spoken);
-    if (liveRef.current.voiceMode !== "conversation") speak(applied.spoken, voiceMuted);
+    utter(applied.spoken, "TOOL_RESULT");
     try {
       await applyDesignOpsFn({
         data: {
@@ -721,7 +863,7 @@ export function OwnerDesk() {
 
   function noteImage(text: string) {
     setVoiceReply(text);
-    if (liveRef.current.voiceMode !== "conversation") speak(text, voiceMuted);
+    utter(text, "TOOL_RESULT");
   }
 
   async function runImageGeneration(opts: {
@@ -896,6 +1038,21 @@ export function OwnerDesk() {
     if (effect.type === "pick_background") {
       pickNsfwRef.current = Boolean(effect.nsfw);
       filePickRef.current?.click();
+      return;
+    }
+    if (effect.type === "open_url") {
+      window.open(effect.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (effect.type === "dial") {
+      const mobile = typeof navigator !== "undefined" && /Mobi|Android|iPhone/i.test(navigator.userAgent);
+      if (mobile) {
+        window.location.href = telHref(effect.phone);
+        return;
+      }
+      void navigator.clipboard?.writeText(effect.phone)
+        .then(() => say(`Call ${effect.phone}. I copied the number — this computer can’t place the call.`))
+        .catch(() => say(`Call ${effect.phone}.`));
     }
   }
 
@@ -974,15 +1131,24 @@ export function OwnerDesk() {
   }, [userId, view]);
 
   async function connectGoogle(kind: "gmail" | "calendar") {
+    setGoogleErr("");
+    setGoogleMsg("");
+    setGoogleMissing([]);
+    setGoogleNext("");
+    setGoogleUrl("");
     try {
-      const res = await (await import("@/lib/mail/actions")).googleStartFn({ data: { kind, origin: window.location.origin } });
+      const res = await startGoogleOAuth(kind, { allowPopup: google.configured });
+      setGoogleMissing(res.missing);
+      setGoogleNext(res.next);
+      if (res.url) setGoogleUrl(res.url);
       if (!res.ok) {
-        setVoiceReply(res.reason);
+        setGoogleErr(res.reason);
+        say(res.reason);
         return;
       }
-      window.location.assign(res.url);
+      setGoogleMsg(res.reason);
     } catch {
-      setVoiceReply("Could not start Google sign-in. Nothing was connected.");
+      setGoogleErr("Could not start Google sign-in. Nothing was connected.");
     }
   }
 
@@ -1021,6 +1187,10 @@ export function OwnerDesk() {
       dispatchAction({ name: "OPEN_ADD_CLIENT" });
       return;
     }
+    if (t.action === "find_contact" && t.company_uid) {
+      dispatchAction({ name: "FIND_CONTACT", uid: t.company_uid });
+      return;
+    }
     if (t.action === "open" && t.company_uid) {
       dispatchAction({ name: "OPEN_REVIEW", uid: t.company_uid });
       return;
@@ -1034,14 +1204,50 @@ export function OwnerDesk() {
     }
   }
 
+  function runProspectAction(uid: string | undefined, id: ProspectActionId) {
+    if (!uid && id !== "skip") {
+      say("Which company do you mean?");
+      return;
+    }
+    if (id === "learn_more") {
+      dispatchAction({ name: "OPEN_REVIEW", uid });
+      return;
+    }
+    if (id === "open_website") {
+      dispatchAction({ name: "OPEN_WEBSITE", uid });
+      return;
+    }
+    if (id === "call") {
+      dispatchAction({ name: "CALL_PROSPECT", uid });
+      return;
+    }
+    if (id === "find_contact" || id === "try_research") {
+      dispatchAction({ name: "FIND_CONTACT", uid });
+      return;
+    }
+    if (id === "draft_outreach" || id === "draft_email") {
+      dispatchAction({ name: "DRAFT_OUTREACH", uid });
+      return;
+    }
+    if (id === "skip") {
+      dispatchAction({ name: "SKIP_CURRENT_TASK", uid });
+    }
+  }
+
   function patchCompany(next: Prospect) {
     setRows((prev) => patchByUid(prev, ensureUid(next)));
   }
 
+  function utter(text: string, source: SpeechSource, dedupeKey?: string) {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    setVoiceReply(clean);
+    araSpeech().setMuted(voiceMuted);
+    void araSpeech().speakAsAra(clean, { source, exact: true, dedupeKey });
+  }
+
   function say(text: string) {
-    setVoiceReply(text);
-    if (voiceMode === "conversation") return;
-    speak(text, voiceMuted);
+    utter(text, "TOOL_RESULT");
   }
 
   function araDesk(): AraDeskContext {
@@ -1066,19 +1272,28 @@ export function OwnerDesk() {
         research_status: p.research_status,
         review_count: p.review_count,
         website: p.website,
+        phone: listingPhone(p)?.value || "",
+        reach: reachKind(p),
+        recommend: araRecommend(p),
         explain: explainCompany(p),
         emailDraft: p.outreach?.messages.find((m) => m.kind === "email")?.body || "",
         reply: p.outreach?.messages.find((m) => m.kind === "reply")?.body
           || (p.history || []).filter((h) => /reply/i.test(h.action) || /reply/i.test(h.detail)).at(-1)?.detail
           || "",
-        recipient: (p.contacts || []).find((c) => c.email && c.email.includes("@"))?.email || "",
+        recipient: usefulEmail(p)?.value || "",
+        decisionMaker: (p.contacts || []).find((c) => c.name && c.name !== "UNKNOWN")?.name || "",
       })),
-      gmail: live.google.gmail,
-      calendar: live.google.calendar,
+      gmail: live.integration ? gmailHealth(live.integration) : live.google.gmail,
+      calendar: live.integration ? calendarHealth(live.integration) : live.google.calendar,
       testMode: live.testModeOn,
       allowlist: live.allowlist,
       sales: live.sales,
-      availableActions: ctx.availableActions,
+      testLoop: live.testLoop,
+      availableActions: Array.from(new Set([
+        ...ctx.availableActions,
+        "create_owner_calendar_event",
+        "get_last_owner_calendar_event",
+      ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
       pipelineStage: company?.stage_plain || null,
@@ -1100,6 +1315,8 @@ export function OwnerDesk() {
         companyName: e.companyName,
       })),
       selectedEventId: live.calEventId,
+      lastOwnerEvent: lastOwnerEventRef.current || live.lastOwnerEvent || null,
+      timezone: OWNER_TZ_DEFAULT,
       visual: live.visual,
       visualSummary: summarizeTheme(live.visual),
       adultMode: live.visual.adultMode,
@@ -1107,6 +1324,7 @@ export function OwnerDesk() {
       gallery: live.gallery,
       gallerySummary: summarizeGallery(live.gallery?.items || [], live.gallery?.currentId),
       designSnapshot: safeSnapshot(designDocRef.current, detectViewport()),
+      integration: live.integration || undefined,
     };
   }
 
@@ -1156,7 +1374,131 @@ export function OwnerDesk() {
         return { ok: false, reason: "Calendar could not be read. Nothing was booked." };
       }
     }
+    if (result.plan.type === "owner_calendar_event") {
+      const plan = result.plan;
+      const fpKey = `${plan.title}|${plan.when || ""}|${plan.durationMinutes || 30}`;
+      if (gateRef.current.seen(`create_owner_calendar_event:${fpKey}`, 20_000) && lastOwnerEventRef.current) {
+        const last = lastOwnerEventRef.current;
+        return {
+          ok: true,
+          created: true,
+          alreadyExisted: true,
+          eventId: last.id,
+          title: last.title,
+          whenLabel: last.whenLabel,
+          start: last.start,
+          end: last.end,
+          attendees: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+          spoken: `Done — I added ‘${last.title}’ to your calendar for ${last.whenLabel}.`,
+        };
+      }
+      try {
+        const r = await createOwnerCalendarEventFn({
+          data: {
+            title: plan.title,
+            when: plan.when,
+            date: plan.date,
+            time: plan.time,
+            durationMinutes: plan.durationMinutes,
+            description: plan.description,
+            location: plan.location,
+            requestId: plan.requestId,
+          },
+        });
+        if (!r.ok) {
+          return {
+            ok: false,
+            created: false,
+            need: "need" in r ? r.need : undefined,
+            question: "question" in r ? r.question : undefined,
+            reason: "reason" in r ? r.reason : undefined,
+            spoken: r.spoken,
+            attendees: 0,
+            prospect: false,
+            sales: false,
+            emailSent: false,
+          };
+        }
+        const last: LastOwnerEvent = {
+          id: r.eventId,
+          title: r.title,
+          whenLabel: r.whenLabel,
+          start: r.start,
+          end: r.end,
+          fingerprint: r.fingerprint,
+        };
+        lastOwnerEventRef.current = last;
+        setLastOwnerEvent(last);
+        return {
+          ok: true,
+          created: true,
+          alreadyExisted: r.alreadyExisted,
+          eventId: r.eventId,
+          title: r.title,
+          whenLabel: r.whenLabel,
+          start: r.start,
+          end: r.end,
+          fingerprint: r.fingerprint,
+          attendees: 0,
+          guests: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+          spoken: r.spoken,
+        };
+      } catch {
+        return {
+          ok: false,
+          created: false,
+          spoken: "I couldn't create that event, so nothing was added.",
+          attendees: 0,
+          prospect: false,
+          sales: false,
+          emailSent: false,
+        };
+      }
+    }
     return result.output;
+  }
+
+  async function runOwnerPersonalCalendar(text: string): Promise<boolean> {
+    const lastAsk = /\bwhat did you (just )?add\b|\bwhat did you (just )?put on (my )?calendar\b/i.test(text);
+    if (lastAsk) {
+      araRef.current?.cancelResponse();
+      utter(ownerEventSpeechFromState(lastOwnerEventRef.current), "TOOL_RESULT");
+      return true;
+    }
+    const pending = pendingOwnerCalRef.current;
+    const parsed = parseOwnerCalendarSpeech(text);
+    let title = "";
+    let when = "";
+    if (parsed.matched) {
+      title = parsed.title;
+      when = parsed.when;
+      pendingOwnerCalRef.current = null;
+    } else if (pending && isOwnerCalendarFollowupTime(text)) {
+      title = pending.title;
+      when = `${pending.when} ${text}`.trim();
+      pendingOwnerCalRef.current = null;
+    } else {
+      if (pending && !isPersonalCalendarCommand(text) && text.trim().length > 24) {
+        pendingOwnerCalRef.current = null;
+      }
+      return false;
+    }
+    araRef.current?.cancelResponse();
+    const result = executeAllowlistedTool("create_owner_calendar_event", { title, when }, araDesk(), "owner_session");
+    if (!result.ok && result.output.need) {
+      pendingOwnerCalRef.current = { title: String(result.output.title || title), when };
+      utter(String(result.output.spoken || result.output.question || "What time?"), "TOOL_RESULT");
+      return true;
+    }
+    const output = await hydrateAraOutput("create_owner_calendar_event", result);
+    utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
+    return true;
   }
 
   function stopAra() {
@@ -1167,7 +1509,31 @@ export function OwnerDesk() {
     araGen.current += 1;
     araRef.current?.stop();
     araRef.current = null;
-    setAraStatus((s) => (s === "unavailable" ? s : "ready"));
+    stopSpeaking();
+    araSpeech().stop();
+    teardownAraOutput();
+    setVoiceListening(false);
+    setMicStreamActive(false);
+    setAraStatus((s) => (s === "unavailable" || s === "mic_needed" ? s : "ready"));
+  }
+
+  async function enableMicrophone() {
+    setMicPermission("REQUESTING");
+    const hit = await requestMicrophone();
+    setMicPermission(hit.state);
+    setMicStreamActive(Boolean(hit.stream && hit.state === "GRANTED"));
+    if (hit.stream) {
+      stopMicStream(micStreamRef.current);
+      micStreamRef.current = hit.stream;
+    }
+    araSpeech().setMic(hit.state, Boolean(hit.stream));
+    if (hit.state === "GRANTED") {
+      setAraErr("");
+      if (voiceMode === "conversation") void startAra();
+    } else {
+      setAraStatus("mic_needed");
+      setAraErr(hit.reason || "Microphone permission is needed to talk to Ara.");
+    }
   }
 
   async function startAra() {
@@ -1176,25 +1542,69 @@ export function OwnerDesk() {
     araRef.current?.stop();
     araRef.current = null;
     setAraErr("");
+    setVoiceUnavailable(false);
     setAraStatus("connecting");
+    unlockAraOutput();
+    araSpeech().unlock();
     try {
+      if (!liveRef.current.integration) {
+        try { await refreshIntegration(); } catch { /* keep UNKNOWN until it arrives */ }
+        if (araGen.current !== gen) return;
+      }
+      let perm = micPermission;
+      if (perm === "UNKNOWN" || perm === "REQUESTING" || perm === "GRANTED") {
+        setMicPermission("REQUESTING");
+        const hit = await requestMicrophone();
+        if (araGen.current !== gen) {
+          stopMicStream(hit.stream);
+          return;
+        }
+        perm = hit.state;
+        setMicPermission(hit.state);
+        setMicStreamActive(Boolean(hit.stream));
+        araSpeech().setMic(hit.state, Boolean(hit.stream));
+        if (hit.stream) {
+          stopMicStream(micStreamRef.current);
+          micStreamRef.current = hit.stream;
+        }
+      }
+      if (perm !== "GRANTED" || !micStreamRef.current) {
+        setAraStatus("mic_needed");
+        setVoiceListening(false);
+        return;
+      }
       const ses = await createAraSessionFn();
       if (araGen.current !== gen) return;
       if (!ses.ok) {
-        setAraErr(ses.reason || "Ara voice isn’t available. Hold to speak still works.");
+        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
+        setVoiceUnavailable(true);
         setAraStatus("unavailable");
         return;
       }
+      araSpeech().setSession(true, "ara-session");
       const client = new AraRealtime(ses.token, ses.wsUrl, {
         onStatus: (s) => {
           setAraStatus(s);
           setVoiceListening(s === "listening");
         },
+        onMic: (live, reason) => {
+          setMicStreamActive(live);
+          araSpeech().setMic(live ? "GRANTED" : micPermission, live);
+          if (!live) {
+            setAraStatus("mic_needed");
+            if (reason) setAraErr(reason);
+          }
+        },
         onUserTranscript: (text, isFinal) => {
           setYouSaid(text);
           handleAraOwnerTranscript(text, isFinal);
         },
-        onAraTranscript: (text) => setVoiceReply(text),
+        onAraTranscript: (text) => {
+          setVoiceReply(text);
+          if (isOwnerCalendarRefusalSpeech(text)) {
+            araRef.current?.cancelResponse();
+          }
+        },
         onToolCall: async (name, args) => {
           if (isClientOwnedStopTool(name)) {
             return { ok: true, ignored: true, cancelled_speech: true, conversation_active: true };
@@ -1224,8 +1634,14 @@ export function OwnerDesk() {
           return hydrateAraOutput(name, result);
         },
         onError: (plain) => {
-          setAraErr(plain || "Ara voice dropped. Hold to speak still works.");
-          if (/microphone/i.test(plain || "")) return;
+          if (/microphone|MIC_BLOCKED/i.test(plain || "")) {
+            setAraStatus("mic_needed");
+            setVoiceListening(false);
+            setAraErr(plain || voiceFailureReason("MIC_BLOCKED"));
+            return;
+          }
+          setAraErr(plain || voiceFailureReason("WEBSOCKET_FAILED"));
+          setVoiceUnavailable(true);
           setAraStatus("unavailable");
         },
       });
@@ -1234,11 +1650,40 @@ export function OwnerDesk() {
         return;
       }
       araRef.current = client;
-      await client.start(araDesk());
+      await client.start(araDesk(), { stream: micStreamRef.current, withMic: true });
       client.setMuted(voiceMuted);
     } catch {
       if (araGen.current !== gen) return;
-      setAraErr("Ara voice isn’t available. Hold to speak still works.");
+      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
+      setVoiceUnavailable(true);
+      setAraStatus("unavailable");
+    }
+  }
+
+  async function reconnectAraVoice() {
+    setVoiceUnavailable(false);
+    setAraErr("");
+    setAraStatus("connecting");
+    unlockAraOutput();
+    araSpeech().unlock();
+    if (voiceMode === "conversation") {
+      void startAra();
+      return;
+    }
+    try {
+      const ses = await createAraSessionFn();
+      if (!ses.ok) {
+        setVoiceUnavailable(true);
+        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
+        setAraStatus("unavailable");
+        return;
+      }
+      setVoiceUnavailable(false);
+      setAraErr("");
+      setAraStatus("ready");
+    } catch {
+      setVoiceUnavailable(true);
+      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
       setAraStatus("unavailable");
     }
   }
@@ -1255,26 +1700,52 @@ export function OwnerDesk() {
       stopAra();
       setVoiceMode("off");
       setVoiceReply("Okay. Stopped.");
-      speak("Okay. Stopped.", voiceMuted);
+      utter("Okay. Stopped.", "STOP");
       return;
     }
     if (stop.kind === "stop_speech") {
+      araSpeech().stop({ keepConversation: true });
+      araRef.current?.cancelResponse();
       stopSpeaking();
       return;
     }
     if (stop.kind === "stop_task") {
       gateRef.current.cancel();
+      araSpeech().stop({ keepConversation: true });
       stopSpeaking();
       return;
+    }
+    if (shouldSilenceAraForOwnerCalendar(text, pendingOwnerCalRef.current)) {
+      araRef.current?.cancelResponse();
     }
     if (!isFinal) return;
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
     }
-    if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {
-      runOwnerConfirm(text);
-    }
+    void runOwnerPersonalCalendar(text).then((handled) => {
+      if (handled) return;
+      const parsed = parseSpokenCommand(text);
+      if (parsed.intent === "READ_PAGE" || parsed.intent === "READ_EVERYTHING" || parsed.intent === "READ_WARNING" || parsed.intent === "READ_FORM" || parsed.intent === "READ_OPTIONS") {
+        araRef.current?.cancelResponse();
+        dispatchRef.current({
+          name: parsed.intent === "READ_EVERYTHING" ? "READ_EVERYTHING"
+            : parsed.intent === "READ_WARNING" ? "READ_WARNING"
+              : parsed.intent === "READ_FORM" ? "READ_FORM"
+                : parsed.intent === "READ_OPTIONS" ? "READ_OPTIONS"
+                  : "READ_PAGE",
+          readMode: parsed.intent === "READ_EVERYTHING" ? "everything"
+            : parsed.intent === "READ_WARNING" ? "warning"
+              : parsed.intent === "READ_FORM" ? "form"
+                : parsed.intent === "READ_OPTIONS" ? "options"
+                  : "page",
+        });
+        return;
+      }
+      if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {
+        runOwnerConfirm(text);
+      }
+    });
   }
 
   function runOwnerConfirm(text: string) {
@@ -1336,19 +1807,91 @@ export function OwnerDesk() {
   }, [voiceMode]);
 
   useEffect(() => {
+    const c = araSpeech();
+    c.onCaption = (text) => setVoiceReply(text);
+    c.onUnavailable = (v, reason) => {
+      setVoiceUnavailable(v);
+      if (v && reason) setAraErr(reason);
+    };
+    c.onSpeaking = (s) => setOutputSpeaking(s);
+    return () => {
+      c.onCaption = null;
+      c.onUnavailable = null;
+      c.onSpeaking = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    void queryMicPermission().then((p) => {
+      setMicPermission((prev) => (prev === "GRANTED" ? prev : p));
+      araSpeech().setMic(p, false);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    void discoveryStatusFn()
+      .then((r) => {
+        if (r.ok) setDiscoveryConfigured(r.configured);
+      })
+      .catch(() => setDiscoveryConfigured(false));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!integration) return;
+    const ctx = buildScreenContext(currentDesk(), deskWorld());
+    const auto = autoAnnounceFromScreen(ctx);
+    if (!auto) return;
+    const ev = announceToAra({ type: auto.type, text: auto.text, view, dedupeKey: `${view}:${auto.text}` });
+    if (ev) utter(ev.text, announceSource(ev.type), ev.dedupeKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, discoveryConfigured, findMsg, googleMissing, hydrated, integration]);
+
+  useEffect(() => {
+    const badge = google.gmail;
+    const araGmail = integration ? gmailHealth(integration) : google.gmail;
+    if (badge === "unknown" || araGmail === "unknown") return;
+    if (badge !== araGmail) {
+      console.warn("INTEGRATION_STATE_MISMATCH", { badge, ara: araGmail, gmail_connected: integration?.gmail_connected ?? null });
+    }
+    const world = deskWorld();
+    const ctx = buildScreenContext(currentDesk(), world);
+    const factSaysMissing = ctx.facts.some((f) => /Gmail isn’t connected/i.test(f.text));
+    if (badge === "connected" && factSaysMissing) {
+      console.warn("INTEGRATION_STATE_MISMATCH", { badge, fact: "Gmail isn’t connected." });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [google.gmail, integration, view]);
+
+  useEffect(() => {
     if (voiceMode !== "conversation") return;
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent]);
 
   useEffect(() => {
-    if (!userId || view === "settings") return;
+    if (!userId) return;
     void testSettingsFn()
       .then((t) => {
         if (t.ok) {
-          setTestModeOn(t.testMode);
-          setAllowlist(t.allowlist || []);
+          if (view !== "settings") {
+            setTestModeOn(t.testMode);
+            setAllowlist(t.allowlist || []);
+          }
+          if (t.testLoop) setTestLoop(t.testLoop);
+          const integ = (t.integrations || {}) as Record<string, "ready" | "missing" | boolean>;
+          const labels: Record<string, string> = {
+            googleOAuthClientId: "Google OAuth Client ID",
+            googleOAuthClientSecret: "Google OAuth Client Secret",
+            appSecret: "APP_SECRET",
+          };
+          setGoogleMissing(Object.entries(labels).map(([k, name]) => ({
+            name,
+            ready: integ[k] === "ready" || integ[k] === true,
+          })));
+          if (t.integration) applyIntegration(t.integration);
         }
       })
       .catch(() => { /* keep last known allowlist */ });
@@ -1388,7 +1931,7 @@ export function OwnerDesk() {
       stopSpeaking();
       setVoiceMode("off");
       setVoiceReply("Okay. Stopped.");
-      speak("Okay. Stopped.", voiceMuted);
+      utter("Okay. Stopped.", "STOP");
       return;
     }
     if (stop.kind === "stop_speech") {
@@ -1408,26 +1951,29 @@ export function OwnerDesk() {
       void runDesignDirector(text);
       return;
     }
-    const decided = spokenToAction(text, currentDesk(), deskWorld());
-    if ("ask" in decided) {
-      say(decided.ask);
-      return;
-    }
-    if ("action" in decided) {
-      const id = makeActionId(decided.action.name, decided.action.uid || openUid, text);
-      if (gateRef.current.seen(id)) return;
-      if (decided.action.name === "STOP_LISTENING") {
-        gateRef.current.cancel();
-        stopSpeaking();
-        setVoiceMode("off");
-        setVoiceReply("Okay. Stopped.");
-        speak("Okay. Stopped.", voiceMuted);
+    void runOwnerPersonalCalendar(text).then((handled) => {
+      if (handled) return;
+      const decided = spokenToAction(text, currentDesk(), deskWorld());
+      if ("ask" in decided) {
+        say(decided.ask);
         return;
       }
-      dispatchAction(decided.action);
-      return;
-    }
-    void askGeneral(text);
+      if ("action" in decided) {
+        const id = makeActionId(decided.action.name, decided.action.uid || openUid, text);
+        if (gateRef.current.seen(id)) return;
+        if (decided.action.name === "STOP_LISTENING") {
+          gateRef.current.cancel();
+          stopSpeaking();
+          setVoiceMode("off");
+          setVoiceReply("Okay. Stopped.");
+          utter("Okay. Stopped.", "STOP");
+          return;
+        }
+        dispatchAction(decided.action);
+        return;
+      }
+      void askGeneral(text);
+    });
   }
 
   function approveProspect(open: Prospect, method: "MANUAL" | "VOICE") {
@@ -1518,13 +2064,17 @@ export function OwnerDesk() {
         used.n += 1;
         localStorage.setItem(USAGE, JSON.stringify(used));
       }
+      const contacts = mergeContacts(company.contacts, result.contacts || []);
+      const siteOk = (result.facts || []).some((f) => f.key === "website" && f.status === "VERIFIED");
+      const foundContact = contacts.some((x) => (x.name && x.name !== "UNKNOWN") || (x.email && x.email.includes("@")));
+      const nextStatus = nextResearchStatus(company.research_status, { siteOk, foundContact });
       setRows((prev) => applyByUid(prev, uid, (c) => {
         const keep = new Set(["provider", "place_id", "maps_url", "address", "category", "business_status", "coordinates", "job_value_est"]);
         const preserved = (c.facts || []).filter((f) => keep.has(f.key) && !(result.facts || []).some((r) => r.key === f.key));
         return {
           ...c,
           facts: [...preserved, ...result.facts],
-          contacts: result.contacts,
+          contacts: mergeContacts(c.contacts, result.contacts || []),
           ads: result.ads,
           socials: result.socials,
           readiness: result.readiness,
@@ -1535,8 +2085,15 @@ export function OwnerDesk() {
           deep_at: new Date().toISOString(),
           estimated_cents: result.estimated_cents,
           pages_fetched: result.pages_fetched,
+          research_status: nextResearchStatus(c.research_status, { siteOk, foundContact }),
         };
       }));
+      const preview = { ...company, contacts, research_status: nextStatus };
+      if (reachKind(preview) === "READY_TO_CONTACT") {
+        say(`Ready to contact ${company.name}. ${araRecommend(preview)}`);
+      } else {
+        say(`I still don’t have a useful decision-maker for ${company.name}. You can open the website, call the listing number if we have one, or skip. I did not invent an email.`);
+      }
     } catch {
       setDeepErr("Deep research didn’t finish. We did not invent contacts or ads. Press Try again, or Skip.");
     } finally {
@@ -1666,6 +2223,22 @@ export function OwnerDesk() {
       );
     }
     if (id === "up_next" && upNext) {
+      const company = upNext.company_uid ? findByUid(rows, upNext.company_uid) : null;
+      if (company) {
+        return (
+          <section key={id} data-home-widget="up_next" className="la-card la-card-accent mb-6">
+            <ProspectReachCard
+              company={company}
+              heading="Up next"
+              gmailConnected={google.gmail === "connected"}
+              busy={deepBusy}
+              onAction={(action) => runProspectAction(company.uid, action)}
+            />
+            {deepErr ? <div className="la-ribbon la-ribbon-bad mt-3">{deepErr}</div> : null}
+            <p className="mt-3 text-xs text-muted">{Math.min((taskIx ?? 0) + 1, tasks.length)} of {tasks.length} tasks</p>
+          </section>
+        );
+      }
       return (
         <section key={id} data-home-widget="up_next" className="la-card la-card-accent mb-6">
           <p className="la-kicker">Up next</p>
@@ -1674,9 +2247,6 @@ export function OwnerDesk() {
           <p className="mt-1 text-sm text-muted">{upNext.why}</p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button className="la-btn la-btn-primary" onClick={() => runTask(upNext)}>{upNext.button}</button>
-            {upNext.retry ? (
-              <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "RETRY_CURRENT_TASK", uid: upNext.company_uid })}>Try Again</button>
-            ) : null}
             <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: upNext.company_uid })}>Skip</button>
           </div>
           <p className="mt-3 text-xs text-muted">{Math.min((taskIx ?? 0) + 1, tasks.length)} of {tasks.length} tasks</p>
@@ -1712,12 +2282,27 @@ export function OwnerDesk() {
       return (
         <section key={id} data-home-widget="connections" className="la-card mb-6">
           <h2 className="font-display text-xl">Connections</h2>
-          <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? "Gmail connected" : google.gmail === "attention" ? "Gmail needs attention" : "Gmail not connected"}</p>
-          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? "Calendar connected" : google.calendar === "attention" ? "Calendar needs attention" : "Calendar not connected"}</p>
+          <p className="mt-2 text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.gmail)}`} />{google.gmail === "connected" ? `Gmail connected${google.gmailEmail ? ` · ${google.gmailEmail}` : ""}` : google.gmail === "attention" ? "Gmail needs attention" : google.gmail === "unknown" ? "Checking Gmail…" : "Gmail not connected"}</p>
+          <p className="text-sm"><span className={`la-dot la-dot-inline ${healthClass(google.calendar)}`} />{google.calendar === "connected" ? `Calendar connected${google.calendarEmail ? ` · ${google.calendarEmail}` : ""}` : google.calendar === "attention" ? "Calendar needs attention" : google.calendar === "unknown" ? "Checking Calendar…" : "Calendar not connected"}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
-            <button className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>
+            <button type="button" className="la-btn la-btn-primary" onClick={() => void connectGoogle("gmail")}>Connect Gmail</button>
+            <button type="button" className="la-btn la-btn-ghost" onClick={() => void connectGoogle("calendar")}>Connect Google Calendar</button>
           </div>
+          {googleErr ? (
+            <div className="la-ribbon la-ribbon-bad mt-3">
+              <span>{googleErr}</span>
+              {googleMissing.length ? (
+                <span className="block w-full">
+                  {googleMissing.map((m) => `${m.name} — ${m.ready ? "Ready" : "Missing"}`).join(" · ")}
+                </span>
+              ) : null}
+              {googleNext ? <span className="block w-full">{googleNext}</span> : null}
+              {googleUrl ? (
+                <a className="mt-2 inline-block underline" href={googleUrl} target="_blank" rel="noreferrer">Continue with Google</a>
+              ) : null}
+            </div>
+          ) : null}
+          {googleMsg ? <div className="la-ribbon la-ribbon-good mt-3">{googleMsg}</div> : null}
         </section>
       );
     }
@@ -1813,16 +2398,18 @@ export function OwnerDesk() {
               if (m === "off") {
                 stopAra();
                 stopSpeaking();
+                araSpeech().stop();
                 gateRef.current.cancel();
               }
             }}
-            listening={voiceListening || araStatus === "listening"}
+            listening={voiceMode === "ptt" ? voiceListening : false}
             you={youSaid}
             reply={voiceReply}
             muted={voiceMuted}
             onMuted={(v) => {
               setVoiceMuted(v);
               araRef.current?.setMuted(v);
+              araSpeech().setMuted(v);
             }}
             onTranscript={onVoiceTranscript}
             onListening={setVoiceListening}
@@ -1831,12 +2418,25 @@ export function OwnerDesk() {
               setVoiceMode("off");
               setVoiceListening(false);
               stopSpeaking();
+              araSpeech().stop();
               gateRef.current.cancel();
               setVoiceReply("Okay. Stopped.");
-              speak("Okay. Stopped.", voiceMuted);
+              utter("Okay. Stopped.", "STOP");
             }}
             araStatus={araStatus}
             araError={araErr}
+            micPermission={micPermission}
+            micStreamActive={micStreamActive}
+            voiceSessionReady={araStatus === "listening" || araStatus === "speaking" || Boolean(araRef.current)}
+            voiceUnavailable={voiceUnavailable}
+            outputSpeaking={outputSpeaking || araStatus === "speaking"}
+            onEnableMic={() => { void enableMicrophone(); }}
+            onReconnectVoice={() => { void reconnectAraVoice(); }}
+            onReadPage={() => {
+              const brief = buildScreenContext(currentDesk(), deskWorld());
+              const text = readScreen(brief, "page");
+              utter(text, "SCREEN_READER", `read:page:${brief.screen}`);
+            }}
           />
           {FLAGS.DESIGN_DIRECTOR ? (
           <DesignDirectorBar
@@ -1899,22 +2499,12 @@ export function OwnerDesk() {
         {view === "settings" ? (
           <TestDesk
             onBack={() => setView("home")}
-            visual={visual}
-            onVisual={(cmd) => dispatchAction({ name: "VISUAL", visual: cmd })}
-            onPickUpload={(nsfw) => {
-              pickNsfwRef.current = Boolean(nsfw);
-              filePickRef.current?.click();
+            onTestModeChange={(on, list) => {
+              setTestModeOn(on);
+              setAllowlist(list);
             }}
-            onGenerate={(prompt, nsfw) => {
-              if (!FLAGS.AI_IMAGE_GENERATION) {
-                say("AI image generation is paused on this recovery build. Use a Background Preset in Settings.");
-                return;
-              }
-              dispatchAction({
-                name: "IMAGE",
-                image: { op: "generate", prompt, n: 1, kind: "background", nsfw, asBackground: true, aspectRatio: "16:9", intendedUse: "home" },
-              });
-            }}
+            onIntegration={applyIntegration}
+            onTestLoop={setTestLoop}
           />
         ) : null}
         {view === "home" ? (
@@ -2020,7 +2610,7 @@ export function OwnerDesk() {
               <button key={c.uid || c.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
                 <span>
                   <b className="la-list-name">{c.name}</b>
-                  <span className="mt-0.5 block text-sm text-muted">{c.stage_plain} · {c.fit_plain}</span>
+                  <span className="mt-0.5 block text-sm text-muted">{reachLabel(reachKind(c))} · {c.stage_plain}</span>
                 </span>
                 <span className="la-score">{c.score}</span>
               </button>
@@ -2034,7 +2624,7 @@ export function OwnerDesk() {
             calAnchor={calAnchor}
             events={calEvents}
             selectedId={calEventId}
-            connected={calConnected || google.calendar === "connected"}
+            health={integration ? calendarHealth(integration) : google.calendar}
             reason={calReason}
             loading={calLoading}
             onToday={() => dispatchAction({ name: "CALENDAR_TODAY" })}
@@ -2071,6 +2661,7 @@ export function OwnerDesk() {
             advanced={advanced}
             busy={deepBusy}
             err={deepErr}
+            gmailConnected={google.gmail === "connected"}
             onEvidence={() => {
               if (evidence) setEvidence(false);
               else dispatchAction({ name: "SHOW_EVIDENCE", uid: open.uid });
@@ -2080,6 +2671,7 @@ export function OwnerDesk() {
             onApprove={() => approveProspect(open, "MANUAL")}
             onSkip={() => skipProspect(open, "MANUAL")}
             onResearch={() => researchFurther(open.uid || "")}
+            onAction={(id) => runProspectAction(open.uid, id)}
             onBack={() => dispatchAction({ name: "GO_BACK" })}
           />
         ) : null}
@@ -2113,10 +2705,10 @@ export function OwnerDesk() {
           onClose={() => dispatchAction({ name: "ACKNOWLEDGE_TASK" })}
         >
           <button className="la-btn la-btn-primary" onClick={() => dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>
-            {tasks[taskIx].button}
+            Learn More
           </button>
           {tasks[taskIx].retry ? (
-            <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "RETRY_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Try Again</button>
+            <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "FIND_CONTACT", uid: tasks[taskIx].company_uid })}>Find Contact</button>
           ) : null}
           <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Skip</button>
           <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "NEXT_TASK" })}>Next</button>
@@ -2128,19 +2720,21 @@ export function OwnerDesk() {
 }
 
 function ReviewPage({
-  company, evidence, advanced, busy, err, onEvidence, onAdvanced, onExplain, onApprove, onSkip, onResearch, onBack,
+  company, evidence, advanced, busy, err, gmailConnected, onEvidence, onAdvanced, onExplain, onApprove, onSkip, onResearch, onAction, onBack,
 }: {
   company: Prospect;
   evidence: boolean;
   advanced: boolean;
   busy: boolean;
   err: string;
+  gmailConnected: boolean;
   onEvidence: () => void;
   onAdvanced: () => void;
   onExplain: () => void;
   onApprove: () => void;
   onSkip: () => void;
   onResearch: () => void;
+  onAction: (id: ProspectActionId) => void;
   onBack: () => void;
 }) {
   const found = importantFindings(company);
@@ -2154,11 +2748,14 @@ function ReviewPage({
   return (
     <div className="space-y-4">
       <section className="la-card la-card-accent">
-        <p className="la-kicker">Prospect review</p>
-        <h2 className="font-display mt-2 text-3xl leading-tight">{company.name}</h2>
-        <p className="mt-1 text-sm text-muted">{company.vertical} · {company.city}{company.review_count ? ` · ${company.review_count} public reviews` : ""}{company.google_rating && company.google_rating !== "UNKNOWN" ? ` · ${company.google_rating} rating` : ""}</p>
-        <p className="mt-3 text-sm">{company.stage_plain}</p>
-        {company.website_note ? <p className="la-note mt-3">{company.website_note}</p> : null}
+        <ProspectReachCard
+          company={company}
+          heading="Learn more"
+          gmailConnected={gmailConnected}
+          busy={busy}
+          onAction={onAction}
+        />
+        {err ? <div className="la-ribbon la-ribbon-bad mt-3">{err}</div> : null}
       </section>
 
       <section className="la-card">
@@ -2232,7 +2829,7 @@ function ReviewPage({
           {err ? <div className="err la-ribbon la-ribbon-bad mb-3">{err}</div> : null}
           <div className="flex flex-wrap gap-2">
             <button className={`la-btn ${primaryApprove ? "la-btn-ghost" : "la-btn-primary"}`} onClick={onResearch} disabled={busy}>
-              {busy ? "Researching…" : "Research further"}
+              {busy ? "Looking…" : "Find Contact"}
             </button>
             <button className={`la-btn ${primaryApprove ? "la-btn-primary" : "la-btn-ghost"}`} onClick={onApprove}>
               Approve for outreach

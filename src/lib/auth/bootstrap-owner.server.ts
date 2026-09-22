@@ -6,7 +6,11 @@
  */
 import { randomUUID } from "node:crypto";
 import { getSql } from "@/lib/db";
-import { isWorkspacePreview } from "@/lib/env.server";
+import { isVercelProduction, isWorkspacePreview } from "@/lib/env.server";
+import { ownerBootstrapPlan } from "./owner-bootstrap-plan";
+
+export { ownerBootstrapPlan } from "./owner-bootstrap-plan";
+export type { OwnerBootstrapAction } from "./owner-bootstrap-plan";
 
 function env(key: string): string | undefined {
   const v = process.env[key]?.trim();
@@ -14,6 +18,7 @@ function env(key: string): string | undefined {
 }
 
 function productionLike(): boolean {
+  if (isVercelProduction()) return true;
   const n = (process.env.APP_ENV || process.env.NODE_ENV || "").toLowerCase();
   return n === "production";
 }
@@ -82,21 +87,43 @@ async function resetExistingPreviewOwner(
 export async function bootstrapOwnerIfNeeded(): Promise<{ created: boolean; reason: string }> {
   const email = env("OWNER_EMAIL")?.toLowerCase();
   const password = process.env.OWNER_PASSWORD;
-  if (!email || !password) return { created: false, reason: "no_env" };
-  if (productionLike() && (password === "changeme" || password === "change-me")) {
+  const workspacePreview = isWorkspacePreview();
+  const vercelProduction = isVercelProduction();
+  const prodLike = productionLike();
+
+  const early = ownerBootstrapPlan({
+    email,
+    password,
+    ownerExists: false,
+    workspacePreview,
+    vercelProduction,
+    productionLike: prodLike,
+  });
+  if (early === "no_env") return { created: false, reason: "no_env" };
+  if (early === "default_password_blocked") {
     console.error("[auth] Refusing to bootstrap owner with a default password in production.");
     return { created: false, reason: "default_password_blocked" };
   }
 
   const sql = await getSql();
-  const { hashPassword } = await import("better-auth/crypto");
-  const hash = await hashPassword(password);
-
   const existing = await sql<{ id: string }>`select id from "user" limit 1`;
-  if (!existing.length) return insertOwner(sql, email, hash);
+  const plan = ownerBootstrapPlan({
+    email,
+    password,
+    ownerExists: existing.length > 0,
+    workspacePreview,
+    vercelProduction,
+    productionLike: prodLike,
+  });
 
-  // Deployed apps keep the existing owner. Preview may reset credentials so the
-  // known temporary login works against a leftover account. Never wipes prospects.
-  if (!isWorkspacePreview()) return { created: false, reason: "owner_exists" };
-  return resetExistingPreviewOwner(sql, email, hash);
+  if (plan === "owner_exists") return { created: false, reason: "owner_exists" };
+  if (plan === "no_env" || plan === "default_password_blocked") {
+    return { created: false, reason: plan };
+  }
+
+  const { hashPassword } = await import("better-auth/crypto");
+  const hash = await hashPassword(password as string);
+
+  if (plan === "insert_owner") return insertOwner(sql, email as string, hash);
+  return resetExistingPreviewOwner(sql, email as string, hash);
 }

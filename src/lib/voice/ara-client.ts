@@ -1,7 +1,11 @@
 import { isAllowedTool, type AraDeskContext } from "./tools.ts";
-import { ARA_UNAVAILABLE, sessionUpdatePayload } from "./ara-context.ts";
+import { sessionUpdatePayload } from "./ara-context.ts";
+import { realtimeErrorText, voiceFailureReason } from "./voice-failure.ts";
+import { shouldFailClosedOnRealtimeError } from "./lifecycle.ts";
+import { araSpeech } from "./speech-controller.ts";
+import { micStreamLive, stopMicStream } from "./mic.ts";
 
-export type AraStatus = "ready" | "connecting" | "listening" | "speaking" | "unavailable";
+export type AraStatus = "ready" | "connecting" | "listening" | "speaking" | "unavailable" | "mic_needed";
 
 export type AraHandlers = {
   onStatus: (s: AraStatus) => void;
@@ -9,6 +13,7 @@ export type AraHandlers = {
   onAraTranscript: (text: string) => void;
   onToolCall: (name: string, args: Record<string, unknown>, callId: string) => Promise<Record<string, unknown>>;
   onError: (plain: string) => void;
+  onMic?: (live: boolean, reason?: string) => void;
 };
 
 function floatTo16(f32: Float32Array): Int16Array {
@@ -34,7 +39,7 @@ function pcmToBase64(pcm: Int16Array): string {
   let s = "";
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
-    s += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    s += String.fromCharCode(...bytes.subarray(i, chunk + i));
   }
   return btoa(s);
 }
@@ -49,14 +54,16 @@ function base64ToPcm(b64: string): Int16Array {
 export class AraRealtime {
   private ws: WebSocket | null = null;
   private recCtx: AudioContext | null = null;
-  private playCtx: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private processor: ScriptProcessorNode | null = null;
-  private playTime = 0;
   private muted = false;
   private pendingCalls = 0;
   private closed = false;
   private handledCalls = new Set<string>();
+  private micGated = false;
+  private micLive = false;
+  private sessionReady = false;
+  private givenStream = false;
 
   constructor(
     private readonly token: string,
@@ -64,17 +71,41 @@ export class AraRealtime {
     private readonly handlers: AraHandlers,
   ) {}
 
-  setMuted(v: boolean) {
-    this.muted = v;
-    if (v) {
-      void this.playCtx?.suspend();
-    } else {
-      void this.playCtx?.resume();
-    }
+  get microphoneLive(): boolean {
+    return this.micLive && micStreamLive(this.stream);
   }
 
-  async start(ctx: AraDeskContext): Promise<void> {
+  get sessionIsReady(): boolean {
+    return this.sessionReady && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  setMuted(v: boolean) {
+    this.muted = v;
+    araSpeech().setMuted(v);
+  }
+
+  setMicGated(v: boolean) {
+    this.micGated = v;
+  }
+
+  cancelResponse() {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* ignore */ }
+    }
+    araSpeech().conversationEnded();
+  }
+
+  async start(ctx: AraDeskContext, opts?: { stream?: MediaStream | null; withMic?: boolean }): Promise<void> {
     this.handlers.onStatus("connecting");
+    araSpeech().unlock();
+    const withMic = opts?.withMic !== false;
+    if (withMic) {
+      const ok = await this.startMic(opts?.stream || null);
+      if (!ok) {
+        this.handlers.onStatus("mic_needed");
+        return;
+      }
+    }
     const url = this.wsUrl;
     const proto = `xai-client-secret.${this.token}`;
     const ws = new WebSocket(url, [proto]);
@@ -85,17 +116,22 @@ export class AraRealtime {
         return;
       }
       ws.send(JSON.stringify(sessionUpdatePayload(ctx)));
-      this.handlers.onStatus("listening");
-      void this.startMic();
+      this.sessionReady = true;
+      araSpeech().setSession(true);
+      if (this.microphoneLive) this.handlers.onStatus("listening");
+      else this.handlers.onStatus("ready");
     };
     ws.onerror = () => {
-      if (!this.closed) this.handlers.onError(ARA_UNAVAILABLE);
+      if (!this.closed) this.handlers.onError(voiceFailureReason("WEBSOCKET_FAILED"));
       this.handlers.onStatus("unavailable");
+      araSpeech().setSession(false);
     };
     ws.onclose = () => {
+      this.sessionReady = false;
+      araSpeech().setSession(false);
       if (!this.closed) {
         this.handlers.onStatus("unavailable");
-        this.handlers.onError(ARA_UNAVAILABLE);
+        this.handlers.onError(voiceFailureReason("WEBSOCKET_FAILED"));
       }
     };
     ws.onmessage = (ev) => {
@@ -116,56 +152,66 @@ export class AraRealtime {
 
   stop() {
     this.closed = true;
+    this.sessionReady = false;
+    this.micLive = false;
     try { this.processor?.disconnect(); } catch { /* ignore */ }
-    this.stream?.getTracks().forEach((t) => t.stop());
+    if (!this.givenStream) stopMicStream(this.stream);
+    this.stream = null;
     void this.recCtx?.close();
-    void this.playCtx?.close();
     try { this.ws?.close(); } catch { /* ignore */ }
     this.ws = null;
+    araSpeech().setSession(false);
+    araSpeech().conversationEnded();
     this.handlers.onStatus("ready");
   }
 
-  private async startMic() {
+  private async startMic(existing: MediaStream | null): Promise<boolean> {
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      if (existing && micStreamLive(existing)) {
+        this.stream = existing;
+        this.givenStream = true;
+      } else {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        this.givenStream = false;
+      }
+      if (!micStreamLive(this.stream)) {
+        this.handlers.onMic?.(false, "Microphone permission is needed to talk to Ara.");
+        this.handlers.onError(voiceFailureReason("MIC_BLOCKED"));
+        return false;
+      }
       this.recCtx = new AudioContext();
       if (this.recCtx.state === "suspended") await this.recCtx.resume();
       const src = this.recCtx.createMediaStreamSource(this.stream);
       const proc = this.recCtx.createScriptProcessor(4096, 1, 1);
       this.processor = proc;
       proc.onaudioprocess = (e) => {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.closed) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.closed || this.micGated) return;
         const f32 = e.inputBuffer.getChannelData(0);
         const ds = downsample(f32, this.recCtx?.sampleRate || 48000, 24000);
         const pcm = floatTo16(ds);
         this.ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: pcmToBase64(pcm) }));
       };
-      // ScriptProcessor must be connected to output to run, but mic must stay silent.
       const mute = this.recCtx.createGain();
       mute.gain.value = 0;
       src.connect(proc);
       proc.connect(mute);
       mute.connect(this.recCtx.destination);
+      this.micLive = true;
+      this.handlers.onMic?.(true);
+      araSpeech().onMicGate = (gated) => this.setMicGated(gated);
+      return true;
     } catch {
+      this.micLive = false;
+      this.handlers.onMic?.(false, "Microphone permission is needed to talk to Ara.");
       this.handlers.onError("Microphone permission is needed to talk to Ara. Buttons still work.");
+      return false;
     }
   }
 
-  private playPcm(pcm: Int16Array) {
+  /** Kept for tests and conversation PCM → the one Ara speech controller. */
+  playPcm(pcm: Int16Array) {
     if (this.muted || this.closed) return;
-    if (!this.playCtx) this.playCtx = new AudioContext({ sampleRate: 24000 });
-    const ctx = this.playCtx;
-    if (ctx.state === "suspended") void ctx.resume();
-    const buf = ctx.createBuffer(1, pcm.length, 24000);
-    const ch = buf.getChannelData(0);
-    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    const now = ctx.currentTime;
-    if (this.playTime < now) this.playTime = now;
-    src.start(this.playTime);
-    this.playTime += buf.duration;
+    araSpeech().playConversationPcm(pcm);
   }
 
   private async runTool(name: string, args: Record<string, unknown>, callId: string) {
@@ -188,7 +234,7 @@ export class AraRealtime {
         type: "conversation.item.create",
         item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
       }));
-      if (this.pendingCalls <= 0) {
+      if (this.pendingCalls <= 0 && !output.already_spoken) {
         this.ws.send(JSON.stringify({ type: "response.create" }));
       }
     }
@@ -197,11 +243,22 @@ export class AraRealtime {
   private async onEvent(ev: Record<string, unknown>) {
     const type = String(ev.type || "");
     if (type === "error") {
-      this.handlers.onError(ARA_UNAVAILABLE);
+      if (!shouldFailClosedOnRealtimeError(ev)) {
+        if (this.microphoneLive) this.handlers.onStatus("listening");
+        else if (this.sessionReady) this.handlers.onStatus("ready");
+        return;
+      }
+      const detail = realtimeErrorText(ev).toLowerCase();
+      const code = /auth|token|unauthor|forbidden|invalid api key|not authenticated/.test(detail)
+        ? "VOICE_AUTH_FAILED"
+        : "PROVIDER_ERROR";
+      this.handlers.onError(voiceFailureReason(code));
       this.handlers.onStatus("unavailable");
       return;
     }
-    if (type === "input_audio_buffer.speech_started") this.handlers.onStatus("listening");
+    if (type === "input_audio_buffer.speech_started") {
+      if (this.microphoneLive) this.handlers.onStatus("listening");
+    }
     if (type === "response.output_audio.delta" && typeof ev.delta === "string") {
       this.handlers.onStatus("speaking");
       this.playPcm(base64ToPcm(ev.delta));
@@ -234,6 +291,10 @@ export class AraRealtime {
         await this.runTool(item.name, args, item.call_id);
       }
     }
-    if (type === "response.done") this.handlers.onStatus("listening");
+    if (type === "response.done") {
+      araSpeech().conversationEnded();
+      if (this.microphoneLive) this.handlers.onStatus("listening");
+      else this.handlers.onStatus(this.sessionReady ? "ready" : "unavailable");
+    }
   }
 }

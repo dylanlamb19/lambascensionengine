@@ -17,26 +17,32 @@ export function jobSecretFromRequest(headers: { get(name: string): string | null
 
 /**
  * HTTP worker endpoint is fail-closed: a missing secret never runs jobs.
- * Preview uses the in-process tick, not this unauthenticated route.
- * Vercel Cron sends Authorization: Bearer <CRON_SECRET> — set CRON_SECRET
- * to the same value as OUTREACH_JOB_SECRET.
+ * Accepts x-job-secret or Authorization: Bearer.
+ * Vercel Cron sends Authorization: Bearer <CRON_SECRET>.
+ * GitHub Actions should send the same existing worker secret.
+ * Either OUTREACH_JOB_SECRET or CRON_SECRET is valid — they do not have to match each other.
  */
 export function allowOutreachJob(opts: {
   secret: string | undefined;
   header: string;
   production?: boolean;
+  extraSecrets?: Array<string | undefined>;
 }): { ok: true } | { ok: false; status: number; body: string } {
   void opts.production;
-  const secret = (opts.secret || "").trim();
-  if (!secret) {
+  const candidates = [opts.secret, ...(opts.extraSecrets || [])]
+    .map((s) => (s || "").trim())
+    .filter(Boolean)
+    .filter((s, i, all) => all.indexOf(s) === i);
+  if (!candidates.length) {
     return {
       ok: false,
       status: 503,
       body: "Outreach jobs are not configured. Set OUTREACH_JOB_SECRET. No emails were sent.",
     };
   }
-  if (!secretsEqual(secret, opts.header || "")) {
-    return { ok: false, status: 401, body: "forbidden" };
+  const header = opts.header || "";
+  for (const secret of candidates) {
+    if (secretsEqual(secret, header)) return { ok: true };
   }
-  return { ok: true };
+  return { ok: false, status: 401, body: "forbidden" };
 }

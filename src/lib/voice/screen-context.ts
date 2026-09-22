@@ -4,6 +4,9 @@ import type { DeskState, DeskWorld } from "./desk-actions.ts";
 import { currentTask, currentTaskUid, labeledActionsFor, screenNameOf } from "./screen-actions.ts";
 import { visibleOrder } from "./layout.ts";
 import { summarizeTheme } from "../visual/theme.ts";
+import { findClientsBlockerSpeech, settingsBlockerSpeech } from "./read-screen.ts";
+import { integrationSpeech, oauthOnlyGaps } from "../mail/integration-status.ts";
+import { testLoopSpeech } from "../mail/test-loop.ts";
 
 export type ScreenFactKind = "VERIFIED" | "UNKNOWN" | "ESTIMATE" | "ERROR";
 
@@ -55,12 +58,35 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
   const company = world.prospects.find((p) => p.uid === uid);
   const actions = labeledActionsFor(state, world);
   const facts: ScreenFact[] = [];
-  if (world.testMode !== false) facts.push({ kind: "VERIFIED", text: "Test Mode is on. Emails only go to the allowlist." });
-  if (world.gmail === "missing") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
-  if (world.gmail === "attention") facts.push({ kind: "ERROR", text: "Gmail needs attention." });
-  if (world.calendarStatus === "missing") facts.push({ kind: "ERROR", text: "Google Calendar isn’t connected." });
-  if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
+  const integration = world.integration;
+  const gmailKnown = Boolean(integration) || (world.gmail && world.gmail !== "unknown");
+  if (integration) {
+    facts.push({
+      kind: "VERIFIED",
+      text: integration.test_mode
+        ? "Test Mode is on. Emails only go to the allowlist."
+        : "Test Mode is off. Live outreach rules apply. First-contact approval still required.",
+    });
+  } else if (world.testMode !== false) facts.push({ kind: "VERIFIED", text: "Test Mode is on. Emails only go to the allowlist." });
+  else facts.push({ kind: "VERIFIED", text: "Test Mode is off. Live outreach rules apply. First-contact approval still required." });
+  if (integration) {
+    if (!integration.gmail_connected) facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+    else if (!integration.gmail_token_valid) facts.push({ kind: "ERROR", text: "Gmail needs attention." });
+    // Calendar-not-connected is NOT an ERROR on every screen — it is independent of Gmail.
+  } else if (gmailKnown) {
+    if (world.gmail === "missing") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+    if (world.gmail === "attention") facts.push({ kind: "ERROR", text: "Gmail needs attention." });
+  }
+  if (!integration && gmailKnown) {
+    if (world.calendarStatus === "attention") facts.push({ kind: "ERROR", text: "Google Calendar needs attention." });
+  }
   if (world.calendarUnreadable) facts.push({ kind: "ERROR", text: world.calendarReason || "Calendar could not be read." });
+  if (screen === "SETTINGS" && world.testLoop) {
+    const loop = testLoopSpeech(world.testLoop);
+    facts.push({ kind: "VERIFIED", text: loop.followupAnswer });
+    facts.push({ kind: "VERIFIED", text: loop.replyAnswer });
+    facts.push({ kind: "VERIFIED", text: loop.pendingAnswer });
+  }
 
   let lookingAt = `You’re looking at ${purposeOf(screen)}`;
   let important = "I only describe what is actually on this screen.";
@@ -68,11 +94,16 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
 
   if (screen === "HOME") {
     const n = world.tasks.length;
+    const first = world.tasks[0];
     lookingAt = "You’re looking at Home.";
     important = n
-      ? `The important part is what needs you today. First up: ${world.tasks[0]?.title || "a task"}.`
+      ? `The important part is what needs you today. First up: ${first?.title || "a task"}.${first?.plain ? ` ${first.plain}` : ""}`
       : "Nothing is waiting on you right now.";
-    next = n ? "I’d start with Start My Tasks." : "You can find clients or open Pipeline.";
+    next = n
+      ? (first?.title?.toLowerCase().includes("contact")
+        ? "Find the owner, open the website, or call the listing number. Research failure is not a dead end."
+        : "I’d start with the first company on Up Next.")
+      : "You can find clients or open Pipeline.";
     if (state.layout) {
       facts.push({ kind: "VERIFIED", text: `Home order: ${visibleOrder(state.layout).join(" → ")}.` });
     }
@@ -85,10 +116,19 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
         text: `Upcoming call: ${world.nextCall.companyName || world.nextCall.title} at ${formatTime(world.nextCall.start)}.`,
       });
     }
+    const up = first?.uid ? world.prospects.find((p) => p.uid === first.uid) : null;
+    if (up) {
+      if (up.website) facts.push({ kind: "VERIFIED", text: `Website on file: ${up.website}. Do not invent a different URL.` });
+      if (up.phone) facts.push({ kind: "VERIFIED", text: `Listing phone: ${up.phone}. Do not invent a number.` });
+      else facts.push({ kind: "UNKNOWN", text: "Decision-maker email is UNKNOWN unless a verified contact is on this card." });
+    }
   } else if (screen === "TASKS" && task) {
     lookingAt = `You’re looking at a task: ${task.title}.`;
     important = task.plain || "This is the next thing that needs you.";
-    next = "Review, skip, or go to the next task.";
+    next = "Learn more, find a contact, open the website, or skip. Do not treat research failure as the end.";
+    const co = world.prospects.find((p) => p.uid === task.uid);
+    if (co?.website) facts.push({ kind: "VERIFIED", text: `Website on file: ${co.website}.` });
+    if (co?.phone) facts.push({ kind: "VERIFIED", text: `Listing phone: ${co.phone}.` });
   } else if (screen === "PIPELINE") {
     lookingAt = "You’re looking at your prospect pipeline.";
     const named = world.prospects.slice(0, 6).map((p) => `${p.name}${p.stage_plain ? ` (${p.stage_plain})` : ""}`);
@@ -103,21 +143,33 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
       : company.stage_plain
         ? `We have this company in ${company.stage_plain}. I will not invent revenue or ad spend.`
         : "We have public information on file. I will not invent what we have not verified.";
-    next = "Your next decision is whether to continue with them or move on.";
+    next = "Learn more, find a contact, open the website, call the listing number, or draft outreach. Do not invent an email.";
     facts.push({ kind: "VERIFIED", text: `Company: ${company.name} (prospect_uid ${company.uid}).` });
     if (company.stage_plain) facts.push({ kind: "VERIFIED", text: `Stage: ${company.stage_plain}.` });
-    facts.push({ kind: "UNKNOWN", text: "Revenue, profit, and advertising budget are UNKNOWN unless a verified fact is on this page." });
+    if (company.website) facts.push({ kind: "VERIFIED", text: `Website on file: ${company.website}.` });
+    if (company.phone) facts.push({ kind: "VERIFIED", text: `Listing phone: ${company.phone}.` });
+    facts.push({ kind: "UNKNOWN", text: "Revenue, profit, advertising budget, and any email not listed here are UNKNOWN." });
   } else if (screen === "FIND_CLIENTS") {
     lookingAt = "You’re looking at Find Clients.";
-    important = world.findMsg || `Form is set to ${state.findLimit} ${state.vert} in ${state.city}.`;
-    next = "Change the search or run Find Clients.";
+    if (world.discoveryConfigured === false) {
+      important = world.findMsg || findClientsBlockerSpeech();
+      next = "Add a company you already know, or set up Google Places on the server. I will not invent businesses.";
+      facts.push({ kind: "ERROR", text: important });
+    } else {
+      important = world.findMsg || `Form is set to ${state.findLimit} ${state.vert} in ${state.city}.`;
+      next = "Change the search or run Find Clients.";
+      if (world.findMsg) facts.push({ kind: "ERROR", text: world.findMsg });
+    }
   } else if (screen === "OUTREACH" && company) {
     lookingAt = `You’re looking at outreach for ${company.name}.`;
     important = "The email is a draft. Nothing sends until you approve it.";
     next = "Preview, edit, or say Confirm send if you want it sent.";
   } else if (screen === "CALENDAR") {
     lookingAt = `You’re looking at your calendar (${state.calView} view${world.calendarRange ? `, ${world.calendarRange}` : ""}).`;
-    if (world.calendarStatus !== "connected") {
+    if (world.calendarStatus === "unknown") {
+      important = "I’m checking Calendar. I will not say it’s disconnected until the server status loads.";
+      next = "Wait a moment, then I can read what’s actually on the calendar.";
+    } else if (world.calendarStatus !== "connected") {
       important = "Google Calendar isn’t connected yet, so I cannot show real events.";
       next = "Connect Calendar in Settings. I will not guess what’s on your calendar.";
     } else if (world.calendarUnreadable) {
@@ -145,11 +197,34 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
     }
   } else if (screen === "SETTINGS") {
     lookingAt = "You’re in Settings.";
-    important = [
-      world.gmail === "connected" ? "Gmail is connected." : "Gmail isn’t connected.",
-      world.calendarStatus === "connected" ? "Google Calendar is connected." : "Google Calendar isn’t connected yet, so calendar and booking features won’t work until that’s set up.",
-    ].join(" ");
-    next = "Connect anything that’s missing. The rest of the app can still be used.";
+    if (integration) {
+      const speech = integrationSpeech(integration, oauthOnlyGaps((world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name)));
+      important = speech.settingsImportant;
+      next = speech.settingsNext;
+      for (const fact of speech.facts) {
+        if (!facts.some((f) => f.text === fact.text)) facts.push(fact);
+      }
+    } else if (!gmailKnown) {
+      important = "I’m checking your integrations.";
+      next = "I’ll have Gmail and Calendar status in a moment.";
+    } else {
+      const oauthMissing = oauthOnlyGaps((world.missingIntegrations || []).filter((m) => !m.ready).map((m) => m.name));
+      if (oauthMissing.length && world.gmail !== "connected") {
+        important = settingsBlockerSpeech(oauthMissing);
+        next = "Whoever hosts Lamb Ascension needs to add the missing values. Gmail and Calendar can’t connect until that’s done.";
+        facts.push({ kind: "ERROR", text: important });
+      } else {
+        important = [
+          world.gmail === "connected" ? "Gmail is connected." : "Gmail isn’t connected.",
+          world.calendarStatus === "connected" ? "Google Calendar is connected." : "Google Calendar still needs to be connected.",
+        ].join(" ");
+        next = world.calendarStatus === "connected"
+          ? "Gmail and Calendar are ready."
+          : "Connect Google Calendar when you’re ready. Gmail can already send if it is connected.";
+        if (world.gmail !== "connected") facts.push({ kind: "ERROR", text: "Gmail isn’t connected." });
+        if (world.calendarStatus !== "connected") facts.push({ kind: "UNKNOWN", text: "Google Calendar isn’t connected yet." });
+      }
+    }
   } else if (screen === "CALL" || screen === "PREP") {
     lookingAt = `You’re looking at ${screen === "PREP" ? "call prep" : "the call opener"}${company ? ` for ${company.name}` : ""}.`;
     important = "This is based on verified research. Unknowns stay unknown.";

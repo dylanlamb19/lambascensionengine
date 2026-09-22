@@ -68,7 +68,24 @@ export function allowSendRecipient(opts: { testMode: boolean; allowlist: string[
 }
 
 export function canDisableTestMode(confirm: string): boolean {
-  return (confirm || "").trim().toUpperCase() === "DISABLE";
+  return (confirm || "").trim() === "DISABLE";
+}
+
+/**
+ * Disable intent. `testMode: false` is the normal signal.
+ * If a serializer drops boolean false, a non-empty confirm still counts as disable.
+ */
+export function wantsDisableTestMode(data: { testMode?: boolean; confirm?: string }): boolean {
+  if (data.testMode === true) return false;
+  if (data.testMode === false) return true;
+  return typeof data.confirm === "string" && data.confirm.trim().length > 0;
+}
+
+/** Coerce DB/driver values. Default ON when unknown. */
+export function readTestModeFlag(value: unknown): boolean {
+  if (value === false || value === 0 || value === "0" || value === "f" || value === "false" || value === "FALSE") return false;
+  if (value === true || value === 1 || value === "1" || value === "t" || value === "true" || value === "TRUE") return true;
+  return true;
 }
 
 export type LiveCheckKey =

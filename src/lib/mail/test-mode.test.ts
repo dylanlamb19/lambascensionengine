@@ -7,9 +7,11 @@ import {
   integrationLightsDoNotLeak,
   isAllowlisted,
   parseAllowlist,
+  readTestModeFlag,
   scoreLiveChecks,
   secretPresent,
   TEST_CAPS,
+  wantsDisableTestMode,
 } from "./test-mode.ts";
 import { canSend } from "./guard.ts";
 import { sendMail } from "./send.ts";
@@ -153,10 +155,67 @@ test("sendMail in Test Mode never calls Gmail for a non-allowlisted address", as
   assert.equal(calls, 0);
 });
 
-test("disable requires explicit DISABLE confirmation", () => {
-  assert.equal(canDisableTestMode("disable"), true);
+test("disable requires exact uppercase DISABLE", () => {
+  assert.equal(canDisableTestMode("DISABLE"), true);
+  assert.equal(canDisableTestMode(" DISABLE "), true);
+  assert.equal(canDisableTestMode("disable"), false);
+  assert.equal(canDisableTestMode("Disable"), false);
+  assert.equal(canDisableTestMode("yes"), false);
   assert.equal(canDisableTestMode("off"), false);
   assert.equal(canDisableTestMode(""), false);
+});
+
+test("disable intent still fires if boolean false is dropped but confirm is present", () => {
+  assert.equal(wantsDisableTestMode({ testMode: false, confirm: "DISABLE" }), true);
+  assert.equal(wantsDisableTestMode({ confirm: "DISABLE" }), true);
+  assert.equal(wantsDisableTestMode({ testMode: true, confirm: "DISABLE" }), false);
+  assert.equal(wantsDisableTestMode({ allowlist: ["a@b.com"] } as { testMode?: boolean; confirm?: string }), false);
+  assert.equal(wantsDisableTestMode({ confirm: "disable" }), true);
+});
+
+test("first-contact automation still needs approval when Test Mode is off", () => {
+  const r = canSend({
+    prospect: { uid: "t", name: "Live", stage: "Approved for Outreach" },
+    gmailConnected: true,
+    recipient: "owner@company.com",
+    kind: "email",
+    method: "AUTOMATION",
+    firstApproved: false,
+    sequenceActive: false,
+    bounced: false,
+    unsubscribed: false,
+    usage: { first: 0, followups: 0 },
+    caps: { maxFirst: 15, maxFollowups: 30 },
+    now: new Date(),
+    testMode: false,
+    allowlist: [],
+  });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.code, "NOT_APPROVED");
+});
+
+test("readTestModeFlag treats driver false-likes as off", () => {
+  assert.equal(readTestModeFlag(false), false);
+  assert.equal(readTestModeFlag("f"), false);
+  assert.equal(readTestModeFlag("false"), false);
+  assert.equal(readTestModeFlag(0), false);
+  assert.equal(readTestModeFlag(true), true);
+  assert.equal(readTestModeFlag(undefined), true);
+});
+
+test("Disable Test Mode UI requires exact DISABLE and shows a result", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/test-desk.tsx"), "utf8");
+  assert.match(src, /disableTestMode/);
+  assert.match(src, /Type DISABLE exactly to continue/);
+  assert.match(src, /disabled=\{disableConfirm\.trim\(\) !== "DISABLE"/);
+  assert.match(src, /onTestModeChange/);
+  assert.match(src, /Disabling…/);
+  assert.match(src, /Live outreach rules now apply/);
+  assert.match(src, /Close this page/);
+  assert.match(src, /Confirm send/);
 });
 
 test("live checks stay red until real evidence exists", () => {
