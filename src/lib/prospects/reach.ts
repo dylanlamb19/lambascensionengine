@@ -3,7 +3,7 @@ import type { Prospect } from "../review-brief.ts";
 
 export type ReachKind = "READY_TO_CONTACT" | "NEEDS_CONTACT_INFO" | "NEEDS_RESEARCH" | "BLOCKED";
 
-export type Provenance = "VERIFIED" | "FOUND PUBLICLY" | "ENRICHED" | "UNKNOWN";
+export type Provenance = "VERIFIED" | "FOUND PUBLICLY" | "ENRICHED" | "OWNER PROVIDED" | "UNKNOWN";
 
 export type ContactField = {
   label: string;
@@ -47,6 +47,23 @@ export function verifiedWebsite(p: Prospect): string | null {
 
 export function listingPhone(p: Prospect): ContactField | null {
   if (blankish(p.phone)) return null;
+  if (/owner provided/i.test(p.phone_source || "")) {
+    return {
+      label: "Business phone",
+      value: p.phone,
+      status: "OWNER PROVIDED",
+      source: "owner",
+    };
+  }
+  const ownerFinding = (p.findings || []).find((f) => f.id === "owner_phone" && /owner provided/i.test(f.source || ""));
+  if (ownerFinding) {
+    return {
+      label: "Business phone",
+      value: p.phone,
+      status: "OWNER PROVIDED",
+      source: "owner",
+    };
+  }
   const click = (p.findings || []).find((f) => f.id === "click_to_call" && f.status === "VERIFIED");
   if (click) {
     return {
@@ -69,6 +86,7 @@ export function namedPeople(p: Prospect): DecisionMaker[] {
 }
 
 function emailProvenance(c: DecisionMaker): Provenance {
+  if (/owner provided/i.test(c.email_source || c.source || "")) return "OWNER PROVIDED";
   if (c.email_status === "verified") return "VERIFIED";
   if (/hunter/i.test(c.source || "")) return "ENRICHED";
   if (c.email_status === "unverified") return "FOUND PUBLICLY";
@@ -93,49 +111,67 @@ export function decisionMaker(p: Prospect): ContactField | null {
   if (!people.length) return null;
   const c = people[0];
   const title = c.title && c.title !== "UNKNOWN" ? `, ${c.title}` : "";
+  const owner = /owner provided/i.test(c.name_source || c.source || "");
   return {
-    label: "Contact person",
+    label: "Decision maker",
     value: `${c.name}${title}`,
-    status: /hunter/i.test(c.source || "") ? "ENRICHED" : "FOUND PUBLICLY",
-    source: c.source || "prospect record",
+    status: owner ? "OWNER PROVIDED" : /hunter/i.test(c.source || "") ? "ENRICHED" : "FOUND PUBLICLY",
+    source: c.name_source || c.source || "prospect record",
   };
 }
 
 export function contactFields(p: Prospect): ContactField[] {
   const out: ContactField[] = [];
+  const people = namedPeople(p);
+  const person = decisionMaker(p);
+  const primary = people[0];
+  out.push(person || { label: "Decision maker", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  const role = primary?.title && primary.title !== "UNKNOWN" ? primary.title : "";
+  const roleOwner = /owner provided/i.test(primary?.title_source || primary?.source || "");
+  out.push(role
+    ? { label: "Role", value: role, status: roleOwner ? "OWNER PROVIDED" : /hunter/i.test(primary?.source || "") ? "ENRICHED" : "FOUND PUBLICLY", source: primary?.title_source || primary?.source || "prospect record" }
+    : { label: "Role", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
   const site = verifiedWebsite(p);
   const siteFact = (p.facts || []).find((f) => f.key === "website" && f.status === "VERIFIED");
+  const siteOwner = /owner provided/i.test(p.website_source || "");
   out.push(site
     ? {
       label: "Website",
       value: site,
-      status: siteFact ? "VERIFIED" : "FOUND PUBLICLY",
-      source: siteFact?.source || "prospect record",
+      status: siteOwner ? "OWNER PROVIDED" : siteFact ? "VERIFIED" : "FOUND PUBLICLY",
+      source: siteOwner ? "owner" : siteFact?.source || "prospect record",
     }
     : { label: "Website", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
   const phone = listingPhone(p);
   out.push(phone || { label: "Business phone", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
   const email = usefulEmail(p);
   out.push(email || { label: "Business email", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
-  const person = decisionMaker(p);
-  out.push(person || { label: "Contact person", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
-  const people = namedPeople(p);
   const profile = people.find((c) => c.profile_url);
+  const profileOwner = /owner provided/i.test(profile?.profile_source || profile?.source || "");
   out.push(profile?.profile_url
-    ? { label: "Profile", value: profile.profile_url, status: /hunter/i.test(profile.source) ? "ENRICHED" : "FOUND PUBLICLY", source: profile.source }
+    ? { label: "Profile", value: profile.profile_url, status: profileOwner ? "OWNER PROVIDED" : /hunter/i.test(profile.source) ? "ENRICHED" : "FOUND PUBLICLY", source: profile.profile_source || profile.source }
     : { label: "Profile", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  const ownerPage = (p.contact_page || "").trim();
   const form = (p.findings || []).find((f) =>
-    (f.id === "contact_form" || f.id === "contact_form_inner")
-    && f.status === "VERIFIED"
+    (f.id === "contact_form" || f.id === "contact_form_inner" || f.id === "owner_contact_page")
+    && f.status !== "ERROR"
     && !/^(no |missing)/i.test(f.result || ""),
   );
-  out.push(form
-    ? { label: "Contact form", value: "Observed on their website", status: "FOUND PUBLICLY", source: form.source || "website HTML" }
-    : { label: "Contact form", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  if (ownerPage) {
+    out.push({ label: "Contact page", value: ownerPage, status: /owner provided/i.test(p.contact_page_source || "") ? "OWNER PROVIDED" : "FOUND PUBLICLY", source: p.contact_page_source || "owner" });
+  } else if (form && form.id !== "owner_contact_page" && form.status === "VERIFIED") {
+    out.push({ label: "Contact form", value: "Observed on their website", status: "FOUND PUBLICLY", source: form.source || "website HTML" });
+  } else {
+    out.push({ label: "Contact page", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  }
   const li = (p.socials || []).find((s) => s.network === "linkedin");
+  const liOwner = /owner provided/i.test(li?.source || "");
   out.push(li
-    ? { label: "Company LinkedIn", value: li.url, status: "FOUND PUBLICLY", source: li.source }
+    ? { label: "Company LinkedIn", value: li.url, status: liOwner ? "OWNER PROVIDED" : "FOUND PUBLICLY", source: li.source }
     : { label: "Company LinkedIn", value: "UNKNOWN", status: "UNKNOWN", source: "none" });
+  if (p.owner_notes) {
+    out.push({ label: "Owner note", value: p.owner_notes, status: "OWNER PROVIDED", source: "owner" });
+  }
   return out;
 }
 
@@ -143,8 +179,10 @@ export function reachKind(p: Prospect): ReachKind {
   if (p.suppressed || p.stage === "Do Not Contact") return "BLOCKED";
   const email = usefulEmail(p);
   const person = namedPeople(p).length > 0;
+  const dmPhone = (p.contacts || []).some((c) => c.phone && c.phone.replace(/\D/g, "").length >= 10);
   if (email) return "READY_TO_CONTACT";
   if (person && listingPhone(p)) return "READY_TO_CONTACT";
+  if (person && dmPhone) return "READY_TO_CONTACT";
   const researched = p.research_status === "complete" || p.research_status === "partial"
     || p.research_status === "blocked" || p.research_status === "failed";
   if (!researched && !listingPhone(p) && !verifiedWebsite(p)) return "NEEDS_RESEARCH";

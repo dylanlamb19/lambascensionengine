@@ -94,3 +94,23 @@ test("failed website research still lists Open Website when a URL is on file", (
   assert.ok(ids.includes("learn_more"));
   assert.ok(ids.includes("call"));
 });
+
+test("owner-provided email is usable and not labeled verified", () => {
+  const p = {
+    ...byName("Firefighter Roofing"),
+    contacts: [{
+      name: "John Smith",
+      title: "Owner",
+      email: "john@example.com",
+      email_status: "unverified" as const,
+      email_source: "OWNER PROVIDED",
+      profile_url: "",
+      source: "OWNER PROVIDED",
+      last_verified: "",
+    }],
+  };
+  assert.equal(reachKind(p), "READY_TO_CONTACT");
+  const email = contactFields(p).find((f) => /email/i.test(f.label));
+  assert.equal(email?.value, "john@example.com");
+  assert.equal(email?.status, "OWNER PROVIDED");
+});

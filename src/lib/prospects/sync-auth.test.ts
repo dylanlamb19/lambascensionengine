@@ -4,14 +4,17 @@ import test from "node:test";
 
 test("prospect and discovery server functions require auth and ignore client user_id", () => {
   const sync = readFileSync(new URL("./sync.ts", import.meta.url), "utf8");
+  const edit = readFileSync(new URL("./owner-edit-actions.ts", import.meta.url), "utf8");
   const find = readFileSync(new URL("../discovery/run.ts", import.meta.url), "utf8");
   const repo = readFileSync(new URL("./repo.server.ts", import.meta.url), "utf8");
-  for (const src of [sync, find]) {
+  for (const src of [sync, find, edit]) {
     assert.match(src, /authMiddleware/);
     assert.doesNotMatch(src, /data\.userId|data\.user_id/);
   }
   assert.match(repo, /where user_id = \$\{userId\}/);
   assert.match(repo, /never a client-supplied user_id/);
+  assert.match(edit, /getProspectByUid/);
+  assert.match(edit, /emailSent: false/);
 });
 
 test("Places is reserved before the live API call", () => {

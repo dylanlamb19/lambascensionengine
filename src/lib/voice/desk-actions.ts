@@ -1204,6 +1204,7 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
     case "SEND_EMAIL": return { name: "PREPARE_SEND", uid };
     case "SCHEDULE_CALL": return { name: "PREPARE_SCHEDULE", uid };
     case "CREATE_OWNER_CALENDAR_EVENT": return null;
+    case "UPDATE_PROSPECT_INFORMATION": return null;
     case "MAKE_EMAIL_SHORTER": return { name: "MAKE_EMAIL_SHORTER", uid };
     case "READ_CALL_OPENER": return { name: "READ_CALL_OPENER", uid };
     case "GET_DAILY_TASKS": return { name: "GET_DAILY_TASKS" };
@@ -1345,6 +1346,10 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "owner_calendar_delete": return null;
     case "owner_calendar_update": return null;
     case "sentinel_status": return null;
+    case "prompt_prospect_edit": return null;
+    case "update_prospect_information": return null;
+    case "confirm_prospect_edit": return null;
+    case "clarify_prospect_phone": return null;
     default: return null;
   }
 }

@@ -56,13 +56,18 @@ export type Prospect = {
   suppressed?: boolean;
   outreach?: import("./outreach/types").OutreachPack;
   discovery?: import("./outreach/types").DiscoveryAnswers;
-  history?: { at: string; action: string; detail: string }[];
+  history?: { at: string; action: string; detail: string; field?: string; previous?: string; next?: string; source?: string; actor?: string }[];
   attack_id?: string;
   get_clients_skipped?: boolean;
   opportunity_codes?: string[];
   priority?: string;
   priority_why?: string[];
   monthly_fee?: number;
+  owner_notes?: string;
+  phone_source?: string;
+  website_source?: string;
+  contact_page?: string;
+  contact_page_source?: string;
 };
 
 export type Opportunity = {

@@ -17,6 +17,12 @@ export type DecisionMaker = {
   profile_url: string;
   source: string;
   last_verified: string;
+  phone?: string;
+  phone_source?: string;
+  name_source?: string;
+  title_source?: string;
+  email_source?: string;
+  profile_source?: string;
 };
 
 export type AdObservation = {

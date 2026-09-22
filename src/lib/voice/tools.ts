@@ -36,6 +36,7 @@ import {
   speakFilterResult,
   toolArgsToFilter,
 } from "../prospects/view-filter.ts";
+import { hasChanges, pickKnownChanges, whatToAddSpeech, whichProspectSpeech } from "../prospects/owner-edit.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
@@ -139,6 +140,7 @@ export const ALLOWED_TOOLS = [
   "compare_sources",
   "get_current_design",
   "apply_design_operations",
+  "update_prospect_information",
 ] as const;
 
 export type AllowedTool = (typeof ALLOWED_TOOLS)[number];
@@ -240,6 +242,8 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   FOLLOW_LINK: "read_web_page",
   GET_CURRENT_DESIGN: "get_current_design",
   APPLY_DESIGN_OPERATIONS: "apply_design_operations",
+  UPDATE_PROSPECT_INFORMATION: "update_prospect_information",
+  ADD_PROSPECT_INFORMATION: "update_prospect_information",
 };
 
 /** Model-invented names that must never run, even if they look helpful. */
@@ -313,6 +317,7 @@ export type AraProspectSnap = {
   contact_summary?: string;
   opportunity_summary?: string;
   fit_headline?: string;
+  owner_notes?: string;
   is_demo?: boolean;
   is_test?: boolean;
   discovered_at?: string;
@@ -363,6 +368,7 @@ export type AraDeskContext = {
   prospectFilter?: import("../prospects/view-filter.ts").ProspectViewFilter;
   lastOwnerUtterance?: string;
   pendingOwnerCalendar?: boolean | PendingOwnerCal;
+  pendingProspectEdit?: boolean | { uid: string; need: string; at: number };
 };
 
 export type ToolPlan =
@@ -372,6 +378,10 @@ export type ToolPlan =
   | { type: "show_evidence"; uid: string }
   | { type: "navigate"; view: "home" | "pipe" | "settings" | "find" | "add" | "calendar" | "health" }
   | { type: "sentinel_status"; topic?: string }
+  | { type: "prompt_prospect_edit"; uid?: string }
+  | { type: "update_prospect_information"; uid: string; changes: import("../prospects/owner-edit.ts").ProspectInfoChanges; confirm?: boolean }
+  | { type: "confirm_prospect_edit"; uid: string; changes: import("../prospects/owner-edit.ts").ProspectInfoChanges }
+  | { type: "clarify_prospect_phone"; uid: string; phone: string; changes: import("../prospects/owner-edit.ts").ProspectInfoChanges }
   | { type: "go_back" }
   | { type: "start_tasks" }
   | { type: "find"; vertical: string; location: string; count: number }
@@ -482,6 +492,7 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "navigate_settings", description: "Open Settings. Same as the Settings button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_health", description: "Open System Health / Sentinel. Same as opening the System Health page. Inspect-only.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_system_health", description: "Answer from Sentinel’s persisted evidence only: is production healthy, open bugs, last deploy, worker, what Sentinel watches. NEVER invent health. If already_spoken, remain silent.", parameters: { type: "object", properties: { topic: { type: "string" } } } },
+    { type: "function", name: "update_prospect_information", description: "Add or edit known prospect fields the owner just provided. Allowlisted fields only. Never invent values. Never send email. Provenance is OWNER PROVIDED. If Dylan said ‘add information’ without the values, call this with prompt_only=true. Use the currently open prospect_uid.", parameters: { type: "object", properties: { ...uid, prompt_only: { type: "boolean" }, decision_maker_name: { type: "string" }, decision_maker_role: { type: "string" }, business_email: { type: "string" }, business_phone: { type: "string" }, decision_maker_phone: { type: "string" }, website: { type: "string" }, contact_page: { type: "string" }, linkedin: { type: "string" }, profile_url: { type: "string" }, industry: { type: "string" }, city: { type: "string" }, notes: { type: "string" }, clear_fields: { type: "array", items: { type: "string" } }, confirm_destructive: { type: "boolean" } } } },
     { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. ONLY when the owner explicitly says pull up / show / open / go to my calendar as this turn’s command. NEVER because an earlier scheduling command mentioned calendar. NEVER for ‘add a call’, ‘can you hear me’, or name corrections.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_today", description: "Jump the Calendar to today.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_next", description: "Move Calendar forward: next day, next week, or next month depending on the current view.", parameters: { type: "object", properties: {} } },
@@ -733,6 +744,34 @@ export function executeAllowlistedTool(
       ok: true, tool, rejected: false,
       output: { ok: true, pending: true, staysOnScreen: true, changed: false },
       plan: { type: "sentinel_status", topic: String(args.topic || args.query || "").trim() || undefined },
+    };
+  }
+  if (tool === "update_prospect_information") {
+    const uid = String(args.prospect_uid || args.uid || ctx.openUid || "").trim();
+    const pendingUid = typeof ctx.pendingProspectEdit === "object" && ctx.pendingProspectEdit?.uid
+      ? ctx.pendingProspectEdit.uid
+      : "";
+    const targetUid = uid || pendingUid;
+    if (!targetUid) {
+      return {
+        ok: true, tool, rejected: false,
+        output: { ok: false, need: "prospect", spoken: whichProspectSpeech(), emailSent: false, staysOnScreen: true, changed: false },
+        plan: { type: "prompt_prospect_edit" },
+      };
+    }
+    const picked = pickKnownChanges(args);
+    const promptOnly = args.prompt_only === true || !hasChanges(picked.changes);
+    if (promptOnly) {
+      return {
+        ok: true, tool, rejected: false,
+        output: { ok: true, need: "fields", spoken: whatToAddSpeech(), prospectUid: targetUid, emailSent: false, staysOnScreen: true, changed: false },
+        plan: { type: "prompt_prospect_edit", uid: targetUid },
+      };
+    }
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, prospectUid: targetUid, changes: picked.changes, unknown: picked.unknown, emailSent: false, staysOnScreen: true },
+      plan: { type: "update_prospect_information", uid: targetUid, changes: picked.changes, confirm: Boolean(args.confirm_destructive) },
     };
   }
   if (tool === "navigate_calendar") {

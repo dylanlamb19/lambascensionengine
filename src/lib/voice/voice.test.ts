@@ -206,6 +206,9 @@ test("contact-first phrases map to reach actions", () => {
   assert.equal(parseSpokenCommand("Learn more.").intent, "OPEN_REVIEW");
   assert.equal(parseSpokenCommand("View what we know.").intent, "OPEN_REVIEW");
   assert.equal(parseSpokenCommand("Find the owner.").intent, "FIND_CONTACT");
+  assert.equal(parseSpokenCommand("Ara, add information to this prospect.").intent, "UPDATE_PROSPECT_INFORMATION");
+  assert.equal(parseSpokenCommand("The owner is John Smith.").intent, "UPDATE_PROSPECT_INFORMATION");
+  assert.equal(parseSpokenCommand("How can we contact Firefighter Roofing?").intent, "UPDATE_PROSPECT_INFORMATION");
   assert.equal(parseSpokenCommand("Find contact.").intent, "FIND_CONTACT");
   assert.equal(parseSpokenCommand("Open their website.").intent, "OPEN_WEBSITE");
   assert.equal(parseSpokenCommand("Call them.").intent, "CALL_PROSPECT");

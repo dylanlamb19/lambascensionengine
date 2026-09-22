@@ -62,6 +62,7 @@ export type IntentName =
   | "AVAILABILITY"
   | "SCHEDULE_CALL"
   | "CREATE_OWNER_CALENDAR_EVENT"
+  | "UPDATE_PROSPECT_INFORMATION"
   | "UNKNOWN";
 
 export type ParsedIntent = {

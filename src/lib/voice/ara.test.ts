@@ -190,6 +190,48 @@ describe("Ara allowlisted tools", () => {
     if (open.plan.type === "navigate") assert.equal(open.plan.view, "health");
   });
 
+  it("update_prospect_information is allowlisted, structured, and does not send email", () => {
+    assert.equal(isAllowedTool("update_prospect_information"), true);
+    const prompt = executeAllowlistedTool("update_prospect_information", { prompt_only: true }, desk);
+    assert.equal(prompt.ok, true);
+    assert.equal(prompt.plan.type, "prompt_prospect_edit");
+    assert.equal(planToAction(prompt.plan), null);
+    assert.match(String(prompt.output.spoken), /What would you like to add or update/i);
+    assert.equal(prompt.output.emailSent, false);
+    const apply = executeAllowlistedTool("update_prospect_information", {
+      decision_maker_name: "John Smith",
+      business_email: "john@example.com",
+    }, desk);
+    assert.equal(apply.plan.type, "update_prospect_information");
+    if (apply.plan.type === "update_prospect_information") {
+      assert.equal(apply.plan.uid, "uid-fire");
+      assert.equal(apply.plan.changes.decisionMakerName, "John Smith");
+      assert.equal(apply.plan.changes.businessEmail, "john@example.com");
+    }
+    assert.equal(apply.output.emailSent, false);
+    assert.equal(planToAction(apply.plan), null);
+    const noUid = executeAllowlistedTool("update_prospect_information", { prompt_only: true }, { ...desk, openUid: null });
+    assert.match(String(noUid.output.spoken), /Which prospect/i);
+  });
+
+  it("Ara intercepts prospect edits and Learn More has Save/Cancel", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/owner-desk.tsx"), "utf8");
+    assert.match(src, /runProspectEditAsk/);
+    assert.match(src, /updateProspectInformationFn/);
+    assert.match(src, /You have unsaved changes/);
+    const reach = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/prospect-reach.tsx"), "utf8");
+    assert.match(reach, /Edit information/);
+    assert.match(reach, /Save changes/);
+    assert.match(reach, /Cancel/);
+    const instructions = buildAraInstructions({
+      ...desk,
+      pendingProspectEdit: { uid: "uid-fire", need: "fields", at: Date.now() },
+    });
+    assert.match(instructions, /PENDING PROSPECT EDIT/);
+    assert.match(instructions, /update_prospect_information/);
+    assert.match(instructions, /OWNER PROVIDED/);
+  });
+
   it("personal owner calendar events are a real tool, not sales bookings", () => {
     assert.equal(isAllowedTool("create_owner_calendar_event"), true);
     assert.equal(isAllowedTool("list_owner_calendar_events"), true);

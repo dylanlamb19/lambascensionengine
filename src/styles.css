@@ -765,6 +765,33 @@
     font-size: 0.75rem;
     color: var(--color-muted);
   }
+  .la-contact-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .la-history {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.65rem 0.8rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-line);
+    background: color-mix(in oklab, var(--color-surface) 88%, transparent);
+  }
+  .la-unsaved {
+    position: sticky;
+    bottom: 0.75rem;
+    z-index: 20;
+    display: grid;
+    gap: 0.55rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    box-shadow: 0 12px 40px color-mix(in oklab, black 22%, transparent);
+  }
 
   .la-attention {
     display: flex;

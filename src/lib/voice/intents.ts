@@ -3,6 +3,7 @@ import { HIGH_INTENTS, MEDIUM_INTENTS } from "./types.ts";
 import { parseSpokenHour } from "../calendar/range.ts";
 import { isPersonalCalendarCommand, isOwnerCalendarManageCommand } from "../calendar/owner-event.ts";
 import { parseSpokenFilter } from "../prospects/view-filter.ts";
+import { isProspectEditSpeech, isProspectReadbackSpeech } from "../prospects/owner-edit.ts";
 
 function riskOf(intent: IntentName): Risk {
   if (HIGH_INTENTS.includes(intent)) return "HIGH";
@@ -328,6 +329,10 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   }
   if (hit(t, /find clients|open find clients|look for clients/)) return { ...base, intent: "FIND_CLIENTS", risk: "LOW" };
   if (hit(t, /find companies|find \d+|find high-ticket/)) return { ...base, intent: "FIND_CLIENTS", risk: "LOW" };
+
+  if (isProspectReadbackSpeech(stripped) || isProspectEditSpeech(stripped)) {
+    return { ...base, intent: "UPDATE_PROSPECT_INFORMATION", risk: "LOW", confidence: 0.97 };
+  }
 
   if (hit(t, /find (the |their |a )?(owner|decision[- ]maker|contact( person| method| info| information)?)|who (owns|is the owner)|look up (the |their )?owner/)) {
     const named = t.match(/(?:for|at|with|about) (.+)$/);

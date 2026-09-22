@@ -104,15 +104,18 @@ export function contactSummary(p: Prospect): string {
   const named = namedPeople(p);
   if (named.length) {
     const c = named[0];
-    bits.push(`Person: ${c.name}${c.title && c.title !== "UNKNOWN" ? `, ${c.title}` : ""} (source: ${c.source || "public page"}; not invented).`);
+    const src = /owner provided/i.test(c.name_source || c.source || "") ? "OWNER PROVIDED" : (c.source || "public page");
+    bits.push(`Person: ${c.name}${c.title && c.title !== "UNKNOWN" ? `, ${c.title}` : ""} (source: ${src}; not invented).`);
   } else bits.push("Decision maker unknown. Do not invent a name.");
   if (email) bits.push(`Email: ${email.value} (${email.status}${email.source ? ` · ${email.source}` : ""}).`);
   else bits.push("Email: UNKNOWN. Do not guess one from a naming pattern.");
   if (phone) bits.push(`Phone: ${phone.value} (${phone.status}).`);
   else bits.push("Phone: UNKNOWN.");
   const li = (p.socials || []).find((s) => s.network === "linkedin");
-  if (li) bits.push(`Company LinkedIn: ${li.url} (FOUND PUBLICLY).`);
+  if (li) bits.push(`Company LinkedIn: ${li.url} (${/owner provided/i.test(li.source) ? "OWNER PROVIDED" : "FOUND PUBLICLY"}).`);
   const form = (p.findings || []).find((f) => (f.id === "contact_form" || f.id === "contact_form_inner") && f.status === "VERIFIED");
   if (form) bits.push("Website contact form observed.");
+  if (p.contact_page) bits.push(`Contact page: ${p.contact_page} (${/owner provided/i.test(p.contact_page_source || "") ? "OWNER PROVIDED" : "on file"}).`);
+  if (p.owner_notes) bits.push(`Owner note: ${p.owner_notes} (OWNER PROVIDED — not a public research claim).`);
   return bits.join(" ");
 }

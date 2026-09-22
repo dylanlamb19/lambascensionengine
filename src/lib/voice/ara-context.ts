@@ -22,6 +22,20 @@ function pendingCalendarInstruction(pending: AraDeskContext["pendingOwnerCalenda
   return `PENDING CALENDAR ACTION: CREATE_EVENT is waiting (need=${need}).${when}${title} Do NOT call navigate_calendar. Do NOT create another event. If Dylan names the call, call create_owner_calendar_event with that title and the stored when. If he says can you hear me, answer yes and keep this pending. If he says that is not the name, ask what to name it.`;
 }
 
+function pendingProspectEditInstruction(pending: AraDeskContext["pendingProspectEdit"]): string {
+  if (!pending) return "PENDING PROSPECT EDIT: none.";
+  const detail = typeof pending === "object" ? pending : null;
+  const need = detail?.need || "fields";
+  const uid = detail?.uid ? ` prospect_uid=${detail.uid}.` : " Use the currently open prospect_uid.";
+  if (need === "fields") {
+    return `PENDING PROSPECT EDIT: waiting for field values.${uid} Dylan already said add/update information. The next values apply to THAT prospect. Do not ask for the company name again. Do not guess fields. Call update_prospect_information with the values. If he still has not given values, ask “What would you like to add or update?”`;
+  }
+  if (need === "confirm_destructive") {
+    return `PENDING PROSPECT EDIT: waiting for confirmation to clear contact information.${uid} Do not clear until he says yes.`;
+  }
+  return `PENDING PROSPECT EDIT: waiting for whether a phone is the business phone or the decision maker’s phone.${uid}`;
+}
+
 export function buildAraInstructions(ctx: AraDeskContext): string {
   const open = ctx.prospects.find((p) => p.uid === ctx.openUid);
   const stages: Record<string, number> = {};
@@ -97,6 +111,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "start my tasks → start_my_tasks",
     "press Review / review this / learn more / tell me more → learn_more or review_current_task",
     "find the owner / find contact → find_contact (public sources only, never invent an email)",
+    "add information to this prospect / update this company / the owner is … / their email is … / add a note that … → update_prospect_information. Allowlisted fields only. Provenance is OWNER PROVIDED, never VERIFIED. If he did not give the values yet, call it with prompt_only=true and ask “What would you like to add or update?” Keep the current prospect_uid. Do not guess. Do not send email.",
     "open their website / open the website → open_website (only a URL already on file)",
     "call them / call this number → call_prospect (only a phone already on file)",
     "what should I do with this company → explain_current_screen, then recommend find_contact / call / open_website",
@@ -170,6 +185,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
       ? `Last personal calendar event Ara created: title="${ctx.lastOwnerEvent.title}" when="${ctx.lastOwnerEvent.whenLabel}" id=${ctx.lastOwnerEvent.id}. If Dylan asks what you just added, answer from this — it is not a sales call.`
       : "Last personal calendar event Ara created: none this session.",
     pendingCalendarInstruction(ctx.pendingOwnerCalendar),
+    pendingProspectEditInstruction(ctx.pendingProspectEdit),
     `Selected prospect UID: ${ctx.openUid || "none"}.`,
     `Selected company name: ${ctx.companyName || "none"}.`,
     `Current task id: ${ctx.taskId || "none"}.`,
@@ -246,8 +262,10 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     if (open.opportunity_summary) lines.push(`Observed opportunity: ${open.opportunity_summary}`);
     else lines.push("Observed opportunity: none stored yet. Do not invent advertising spend or conversion rates.");
     if (open.contact_summary) lines.push(`How to contact them: ${open.contact_summary}`);
+    if (open.owner_notes) lines.push(`Owner notes (OWNER PROVIDED, not public research): ${open.owner_notes}`);
     if (open.explain) lines.push(`Verified take: ${open.explain.slice(0, 400)}`);
     lines.push("If Dylan asks who owns it and decision maker is UNKNOWN, say Decision maker unknown. Do not invent a person's name.");
+    lines.push("Owner-provided contact info may be used to draft ‘Hi John…’ but do not claim it was independently verified unless evidence says so.");
   }
   if (ctx.tasks.length) {
     lines.push(`Owner tasks: ${ctx.tasks.map((t) => t.title).join("; ")}.`);

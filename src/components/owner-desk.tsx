@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from "react";
 import { ArrowRight, Search, X } from "lucide-react";
 import { FIT, STAGE } from "@/lib/pipeline-copy";
 import {
@@ -17,6 +17,20 @@ import {
 import { SEED } from "@/lib/seed-prospects";
 import { deepResearchFn } from "@/lib/research/run";
 import { listProspectsFn, importProspectsFn, upsertProspectsFn } from "@/lib/prospects/sync";
+import { updateProspectInformationFn } from "@/lib/prospects/owner-edit-actions";
+import {
+  ambiguousPhoneSpeech,
+  destructiveAskSpeech,
+  formatReadback,
+  isProspectEditSpeech,
+  isProspectReadbackSpeech,
+  parseProspectEditSpeech,
+  pendingProspectEditExpired,
+  whatToAddSpeech,
+  whichProspectSpeech,
+  type PendingProspectEdit,
+  type ProspectInfoChanges,
+} from "@/lib/prospects/owner-edit";
 import { matchExisting } from "@/lib/prospects/dedupe";
 import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/identity";
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
@@ -98,6 +112,7 @@ import {
   araRecommend,
   listingPhone,
   mergeContacts,
+  namedPeople,
   nextResearchStatus,
   reachKind,
   reachLabel,
@@ -329,6 +344,19 @@ export function OwnerDesk() {
     pendingOwnerCalRef.current = next;
     setPendingOwnerCal(next);
   }
+  const pendingProspectEditRef = useRef<PendingProspectEdit | null>(null);
+  const [pendingProspectEdit, setPendingProspectEdit] = useState<PendingProspectEdit | null>(null);
+  function writePendingProspectEdit(next: PendingProspectEdit | null) {
+    pendingProspectEditRef.current = next;
+    setPendingProspectEdit(next);
+  }
+  const [editDirty, setEditDirty] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<AppAction | null>(null);
+  const [infoSaving, setInfoSaving] = useState(false);
+  const [infoSaveMsg, setInfoSaveMsg] = useState("");
+  const [infoSaveErr, setInfoSaveErr] = useState("");
+  const editApiRef = useRef<{ save: () => Promise<boolean>; discard: () => void } | null>(null);
   const pendingCalManageRef = useRef<{
     kind: "delete" | "update" | "bulk_scope" | "bulk_confirm";
     eventId?: string;
@@ -1138,7 +1166,23 @@ export function OwnerDesk() {
     }
   }
 
+  function wouldLeaveProspect(action: AppAction): boolean {
+    if (!editDirty) return false;
+    if (action.name === "OPEN_PROSPECT" && action.uid && action.uid === liveRef.current.openUid) return false;
+    const stay = new Set<AppAction["name"]>([
+      "SHOW_EVIDENCE", "EXPLAIN", "CLOSE_EXPLAIN", "READ_PAGE", "READ_EVERYTHING", "READ_WARNING", "READ_FORM", "READ_OPTIONS",
+      "ACKNOWLEDGE_TASK", "SCROLL_PAGE", "LAYOUT", "VISUAL", "IMAGE", "FILTER_PROSPECTS",
+    ]);
+    if (stay.has(action.name)) return false;
+    return true;
+  }
+
   function dispatchAction(action: AppAction, _source: "local" | "mirror" = "local") {
+    if (wouldLeaveProspect(action)) {
+      setPendingLeave(action);
+      setLeaveOpen(true);
+      return;
+    }
     const { state, effect } = applyDeskAction(currentDesk(), action, deskWorld());
     applyDeskState(state);
     runDeskEffect(effect);
@@ -1469,6 +1513,7 @@ export function OwnerDesk() {
         contact_summary: contactSummary(p),
         opportunity_summary: opportunities(p).map((o) => o.title).join("; "),
         fit_headline: ownerQualify(p).headline,
+        owner_notes: p.owner_notes || "",
         is_demo: Boolean(p.is_demo),
         is_test: isTestWorkflowUid(p.uid),
         discovered_at: p.discovered_at || "",
@@ -1491,6 +1536,7 @@ export function OwnerDesk() {
         "update_owner_calendar_event",
         "get_system_health",
         "navigate_health",
+        "update_prospect_information",
       ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -1528,6 +1574,9 @@ export function OwnerDesk() {
       lastOwnerUtterance: youSaidRef.current || live.youSaid || "",
       pendingOwnerCalendar: (pendingOwnerCalRef.current && !pendingOwnerCalExpired(pendingOwnerCalRef.current))
         ? pendingOwnerCalRef.current
+        : false,
+      pendingProspectEdit: (pendingProspectEditRef.current && !pendingProspectEditExpired(pendingProspectEditRef.current))
+        ? pendingProspectEditRef.current
         : false,
     };
   }
@@ -1587,6 +1636,34 @@ export function OwnerDesk() {
       } catch {
         return { ok: false, spoken: "I don’t have a completed Sentinel observation yet, so I won’t guess.", staysOnScreen: true, changed: false };
       }
+    }
+    if (result.plan.type === "prompt_prospect_edit") {
+      const uid = result.plan.uid || liveRef.current.openUid;
+      if (uid) {
+        writePendingProspectEdit({ uid, need: "fields", at: Date.now() });
+      }
+      return {
+        ...result.output,
+        ok: true,
+        spoken: uid ? whatToAddSpeech() : whichProspectSpeech(),
+        emailSent: false,
+        staysOnScreen: true,
+        changed: false,
+      };
+    }
+    if (result.plan.type === "update_prospect_information") {
+      const r = await persistProspectInfo(result.plan.uid, result.plan.changes, "VOICE");
+      writePendingProspectEdit(null);
+      return {
+        ...result.output,
+        ok: r.ok,
+        spoken: r.spoken,
+        emailSent: false,
+        outreachAuthorized: false,
+        reach: r.reach,
+        staysOnScreen: true,
+        changed: r.ok,
+      };
     }
     if (name === "get_calendar_availability" || name === "get_next_call") {
       try {
@@ -1839,6 +1916,184 @@ export function OwnerDesk() {
     } finally {
       setSentinelBusy(false);
     }
+  }
+
+  async function persistProspectInfo(
+    uid: string,
+    changes: ProspectInfoChanges,
+    inputMethod: "MANUAL" | "VOICE",
+  ): Promise<{ ok: boolean; spoken: string; reach?: string }> {
+    const key = `update_prospect:${uid}:${JSON.stringify(changes)}`;
+    if (gateRef.current.seen(key, 15_000)) {
+      return { ok: true, spoken: "Done — that information is already saved." };
+    }
+    setInfoSaving(true);
+    setInfoSaveErr("");
+    try {
+      const r = await updateProspectInformationFn({ data: { prospectUid: uid, changes, inputMethod } });
+      if (r.ok && r.prospect) {
+        patchCompany(r.prospect);
+        setInfoSaveMsg(r.spoken);
+        setInfoSaveErr("");
+        return { ok: true, spoken: r.spoken, reach: r.reach };
+      }
+      const reason = ("reason" in r && r.reason) ? String(r.reason) : "I couldn’t save that, so nothing changed.";
+      setInfoSaveErr(reason);
+      return { ok: false, spoken: reason };
+    } catch {
+      const reason = "I couldn’t save that, so nothing changed.";
+      setInfoSaveErr(reason);
+      return { ok: false, spoken: reason };
+    } finally {
+      setInfoSaving(false);
+    }
+  }
+
+  async function runProspectEditAsk(text: string): Promise<boolean> {
+    const live = liveRef.current;
+    const pending = pendingProspectEditRef.current && !pendingProspectEditExpired(pendingProspectEditRef.current)
+      ? pendingProspectEditRef.current
+      : null;
+    if (pendingProspectEditRef.current && pendingProspectEditExpired(pendingProspectEditRef.current)) {
+      writePendingProspectEdit(null);
+    }
+    const uid = pending?.uid || live.openUid || "";
+    const company = uid ? findByUid(live.rows, uid) : undefined;
+    const hasPerson = company ? namedPeople(company).length > 0 : false;
+    const parsed = parseProspectEditSpeech(text, { hasNamedPerson: hasPerson });
+    const wantsEdit = isProspectEditSpeech(text) || isProspectReadbackSpeech(text) || Boolean(pending && parsed.kind !== "none");
+
+    if (pending?.need === "confirm_destructive" && (parsed.kind === "confirm_yes" || parsed.kind === "confirm_no")) {
+      araRef.current?.cancelResponse();
+      if (parsed.kind === "confirm_no") {
+        writePendingProspectEdit(null);
+        utter("Okay — I left the contact information as it is.", "TOOL_RESULT");
+        return true;
+      }
+      const r = await persistProspectInfo(pending.uid, pending.changes || {}, "VOICE");
+      writePendingProspectEdit(null);
+      utter(r.spoken, "TOOL_RESULT");
+      return true;
+    }
+    if (pending?.need === "phone_target" && (parsed.kind === "phone_business" || parsed.kind === "phone_decision_maker")) {
+      araRef.current?.cancelResponse();
+      const changes: ProspectInfoChanges = { ...(pending.changes || {}) };
+      const phone = pending.spoken || "";
+      if (parsed.kind === "phone_business") changes.businessPhone = phone;
+      else changes.decisionMakerPhone = phone;
+      const r = await persistProspectInfo(pending.uid, changes, "VOICE");
+      writePendingProspectEdit(null);
+      utter(r.spoken, "TOOL_RESULT");
+      return true;
+    }
+    if (pending?.need === "fields") {
+      if (parsed.kind === "prompt") {
+        araRef.current?.cancelResponse();
+        utter(whatToAddSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      if (parsed.kind === "fields") {
+        araRef.current?.cancelResponse();
+        const r = await persistProspectInfo(pending.uid, parsed.changes, "VOICE");
+        writePendingProspectEdit(null);
+        utter(r.spoken, "TOOL_RESULT");
+        return true;
+      }
+      if (parsed.kind === "ambiguous_phone") {
+        araRef.current?.cancelResponse();
+        writePendingProspectEdit({
+          uid: pending.uid,
+          at: Date.now(),
+          need: "phone_target",
+          changes: parsed.changes,
+          spoken: parsed.phone,
+        });
+        utter(ambiguousPhoneSpeech(parsed.phone), "TOOL_RESULT");
+        return true;
+      }
+      if (parsed.kind === "destructive") {
+        araRef.current?.cancelResponse();
+        writePendingProspectEdit({
+          uid: pending.uid,
+          at: Date.now(),
+          need: "confirm_destructive",
+          changes: parsed.changes,
+        });
+        utter(destructiveAskSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      if (parsed.kind === "readback" && company) {
+        araRef.current?.cancelResponse();
+        utter(formatReadback(company), "TOOL_RESULT");
+        return true;
+      }
+      if (parsed.kind === "confirm_no") {
+        araRef.current?.cancelResponse();
+        writePendingProspectEdit(null);
+        utter("Okay — I won’t add anything.", "TOOL_RESULT");
+        return true;
+      }
+    }
+
+    if (parsed.kind === "readback") {
+      araRef.current?.cancelResponse();
+      if (!company) {
+        utter(whichProspectSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      utter(formatReadback(company), "TOOL_RESULT");
+      return true;
+    }
+    if (!wantsEdit && parsed.kind === "none") return false;
+    if (parsed.kind === "prompt" || (parsed.kind === "none" && isProspectEditSpeech(text))) {
+      araRef.current?.cancelResponse();
+      if (!uid) {
+        utter(whichProspectSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      writePendingProspectEdit({ uid, need: "fields", at: Date.now() });
+      utter(whatToAddSpeech(), "TOOL_RESULT");
+      return true;
+    }
+    if (parsed.kind === "fields") {
+      araRef.current?.cancelResponse();
+      if (!uid) {
+        writePendingProspectEdit({ uid: "", need: "fields", at: Date.now(), changes: parsed.changes });
+        utter(whichProspectSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      const r = await persistProspectInfo(uid, parsed.changes, "VOICE");
+      writePendingProspectEdit(null);
+      utter(r.spoken, "TOOL_RESULT");
+      return true;
+    }
+    if (parsed.kind === "ambiguous_phone") {
+      araRef.current?.cancelResponse();
+      if (!uid) {
+        utter(whichProspectSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      writePendingProspectEdit({
+        uid,
+        at: Date.now(),
+        need: "phone_target",
+        changes: parsed.changes,
+        spoken: parsed.phone,
+      });
+      utter(ambiguousPhoneSpeech(parsed.phone), "TOOL_RESULT");
+      return true;
+    }
+    if (parsed.kind === "destructive") {
+      araRef.current?.cancelResponse();
+      if (!uid) {
+        utter(whichProspectSpeech(), "TOOL_RESULT");
+        return true;
+      }
+      writePendingProspectEdit({ uid, at: Date.now(), need: "confirm_destructive", changes: parsed.changes });
+      utter(destructiveAskSpeech(), "TOOL_RESULT");
+      return true;
+    }
+    return false;
   }
 
   async function runSentinelAsk(text: string): Promise<boolean> {
@@ -2354,6 +2609,7 @@ export function OwnerDesk() {
     }
     void runOwnerPersonalCalendar(text).then(async (handled) => {
       if (handled) return;
+      if (await runProspectEditAsk(text)) return;
       if (await runSentinelAsk(text)) return;
       const parsed = parseSpokenCommand(text);
       if (parsed.intent === "READ_PAGE" || parsed.intent === "READ_EVERYTHING" || parsed.intent === "READ_WARNING" || parsed.intent === "READ_FORM" || parsed.intent === "READ_OPTIONS") {
@@ -2511,7 +2767,7 @@ export function OwnerDesk() {
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal, pendingProspectEdit]);
 
   useEffect(() => {
     if (!userId) return;
@@ -2599,6 +2855,7 @@ export function OwnerDesk() {
     }
     void runOwnerPersonalCalendar(text).then(async (handled) => {
       if (handled) return;
+      if (await runProspectEditAsk(text)) return;
       if (await runSentinelAsk(text)) return;
       const decided = spokenToAction(text, currentDesk(), deskWorld());
       if ("ask" in decided) {
@@ -3393,6 +3650,15 @@ export function OwnerDesk() {
             upcomingCall={prospectCall && prospectCall.prospectUid === open.uid ? prospectCall : null}
             rescheduleDraft={rescheduleDraft}
             callActionMsg={callActionMsg}
+            infoSaving={infoSaving}
+            infoSaveMsg={infoSaveMsg}
+            infoSaveErr={infoSaveErr}
+            editApiRef={editApiRef}
+            onDirtyChange={setEditDirty}
+            onPersist={async (changes) => {
+              const r = await persistProspectInfo(open.uid || "", changes, "MANUAL");
+              return r.ok;
+            }}
             onEvidence={() => {
               if (evidence) setEvidence(false);
               else dispatchAction({ name: "SHOW_EVIDENCE", uid: open.uid });
@@ -3403,7 +3669,14 @@ export function OwnerDesk() {
             onSkip={() => skipProspect(open, "MANUAL")}
             onResearch={() => researchFurther(open.uid || "")}
             onAction={(id) => runProspectAction(open.uid, id)}
-            onBack={() => dispatchAction({ name: "GO_BACK" })}
+            onBack={() => {
+              if (editDirty) {
+                setPendingLeave({ name: "GO_BACK" });
+                setLeaveOpen(true);
+                return;
+              }
+              dispatchAction({ name: "GO_BACK" });
+            }}
             onOpenCalendar={openProspectCallCalendar}
             onRescheduleDraft={setRescheduleDraft}
             onReschedule={() => void rescheduleProspectCall()}
@@ -3450,14 +3723,72 @@ export function OwnerDesk() {
         </Sheet>
       ) : null}
       {explain ? <ExplainPanel text={explain} onClose={() => dispatchAction({ name: "CLOSE_EXPLAIN" })} /> : null}
+      {leaveOpen ? (
+        <div className="la-unsaved" role="alertdialog" aria-label="Unsaved changes">
+          <p className="text-sm"><b>You have unsaved changes.</b></p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="la-btn la-btn-primary"
+              onClick={() => {
+                void (async () => {
+                  const ok = await editApiRef.current?.save();
+                  if (ok) {
+                    setLeaveOpen(false);
+                    const action = pendingLeave;
+                    setPendingLeave(null);
+                    setEditDirty(false);
+                    if (action) {
+                      const { state, effect } = applyDeskAction(currentDesk(), action, deskWorld());
+                      applyDeskState(state);
+                      runDeskEffect(effect);
+                    }
+                  }
+                })();
+              }}
+            >
+              Save changes
+            </button>
+            <button
+              type="button"
+              className="la-btn la-btn-ghost"
+              onClick={() => {
+                editApiRef.current?.discard();
+                setLeaveOpen(false);
+                setEditDirty(false);
+                const action = pendingLeave;
+                setPendingLeave(null);
+                if (action) {
+                  const { state, effect } = applyDeskAction(currentDesk(), action, deskWorld());
+                  applyDeskState(state);
+                  runDeskEffect(effect);
+                }
+              }}
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              className="la-btn la-btn-ghost"
+              onClick={() => {
+                setLeaveOpen(false);
+                setPendingLeave(null);
+              }}
+            >
+              Stay here
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function ReviewPage({
   company, evidence, advanced, busy, err, gmailConnected, upcomingCall, rescheduleDraft, callActionMsg,
+  infoSaving, infoSaveMsg, infoSaveErr, editApiRef,
   onEvidence, onAdvanced, onExplain, onApprove, onSkip, onResearch, onAction, onBack,
-  onOpenCalendar, onRescheduleDraft, onReschedule, onCancelCall,
+  onOpenCalendar, onRescheduleDraft, onReschedule, onCancelCall, onPersist, onDirtyChange,
 }: {
   company: Prospect;
   evidence: boolean;
@@ -3475,6 +3806,12 @@ function ReviewPage({
   } | null;
   rescheduleDraft: string;
   callActionMsg: string;
+  infoSaving: boolean;
+  infoSaveMsg: string;
+  infoSaveErr: string;
+  editApiRef: MutableRefObject<{ save: () => Promise<boolean>; discard: () => void } | null>;
+  onDirtyChange: (dirty: boolean) => void;
+  onPersist: (changes: ProspectInfoChanges) => Promise<boolean>;
   onEvidence: () => void;
   onAdvanced: () => void;
   onExplain: () => void;
@@ -3504,6 +3841,12 @@ function ReviewPage({
           heading="Learn more"
           gmailConnected={gmailConnected}
           busy={busy}
+          saving={infoSaving}
+          saveMsg={infoSaveMsg}
+          saveErr={infoSaveErr}
+          editApiRef={editApiRef}
+          onDirtyChange={onDirtyChange}
+          onPersist={onPersist}
           onAction={onAction}
         />
         {err ? <div className="la-ribbon la-ribbon-bad mt-3">{err}</div> : null}
