@@ -15,35 +15,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: linkedin-agent-in-app
-      - name: Assemble tools.ts
+      - name: Assemble tools.ts (zlib+b64)
         if: ${{ inputs.target == 'tools' || inputs.target == 'both' }}
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent/tools-b64")
+          import base64, hashlib, json, pathlib, zlib
+          root = pathlib.Path("build-assets/linkedin-agent/tools-zlib")
           meta = json.loads((root / "meta.json").read_text())
-          parts = []
-          for i in range(meta["parts"]):
-              parts.append((root / f"part{i:02d}.b64").read_text().strip())
-          raw = base64.b64decode("".join(parts))
+          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
+          raw = zlib.decompress(base64.b64decode("".join(parts)))
           digest = hashlib.sha256(raw).hexdigest()
           assert digest == meta["sha256"], (digest, meta["sha256"])
           pathlib.Path("src/lib/voice/tools.ts").write_bytes(raw)
           print("wrote tools.ts", len(raw), digest)
           PY
-      - name: Assemble owner-desk.tsx
+      - name: Assemble owner-desk.tsx (zlib+b64)
         if: ${{ inputs.target == 'owner-desk' || inputs.target == 'both' }}
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent/owner-b64")
+          import base64, hashlib, json, pathlib, zlib
+          root = pathlib.Path("build-assets/linkedin-agent/owner-zlib")
           meta = json.loads((root / "meta.json").read_text())
-          parts = []
-          for i in range(meta["parts"]):
-              parts.append((root / f"part{i:02d}.b64").read_text().strip())
-          raw = base64.b64decode("".join(parts))
+          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
+          raw = zlib.decompress(base64.b64decode("".join(parts)))
           digest = hashlib.sha256(raw).hexdigest()
           assert digest == meta["sha256"], (digest, meta["sha256"])
           pathlib.Path("src/components/owner-desk.tsx").write_bytes(raw)
@@ -58,6 +54,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "feat(linkedin-agent): assemble tools.ts + owner-desk.tsx from chunked assets"
+            git commit -m "feat(linkedin-agent): assemble tools.ts + owner-desk.tsx from zlib chunks"
             git push origin HEAD:linkedin-agent-in-app
           fi
