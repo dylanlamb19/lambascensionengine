@@ -1,6 +1,11 @@
 name: Merge main into acquisition-os-milestone
 on:
   workflow_dispatch:
+  push:
+    branches: [acquisition-os-milestone]
+    paths:
+      - "mcp-push/pr3-resolve/TRIGGER"
+      - ".github/workflows/merge-pr3-main.yml"
 jobs:
   merge:
     runs-on: ubuntu-latest
