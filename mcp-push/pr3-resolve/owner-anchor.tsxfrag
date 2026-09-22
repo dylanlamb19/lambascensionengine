@@ -1,1 +1,7 @@
-PLACEHOLDER_A
+            <NextMoves
+              prospects={rows.map(fromProspect)}
+              onFilter={(filter) => dispatchAction({ name: "FILTER_PROSPECTS", filter })}
+              onFindHighTicket={() => setView("find")}
+              onOrderLinkedInEnrich={() => void createLinkedInAgentOrderFn({ data: { kind: "enrich", payload: { focus: "NEEDS_CONTACT_INFO" }, note: "Enrich contacts for Needs Contact Info" } })}
+            />
+            <p className="mb-3 text-sm text-muted">{filterSummary(visibleRows.length, prospectFilter, lastDiscovery)}</p>

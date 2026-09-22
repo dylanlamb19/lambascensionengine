@@ -17,6 +17,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
+          cat mcp-push/pr3-resolve/resolve-a.pyfrag mcp-push/pr3-resolve/resolve-b.pyfrag > scripts/resolve-pr3-vs-main.py
           set +e
           git merge origin/main --no-edit
           merge_rc=$?
