@@ -1,0 +1,46 @@
+name: Hotfix owner-desk FindVerticalField on main
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'build-assets/hotfix/owner-desk-find-vertical.patch'
+      - 'build-assets/hotfix/HOTFIX_TRIGGER'
+      - '.github/workflows/hotfix-find-vertical-main.yml'
+  workflow_dispatch:
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Apply FindVerticalField patch to owner-desk.tsx
+        run: |
+          set -euo pipefail
+          if grep -q 'FindVerticalField' src/components/owner-desk.tsx; then
+            echo "Already wired; nothing to do"
+            exit 0
+          fi
+          patch -p1 < build-assets/hotfix/owner-desk-find-vertical.patch
+          python3 <<'PY'
+          from pathlib import Path
+          raw = Path("src/components/owner-desk.tsx").read_text()
+          assert "FindVerticalField" in raw
+          assert "la-verticals" not in raw
+          print("owner-desk ok", len(raw.encode()))
+          PY
+      - name: Commit hotfix to main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/owner-desk.tsx
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "fix(ux): Find Clients vertical uses native select on mobile"
+            git push origin HEAD:main
+          fi

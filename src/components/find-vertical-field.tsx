@@ -14,6 +14,7 @@ const VERTICALS = [
   "Other",
 ] as const;
 
+/** Native <select> for Find Clients — datalist fails on mobile Chrome. */
 export function FindVerticalField({
   value,
   onChange,
@@ -21,9 +22,8 @@ export function FindVerticalField({
   value: string;
   onChange: (next: string) => void;
 }) {
-  const known = VERTICALS.includes(value as (typeof VERTICALS)[number]);
+  const known = (VERTICALS as readonly string[]).includes(value);
   const selectValue = known ? value : value ? "Other" : "Roofing";
-  const showCustom = !known || value === "" || selectValue === "Other";
   return (
     <>
       <label className="la-label">What kind of company?</label>
@@ -38,7 +38,7 @@ export function FindVerticalField({
           </option>
         ))}
       </select>
-      {showCustom && selectValue === "Other" ? (
+      {selectValue === "Other" ? (
         <input
           className="la-field mb-3"
           value={value}
