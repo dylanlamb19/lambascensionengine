@@ -1,0 +1,77 @@
+[
+  {
+    "key": "contactability.ts",
+    "dest": "src/lib/prospects/contactability.ts",
+    "parts": [
+      "contactability.ts.00.part",
+      "contactability.ts.01.part",
+      "contactability.ts.02.part",
+      "contactability.ts.03.part"
+    ]
+  },
+  {
+    "key": "pipeline-queues.ts",
+    "dest": "src/lib/prospects/pipeline-queues.ts",
+    "parts": [
+      "pipeline-queues.ts.00.part",
+      "pipeline-queues.ts.01.part",
+      "pipeline-queues.ts.02.part"
+    ]
+  },
+  {
+    "key": "eligible.server.ts",
+    "dest": "src/lib/prospects/eligible.server.ts",
+    "parts": [
+      "eligible.server.ts.00.part",
+      "eligible.server.ts.01.part"
+    ]
+  },
+  {
+    "key": "reach.ts",
+    "dest": "src/lib/prospects/reach.ts",
+    "parts": [
+      "reach.ts.00.part",
+      "reach.ts.01.part",
+      "reach.ts.02.part",
+      "reach.ts.03.part",
+      "reach.ts.04.part",
+      "reach.ts.05.part"
+    ]
+  },
+  {
+    "key": "reach.test.ts",
+    "dest": "src/lib/prospects/reach.test.ts",
+    "parts": [
+      "reach.test.ts.00.part",
+      "reach.test.ts.01.part"
+    ]
+  },
+  {
+    "key": "patches.mjs",
+    "dest": "scripts/apply-acquisition-os-patches.mjs",
+    "parts": [
+      "patches.mjs.00.part",
+      "patches.mjs.01.part",
+      "patches.mjs.02.part",
+      "patches.mjs.03.part",
+      "patches.mjs.04.part",
+      "patches.mjs.05.part"
+    ]
+  },
+  {
+    "key": "inspection.md",
+    "dest": "ACQUISITION-OS-INSPECTION.md",
+    "parts": [
+      "inspection.md.00.part",
+      "inspection.md.01.part",
+      "inspection.md.02.part"
+    ]
+  },
+  {
+    "key": "assemble.mjs",
+    "dest": "scripts/assemble-acquisition-os.mjs",
+    "parts": [
+      "assemble.mjs.00.part"
+    ]
+  }
+]
