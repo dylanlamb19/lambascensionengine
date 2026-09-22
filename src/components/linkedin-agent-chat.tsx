@@ -104,6 +104,31 @@ export function LinkedInAgentChat() {
     }
   }
 
+  async function queueEnrichNeedsContact() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await createLinkedInAgentOrderFn({
+        data: {
+          kind: "enrich",
+          payload: { focus: "NEEDS_CONTACT_INFO", soft_cap: true },
+          note: "Enrich contacts for Needs Contact Info",
+        },
+      });
+      await postLinkedInAgentMessageFn({
+        data: {
+          role: "system",
+          body: "Queued enrich for Needs Contact Info. Soft-capped — no invented emails.",
+        },
+      });
+      await refresh();
+    } catch {
+      setErr("Could not queue enrich order.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function queueOutreachDraft() {
     if (busy) return;
     setBusy(true);
@@ -185,6 +210,9 @@ export function LinkedInAgentChat() {
           <div className="la-li-quick">
             <button type="button" className="la-btn la-btn-ghost" disabled={busy} onClick={() => void queueFill()}>
               Fill high-ticket leads
+            </button>
+            <button type="button" className="la-btn la-btn-ghost" disabled={busy} onClick={() => void queueEnrichNeedsContact()}>
+              Enrich Needs Contact Info
             </button>
             <button type="button" className="la-btn la-btn-ghost" disabled={busy} onClick={() => void queueOutreachDraft()}>
               Queue LinkedIn drafts
