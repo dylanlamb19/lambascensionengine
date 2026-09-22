@@ -17,6 +17,7 @@ export type IntentName =
   | "NAVIGATE_SETTINGS"
   | "NAVIGATE_CALENDAR"
   | "NAVIGATE_HEALTH"
+  | "NAVIGATE_CAMPAIGNS"
   | "GET_SYSTEM_HEALTH"
   | "CALENDAR_TODAY"
   | "CALENDAR_NEXT"
@@ -32,6 +33,9 @@ export type IntentName =
   | "FIND_CLIENTS"
   | "FILTER_PROSPECTS"
   | "CONTACT_ELIGIBLE_PROSPECTS"
+  | "RUN_EMAIL_CAMPAIGN"
+  | "PAUSE_EMAIL_CAMPAIGN"
+  | "CAMPAIGN_STATUS"
   | "RESEARCH_FURTHER"
   | "FIND_CONTACT"
   | "OPEN_WEBSITE"
@@ -86,8 +90,8 @@ export type VoiceContext = {
   companies: { uid: string; name: string; score?: number }[];
 };
 
-export const HIGH_INTENTS: IntentName[] = ["SEND_EMAIL", "SCHEDULE_CALL"];
-export const MEDIUM_INTENTS: IntentName[] = ["APPROVE_PROSPECT", "SKIP_PROSPECT", "STOP_FOLLOWUPS"];
+export const HIGH_INTENTS: IntentName[] = ["SEND_EMAIL", "SCHEDULE_CALL", "RUN_EMAIL_CAMPAIGN"];
+export const MEDIUM_INTENTS: IntentName[] = ["APPROVE_PROSPECT", "SKIP_PROSPECT", "STOP_FOLLOWUPS", "PAUSE_EMAIL_CAMPAIGN"];
 
 /** Screens Ara is allowed to open. Same names Owner Mode uses. */
-export type OwnerView = "home" | "add" | "find" | "pipe" | "detail" | "outreach" | "call" | "prep" | "settings" | "calendar" | "health";
+export type OwnerView = "home" | "add" | "find" | "pipe" | "detail" | "outreach" | "call" | "prep" | "settings" | "calendar" | "health" | "campaigns";
