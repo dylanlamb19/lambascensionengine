@@ -1,0 +1,47 @@
+name: Assemble email-campaigns-os bundle
+on:
+  push:
+    branches: [email-campaigns-os]
+    paths:
+      - "build-assets/email-campaigns/**"
+      - ".github/workflows/assemble-email-campaigns.yml"
+  workflow_dispatch:
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: email-campaigns-os
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assemble and commit campaign files
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import base64, hashlib, json, pathlib, zlib
+          root = pathlib.Path("build-assets/email-campaigns")
+          meta = json.loads((root / "meta.json").read_text())
+          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
+          assert len(parts) == meta["parts"]
+          blob = base64.b64decode("".join(parts))
+          digest = hashlib.sha256(blob).hexdigest()
+          assert digest == meta["sha256"], (digest, meta["sha256"])
+          raw = zlib.decompress(blob)
+          bundle = json.loads(raw.decode("utf-8"))
+          for path, content in bundle.items():
+              p = pathlib.Path(path)
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(content)
+              print("wrote", path, len(content))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/campaigns src/lib/mail/live.server.ts src/components/email-campaigns-panel.tsx src/lib/voice/types.ts src/lib/voice/tools.ts src/lib/voice/desk-actions.ts src/components/owner-desk.tsx
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "feat(campaigns): assemble Email Campaigns OS (server, worker, Ara, Owner Desk)"
+            git push origin HEAD:email-campaigns-os
+          fi

@@ -1,0 +1,21 @@
+{
+  "parts": 16,
+  "sha256": "9e3f8b504f9f27ce51041fe06a0e700fdfdb4df61a8f326a5e5a96429731b32a",
+  "raw_bytes": 433537,
+  "files": [
+    "src/lib/campaigns/types.ts",
+    "src/lib/campaigns/merge.ts",
+    "src/lib/campaigns/membership.ts",
+    "src/lib/campaigns/sql.server.ts",
+    "src/lib/campaigns/service.server.ts",
+    "src/lib/campaigns/worker.server.ts",
+    "src/lib/campaigns/actions.ts",
+    "src/lib/campaigns/campaigns.test.ts",
+    "src/lib/mail/live.server.ts",
+    "src/components/email-campaigns-panel.tsx",
+    "src/lib/voice/types.ts",
+    "src/lib/voice/tools.ts",
+    "src/lib/voice/desk-actions.ts",
+    "src/components/owner-desk.tsx"
+  ]
+}
