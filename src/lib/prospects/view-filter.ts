@@ -8,10 +8,12 @@ import { fitHeadline, websiteResearchState, type FitHeadline } from "./qualify.t
 import { listingPhone, namedPeople, reachKind, usefulEmail, verifiedWebsite, type ReachKind } from "./reach.ts";
 import type { Prospect } from "../review-brief.ts";
 import type { LastDiscovery } from "./last-discovery.ts";
+import { matchesQueue, type PipelineQueue } from "./pipeline-queues.ts";
 
 export const FIT_FILTER = ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] as const;
 export const RESEARCH_FILTER = ["done", "unavailable", "not_started"] as const;
-export const REACH_FILTER = ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED"] as const;
+export const REACH_FILTER = ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED", "SUPPRESSED"] as const;
+export const QUEUE_FILTER = ["ACTIVE_PIPELINE", "NEEDS_CONTACT_INFORMATION", "NEEDS_RESEARCH", "NEEDS_DYLAN", "ARCHIVE_NOT_PURSUING", "SUPPRESSED"] as const;
 export const SORT_FILTER = ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] as const;
 
 export type ProspectViewFilter = {
@@ -36,6 +38,8 @@ export type ProspectViewFilter = {
   sort?: (typeof SORT_FILTER)[number];
   limit?: number;
   replace?: boolean;
+  /** Acquisition OS derived queue (Part 2). */
+  queue?: (typeof QUEUE_FILTER)[number];
 };
 
 export type FilterableProspect = {
@@ -74,7 +78,7 @@ const ALLOWED_KEYS = new Set([
   "hasPhone", "hasEmail", "hasWebsite", "hasDecisionMaker",
   "source", "excludeTest", "excludeDemo", "addedAfter",
   "minReviews", "minRating", "prospectUids", "lastDiscovery",
-  "sort", "limit", "replace",
+  "sort", "limit", "replace", "queue",
 ]);
 
 export function isFilterEmpty(f: ProspectViewFilter | null | undefined): boolean {
@@ -212,6 +216,8 @@ export function validateProspectFilter(raw: unknown): { filter: ProspectViewFilt
   if (limit != null && Number.isFinite(limit)) filter.limit = limit;
   const replace = asBool(input.replace);
   if (replace !== undefined) filter.replace = replace;
+  const queue = pickEnum(input.queue, QUEUE_FILTER)?.[0];
+  if (queue) filter.queue = queue;
   return { filter, unknown };
 }
 
@@ -241,7 +247,7 @@ const SEMANTIC_KEYS: (keyof ProspectViewFilter)[] = [
   "vertical", "city", "fit", "research", "reach", "stage",
   "hasPhone", "hasEmail", "hasWebsite", "hasDecisionMaker",
   "source", "excludeTest", "excludeDemo", "addedAfter",
-  "minReviews", "minRating", "prospectUids",
+  "minReviews", "minRating", "prospectUids", "queue",
 ];
 
 function semanticCount(f: ProspectViewFilter): number {
@@ -393,6 +399,9 @@ function matches(p: FilterableProspect, f: ProspectViewFilter, last: LastDiscove
   }
   if (f.minReviews != null && p.reviewCount < f.minReviews) return false;
   if (f.minRating != null && p.rating < f.minRating) return false;
+  if (f.queue) {
+    if (!matchesQueue(p, f.queue as PipelineQueue)) return false;
+  }
   return true;
 }
 
@@ -405,6 +414,7 @@ const ATTN_RANK: Record<ReachKind, number> = {
   NEEDS_RESEARCH: 0,
   NEEDS_CONTACT_INFO: 1,
   BLOCKED: 2,
+  SUPPRESSED: 2,
   READY_TO_CONTACT: 3,
 };
 
@@ -445,7 +455,7 @@ export function filterChips(f: ProspectViewFilter, last: LastDiscovery | null = 
     chips.push(r === "not_started" ? "Needs research" : r === "unavailable" ? "Website research unavailable" : "Researched");
   }
   for (const r of f.reach || []) {
-    chips.push(r === "NEEDS_CONTACT_INFO" ? "Needs Contact Info" : r === "READY_TO_CONTACT" ? "Ready to contact" : r === "NEEDS_RESEARCH" ? "Needs research" : "Blocked");
+    chips.push(r === "NEEDS_CONTACT_INFO" ? "Needs Contact Information" : r === "READY_TO_CONTACT" ? "Ready to contact" : r === "NEEDS_RESEARCH" ? "Needs research" : r === "SUPPRESSED" ? "Suppressed" : "Blocked");
   }
   if (f.hasPhone === true) chips.push("Has phone");
   if (f.hasPhone === false) chips.push("No phone");
@@ -463,6 +473,12 @@ export function filterChips(f: ProspectViewFilter, last: LastDiscovery | null = 
   if (f.sort === "newest") chips.push("Newest first");
   if (f.sort === "most_reviewed") chips.push("Most reviewed first");
   if (f.sort === "needs_attention") chips.push("Needs attention first");
+  if (f.queue === "ACTIVE_PIPELINE") chips.push("Active Pipeline");
+  if (f.queue === "NEEDS_CONTACT_INFORMATION") chips.push("Needs Contact Information");
+  if (f.queue === "NEEDS_RESEARCH") chips.push("Needs Research");
+  if (f.queue === "NEEDS_DYLAN") chips.push("Needs Dylan");
+  if (f.queue === "ARCHIVE_NOT_PURSUING") chips.push("Archive / Not Pursuing");
+  if (f.queue === "SUPPRESSED") chips.push("Suppressed");
   return [...new Set(chips)];
 }
 
@@ -559,6 +575,9 @@ export function parseSpokenFilter(raw: string): SpokenFilterResult {
   if (/\bneed(s|ing)? contact( info| information)?|missing contact|no contact info\b/.test(t)) {
     filter.reach = ["NEEDS_CONTACT_INFO"];
   }
+  if (/\b(active pipeline|show (me )?active)\b/.test(t)) filter.queue = "ACTIVE_PIPELINE";
+  if (/\bneeds dylan\b/.test(t)) filter.queue = "NEEDS_DYLAN";
+  if (/\b(needs contact information queue|contact info backlog)\b/.test(t)) filter.queue = "NEEDS_CONTACT_INFORMATION";
   if (/\bphone(?: number)? but no (verified )?email\b/.test(t)) {
     filter.hasPhone = true;
     filter.hasEmail = false;
@@ -639,6 +658,7 @@ export function toolArgsToFilter(args: Record<string, unknown>): { filter: Prosp
     sort: args.sort,
     limit: args.limit,
     replace: args.replace ?? args.clear,
+    queue: args.queue,
   };
   if (args.clear === true) mapped.replace = true;
   if (args.compose === false) mapped.replace = true;

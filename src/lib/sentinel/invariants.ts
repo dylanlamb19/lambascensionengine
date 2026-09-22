@@ -1,5 +1,6 @@
 import { makeFinding } from "./ledger.ts";
 import type { InvariantSnapshot, SentinelFinding } from "./types.ts";
+import { evaluateContactabilityInvariants } from "./contactability-check.ts";
 
 export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
   const out: SentinelFinding[] = [];
@@ -91,6 +92,9 @@ export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
     ));
   }
 
+  // Acquisition OS contactability checks require prospect payloads; caller may pass via snap.prospects when present.
+  const prospects = (snap as InvariantSnapshot & { prospects?: import("../review-brief.ts").Prospect[] }).prospects;
+  if (prospects?.length) out.push(...evaluateContactabilityInvariants(prospects));
   return out;
 }
 

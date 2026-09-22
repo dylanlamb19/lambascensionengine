@@ -36,6 +36,12 @@ import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/ide
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
 import { contactSummary, ownerQualify } from "@/lib/prospects/qualify";
 import { applyProspectFilter, filterChips, filterSummary, fromProspect, isFilterEmpty, type ProspectViewFilter } from "@/lib/prospects/view-filter";
+import {
+  defaultActivePipelineFilter,
+  filterForQueue,
+  QUEUE_LABEL,
+  type PipelineQueue,
+} from "@/lib/prospects/pipeline-queues";
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { generateOutreach } from "@/lib/outreach/generate";
@@ -280,7 +286,7 @@ export function OwnerDesk() {
   const [findLimit, setFindLimit] = useState(8);
   const [findMore, setFindMore] = useState(false);
   const [lastDiscovery, setLastDiscovery] = useState<LastDiscovery | null>(() => loadLastDiscovery());
-  const [prospectFilter, setProspectFilter] = useState<ProspectViewFilter>({});
+  const [prospectFilter, setProspectFilter] = useState<ProspectViewFilter>(() => defaultActivePipelineFilter());
   const [radiusMiles, setRadiusMiles] = useState(25);
   const [google, setGoogle] = useState({ gmail: "unknown" as ConnectionHealth, calendar: "unknown" as ConnectionHealth, configured: false, gmailEmail: "", calendarEmail: "", error: "" });
   const [integration, setIntegration] = useState<IntegrationStatus | null>(null);
@@ -3557,6 +3563,26 @@ export function OwnerDesk() {
           <section className="la-card">
             <p className="la-kicker">Pipeline</p>
             <h2 className="font-display mb-2 mt-2 text-2xl">Pipeline</h2>
+            <div className="mb-3 flex flex-wrap gap-2" data-acq-queues="1">
+              {([
+                "ACTIVE_PIPELINE",
+                "NEEDS_DYLAN",
+                "NEEDS_CONTACT_INFORMATION",
+                "NEEDS_RESEARCH",
+                "SUPPRESSED",
+                "ARCHIVE_NOT_PURSUING",
+              ] as PipelineQueue[]).map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  className="la-btn la-btn-quiet"
+                  data-on={(prospectFilter as { queue?: string }).queue === q ? "1" : "0"}
+                  onClick={() => dispatchAction({ name: "FILTER_PROSPECTS", filter: filterForQueue(q) })}
+                >
+                  {QUEUE_LABEL[q]}
+                </button>
+              ))}
+            </div>
             <p className="mb-3 text-sm text-muted">{filterSummary(visibleRows.length, prospectFilter, lastDiscovery)}</p>
             {!isFilterEmpty(prospectFilter) ? (
               <div className="mb-4 flex flex-wrap items-center gap-2">

@@ -7,6 +7,7 @@ import {
   namedPeople,
   prospectActions,
   reachKind,
+  reachLabel,
   taskForProspect,
   verifiedWebsite,
   whySurfaced,
@@ -34,7 +35,7 @@ test("Firefighter Roofing is not a dead end after website research fails", () =>
   assert.ok(ids.includes("skip"));
   const task = taskForProspect(p);
   assert.match(task.title, /needs a contact/i);
-  assert.match(whySurfaced(p), /blocked|didn’t finish/i);
+  assert.match(whySurfaced(p), /blocked|didn.t finish/i);
 });
 
 test("prospect with website + no phone still gets Open Website and Find Contact", () => {
@@ -48,10 +49,13 @@ test("prospect with website + no phone still gets Open Website and Find Contact"
   assert.equal(ids.includes("call"), false);
 });
 
-test("Do Not Contact is blocked and does not offer Call/Find Contact", () => {
-  const p = { ...byName("Firefighter Roofing"), stage: "Do Not Contact", suppressed: true };
-  assert.equal(reachKind(p), "BLOCKED");
-  assert.deepEqual(prospectActions(p).map((a) => a.id), ["learn_more"]);
+test("Do Not Contact is blocked; suppressed is SUPPRESSED", () => {
+  const blocked = { ...byName("Firefighter Roofing"), stage: "Do Not Contact", suppressed: false };
+  assert.equal(reachKind(blocked), "BLOCKED");
+  const suppressed = { ...byName("Firefighter Roofing"), stage: "New", suppressed: true };
+  assert.equal(reachKind(suppressed), "SUPPRESSED");
+  assert.equal(reachLabel("SUPPRESSED"), "SUPPRESSED");
+  assert.deepEqual(prospectActions(suppressed).map((a) => a.id), ["learn_more"]);
 });
 
 test("named person + verified email is ready to contact", () => {
@@ -75,6 +79,25 @@ test("named person + verified email is ready to contact", () => {
   const email = contactFields(p).find((f) => f.label === "Direct email" || f.label === "Business email");
   assert.equal(email?.status, "VERIFIED");
   assert.equal(namedPeople(p)[0]?.name, "John Smith");
+});
+
+test("named person + phone WITHOUT email is Needs Contact Information (not Ready)", () => {
+  const p = {
+    ...byName("Firefighter Roofing"),
+    research_status: "complete",
+    contacts: [{
+      name: "John Smith",
+      title: "Owner",
+      email: "",
+      email_status: "none" as const,
+      phone: "(817) 555-1212",
+      profile_url: "",
+      source: "listing",
+      last_verified: "",
+    }],
+  };
+  assert.equal(reachKind(p), "NEEDS_CONTACT_INFO");
+  assert.equal(reachLabel("NEEDS_CONTACT_INFO"), "NEEDS CONTACT INFORMATION");
 });
 
 test("contact fields never invent an email", () => {
