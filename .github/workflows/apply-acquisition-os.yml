@@ -4,10 +4,9 @@ on:
   push:
     branches: [acquisition-os-milestone]
     paths:
+      - "acq-bundle-parts/**"
+      - "scripts/assemble-acquisition-os.mjs"
       - "scripts/apply-acquisition-os-patches.mjs"
-      - "src/lib/prospects/contactability.ts"
-      - "src/lib/prospects/pipeline-queues.ts"
-      - "src/lib/prospects/reach.ts"
       - ".github/workflows/apply-acquisition-os.yml"
 permissions:
   contents: write
@@ -18,8 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: acquisition-os-milestone
-      - name: Apply patches
-        run: node scripts/apply-acquisition-os-patches.mjs
+      - name: Assemble bundled files + apply patches
+        run: node scripts/assemble-acquisition-os.mjs
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
@@ -28,6 +27,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No patch changes"
           else
-            git commit -m "chore(acq): apply Acquisition OS view-filter/owner-desk/sentinel/tool patches"
+            git commit -m "feat(acq): assemble Acquisition OS contactability/queues + wire patches"
             git push
           fi
