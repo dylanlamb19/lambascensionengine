@@ -1,4 +1,5 @@
 import type { Finding, Prospect } from "./review-brief";
+import { LINKEDIN_DENTAL_BATCH_2026_09_22 } from "./linkedin-batch-2026-09-22";
 
 const ALIGN_FINDINGS: Finding[] = [
   { id: "resolves", result: "HTTP 200", status: "VERIFIED", source: "HTTP GET homepage" },
@@ -22,7 +23,7 @@ const ALIGN_FINDINGS: Finding[] = [
   { id: "pagespeed_mobile", result: "PageSpeed quota exceeded", status: "ERROR", source: "Google PageSpeed Insights" },
 ];
 
-export const SEED: Prospect[] = [
+const BASE_SEED: Prospect[] = [
   {
     id: 1, name: "Firefighter Roofing", vertical: "Roofing", city: "North Richland Hills",
     website: "https://firefighterroofing.com/", review_count: 400, google_rating: "4.9",
@@ -84,3 +85,8 @@ export const SEED: Prospect[] = [
     ],
   },
 ];
+
+/** Demo seed plus LinkedIn Sales Navigator dental batch (2026-09-22). */
+export const SEED: Prospect[] = [...BASE_SEED, ...LINKEDIN_DENTAL_BATCH_2026_09_22];
+
+export { LINKEDIN_DENTAL_BATCH_2026_09_22 };
