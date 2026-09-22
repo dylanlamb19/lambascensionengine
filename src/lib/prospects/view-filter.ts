@@ -414,7 +414,7 @@ export function applyProspectFilter(
   last: LastDiscovery | null = null,
 ): FilterableProspect[] {
   const hit = rows.filter((p) => matches(p, filter, last));
-  const sort = filter.sort || "score";
+  const sort = filter.sort || "needs_attention";
   const ordered = [...hit].sort((a, b) => {
     if (sort === "best_fit") return FIT_RANK[a.fitHeadline] - FIT_RANK[b.fitHeadline] || b.score - a.score;
     if (sort === "newest") return (Date.parse(b.addedAt) || 0) - (Date.parse(a.addedAt) || 0);
