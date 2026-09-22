@@ -2,76 +2,110 @@
   {
     "key": "contactability.ts",
     "dest": "src/lib/prospects/contactability.ts",
+    "encoding": "base64",
     "parts": [
-      "contactability.ts.00.part",
-      "contactability.ts.01.part",
-      "contactability.ts.02.part",
-      "contactability.ts.03.part"
+      "contactability.ts.00.b64p",
+      "contactability.ts.01.b64p",
+      "contactability.ts.02.b64p",
+      "contactability.ts.03.b64p",
+      "contactability.ts.04.b64p",
+      "contactability.ts.05.b64p",
+      "contactability.ts.06.b64p",
+      "contactability.ts.07.b64p"
     ]
   },
   {
     "key": "pipeline-queues.ts",
     "dest": "src/lib/prospects/pipeline-queues.ts",
+    "encoding": "base64",
     "parts": [
-      "pipeline-queues.ts.00.part",
-      "pipeline-queues.ts.01.part",
-      "pipeline-queues.ts.02.part"
+      "pipeline-queues.ts.00.b64p",
+      "pipeline-queues.ts.01.b64p",
+      "pipeline-queues.ts.02.b64p",
+      "pipeline-queues.ts.03.b64p",
+      "pipeline-queues.ts.04.b64p"
     ]
   },
   {
     "key": "eligible.server.ts",
     "dest": "src/lib/prospects/eligible.server.ts",
+    "encoding": "base64",
     "parts": [
-      "eligible.server.ts.00.part",
-      "eligible.server.ts.01.part"
+      "eligible.server.ts.00.b64p",
+      "eligible.server.ts.01.b64p",
+      "eligible.server.ts.02.b64p",
+      "eligible.server.ts.03.b64p"
     ]
   },
   {
     "key": "reach.ts",
     "dest": "src/lib/prospects/reach.ts",
+    "encoding": "base64",
     "parts": [
-      "reach.ts.00.part",
-      "reach.ts.01.part",
-      "reach.ts.02.part",
-      "reach.ts.03.part",
-      "reach.ts.04.part",
-      "reach.ts.05.part"
+      "reach.ts.00.b64p",
+      "reach.ts.01.b64p",
+      "reach.ts.02.b64p",
+      "reach.ts.03.b64p",
+      "reach.ts.04.b64p",
+      "reach.ts.05.b64p",
+      "reach.ts.06.b64p",
+      "reach.ts.07.b64p",
+      "reach.ts.08.b64p",
+      "reach.ts.09.b64p",
+      "reach.ts.10.b64p",
+      "reach.ts.11.b64p"
     ]
   },
   {
     "key": "reach.test.ts",
     "dest": "src/lib/prospects/reach.test.ts",
+    "encoding": "base64",
     "parts": [
-      "reach.test.ts.00.part",
-      "reach.test.ts.01.part"
+      "reach.test.ts.00.b64p",
+      "reach.test.ts.01.b64p",
+      "reach.test.ts.02.b64p",
+      "reach.test.ts.03.b64p"
     ]
   },
   {
     "key": "patches.mjs",
     "dest": "scripts/apply-acquisition-os-patches.mjs",
+    "encoding": "base64",
     "parts": [
-      "patches.mjs.00.part",
-      "patches.mjs.01.part",
-      "patches.mjs.02.part",
-      "patches.mjs.03.part",
-      "patches.mjs.04.part",
-      "patches.mjs.05.part"
+      "patches.mjs.00.b64p",
+      "patches.mjs.01.b64p",
+      "patches.mjs.02.b64p",
+      "patches.mjs.03.b64p",
+      "patches.mjs.04.b64p",
+      "patches.mjs.05.b64p",
+      "patches.mjs.06.b64p",
+      "patches.mjs.07.b64p",
+      "patches.mjs.08.b64p",
+      "patches.mjs.09.b64p",
+      "patches.mjs.10.b64p",
+      "patches.mjs.11.b64p"
     ]
   },
   {
     "key": "inspection.md",
     "dest": "ACQUISITION-OS-INSPECTION.md",
+    "encoding": "base64",
     "parts": [
-      "inspection.md.00.part",
-      "inspection.md.01.part",
-      "inspection.md.02.part"
+      "inspection.md.00.b64p",
+      "inspection.md.01.b64p",
+      "inspection.md.02.b64p",
+      "inspection.md.03.b64p",
+      "inspection.md.04.b64p",
+      "inspection.md.05.b64p"
     ]
   },
   {
     "key": "assemble.mjs",
     "dest": "scripts/assemble-acquisition-os.mjs",
+    "encoding": "base64",
     "parts": [
-      "assemble.mjs.00.part"
+      "assemble.mjs.00.b64p",
+      "assemble.mjs.01.b64p"
     ]
   }
 ]
