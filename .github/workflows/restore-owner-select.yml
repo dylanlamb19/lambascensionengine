@@ -1,6 +1,11 @@
 name: Restore owner-desk native Find select
 on:
   workflow_dispatch:
+  push:
+    branches: [linkedin-agent-in-app]
+    paths:
+      - "build-assets/RESTORE_OWNER_SELECT_TRIGGER"
+      - ".github/workflows/restore-owner-select.yml"
 jobs:
   restore:
     runs-on: ubuntu-latest
@@ -14,6 +19,11 @@ jobs:
       - name: Restore full owner-desk from 4e3de1ef and wire FindVerticalField
         run: |
           set -euo pipefail
+          # idempotent: skip if already fixed and full-size
+          if [ -f src/components/owner-desk.tsx ] && grep -q FindVerticalField src/components/owner-desk.tsx && [ "$(wc -c < src/components/owner-desk.tsx)" -gt 100000 ]; then
+            echo "Already restored; nothing to do"
+            exit 0
+          fi
           git show 4e3de1ef2504854169513d7aa0d1284bc724bc88:src/components/owner-desk.tsx > src/components/owner-desk.tsx
           python3 <<'PY'
           from pathlib import Path
@@ -51,5 +61,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/components/owner-desk.tsx
-          git commit -m "fix(ux): Find Clients vertical uses native select on mobile"
+          git diff --cached --quiet || git commit -m "fix(ux): Find Clients vertical uses native select on mobile"
           git push origin HEAD:linkedin-agent-in-app
