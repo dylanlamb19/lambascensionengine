@@ -1,0 +1,46 @@
+name: Restore PR2 owner-desk resolved
+on:
+  workflow_dispatch:
+  push:
+    branches: [linkedin-agent-in-app]
+    paths:
+      - 'mcp-push/find-select-owner-pr2/**'
+      - '.github/workflows/restore-pr2-owner.yml'
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: linkedin-agent-in-app
+          fetch-depth: 0
+      - name: Assemble resolved owner-desk
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import base64, hashlib, json, zlib
+          from pathlib import Path
+          prefix = Path("mcp-push/find-select-owner-pr2")
+          meta = json.loads((prefix / "meta.json").read_text())
+          blob = "".join((prefix / f"part{i}.b64").read_text().replace("\n", "").strip() for i in range(meta["parts"]))
+          raw = zlib.decompress(base64.b64decode(blob))
+          assert hashlib.sha256(raw).hexdigest() == meta["sha256"]
+          assert b"LinkedInAgentChat" in raw and b"NextMoves" in raw and b"FindVerticalField" in raw
+          assert b"FindPresets" in raw and b"runHighTicketFill" in raw
+          Path(meta["target"]).write_bytes(raw)
+          print("owner-desk", len(raw))
+          vf = Path("src/lib/prospects/view-filter.ts")
+          if vf.exists():
+            t = vf.read_text().replace('filter.sort || "score"', 'filter.sort || "needs_attention"')
+            vf.write_text(t)
+          PY
+          git fetch origin main || true
+          test -f src/components/find-vertical-field.tsx || git show origin/main:src/components/find-vertical-field.tsx > src/components/find-vertical-field.tsx || true
+          grep -q linkedin_agent_order src/lib/voice/tools.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/owner-desk.tsx src/components/find-vertical-field.tsx src/lib/prospects/view-filter.ts
+          git diff --cached --quiet || git commit -m "fix(pr2): restore owner-desk with LinkedIn + FindVerticalField + NextMoves"
+          git push origin HEAD:linkedin-agent-in-app
