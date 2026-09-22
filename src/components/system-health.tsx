@@ -23,15 +23,25 @@ function shortSha(sha: string): string {
   return (sha || "").slice(0, 7) || "unknown";
 }
 
+function isBookingMismatch(errorCode: string | undefined): boolean {
+  const code = (errorCode || "").toUpperCase();
+  return code.includes("PIPELINE_STATE_MISMATCH") || (code.includes("BOOKING") && code.includes("MISMATCH"));
+}
+
 export function SystemHealthAlert({
   snapshot,
   onOpen,
+  onRepair,
+  repairing,
 }: {
   snapshot: SentinelSnapshot | null;
   onOpen: () => void;
+  onRepair?: () => void;
+  repairing?: boolean;
 }) {
   const alert = snapshot?.alerts[0];
   if (!snapshot || !alert) return null;
+  const showRepair = Boolean(onRepair) && isBookingMismatch(alert.error_code);
   return (
     <div className="la-ribbon la-ribbon-bad mb-3">
       <span>
@@ -41,7 +51,14 @@ export function SystemHealthAlert({
           Production SHA {shortSha(alert.production_sha)}. Sentinel did not change production.
         </span>
       </span>
-      <button type="button" className="la-btn la-btn-quiet" onClick={onOpen}>Open System Health</button>
+      <span className="flex flex-wrap gap-2">
+        {showRepair ? (
+          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing)} onClick={onRepair}>
+            {repairing ? "Fixing…" : "Fix booking mismatch"}
+          </button>
+        ) : null}
+        <button type="button" className="la-btn la-btn-quiet" onClick={onOpen}>Open System Health</button>
+      </span>
     </div>
   );
 }
@@ -68,15 +85,22 @@ export function SystemHealthPage({
   running,
   onBack,
   onRun,
+  onRepair,
+  repairing,
 }: {
   snapshot: SentinelSnapshot | null;
   running: boolean;
   onBack: () => void;
   onRun: () => void;
+  onRepair?: () => void;
+  repairing?: boolean;
 }) {
   const [advanced, setAdvanced] = useState(false);
   const snap = snapshot;
   const health = canonicalHealth({ snapshot: snap });
+  const mismatchOpen = Boolean(
+    onRepair && (snap?.alerts || []).some((a) => isBookingMismatch(a.error_code)),
+  );
   return (
     <section className="la-card">
       <p className="la-kicker">Lascengine Sentinel</p>
@@ -121,6 +145,11 @@ export function SystemHealthPage({
         <button type="button" className="la-btn la-btn-primary" disabled={running} onClick={onRun}>
           {running ? "Checking…" : "Check now"}
         </button>
+        {mismatchOpen ? (
+          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing) || running} onClick={onRepair}>
+            {repairing ? "Fixing…" : "Fix booking mismatch"}
+          </button>
+        ) : null}
         <button type="button" className="la-btn la-btn-ghost" onClick={onBack}>Back</button>
         <button type="button" className="la-btn la-btn-quiet" onClick={() => setAdvanced((v) => !v)}>
           {advanced ? "Hide details" : "Advanced details"}

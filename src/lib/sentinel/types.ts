@@ -116,6 +116,7 @@ export type InvariantSnapshot = {
   testInRevenue: { uid: string }[];
   testModeLeak: { messageId: string; recipient: string }[];
   duplicateActivity: { action: string; detail: string; count: number }[];
+  prospects?: import("../review-brief.ts").Prospect[];
 };
 
 export type LiveProbeInput = {

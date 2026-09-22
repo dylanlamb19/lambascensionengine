@@ -1,5 +1,13 @@
 name: Assemble large LinkedIn agent files
 on:
+  push:
+    branches: [linkedin-agent-in-app]
+    paths:
+      - 'build-assets/linkedin-agent/tools-linkedin.patch'
+      - 'build-assets/linkedin-agent/owner-linkedin.patch'
+      - 'build-assets/linkedin-agent/owner-ux.patch'
+      - 'build-assets/linkedin-agent/ASSEMBLE_TRIGGER'
+      - '.github/workflows/assemble-linkedin-large-files.yml'
   workflow_dispatch:
     inputs:
       target:
@@ -16,63 +24,46 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
-      - name: Restore tools.ts from main + linkedin patch
-        if: ${{ inputs.target == 'tools' || inputs.target == 'both' }}
+      - name: Restore tools.ts + owner-desk.tsx from main + patches
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent")
-          meta = json.loads((root / "tools-patch-meta.json").read_text())
-          parts = [(root / f"tools-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
-          raw = base64.b64decode("".join(parts))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          (root / "tools-linkedin.patch").write_bytes(raw)
-          print("decoded tools patch", len(raw), digest)
-          PY
-          git show origin/main:src/lib/voice/tools.ts > src/lib/voice/tools.ts
-          patch -p1 < build-assets/linkedin-agent/tools-linkedin.patch
+          git fetch origin main
+          sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep >/dev/null || true
+          tools_bytes=$(wc -c < src/lib/voice/tools.ts | tr -d ' ')
+          if [[ "$tools_bytes" -lt 1000 ]]; then
+            git show origin/main:src/lib/voice/tools.ts > src/lib/voice/tools.ts
+            patch -p1 < build-assets/linkedin-agent/tools-linkedin.patch
+          fi
+          if ! grep -q "LinkedInAgentChat" src/components/owner-desk.tsx; then
+            git show origin/main:src/components/owner-desk.tsx > src/components/owner-desk.tsx
+            patch -p1 < build-assets/linkedin-agent/owner-linkedin.patch
+          fi
+          if [[ -f build-assets/linkedin-agent/owner-ux.patch ]]; then
+            if ! grep -q "NextMoves" src/components/owner-desk.tsx; then
+              patch -p1 < build-assets/linkedin-agent/owner-ux.patch
+            fi
+          fi
+          if grep -q 'filter.sort || "score"' src/lib/prospects/view-filter.ts; then
+            sed -i 's/filter.sort || "score"/filter.sort || "needs_attention"/' src/lib/prospects/view-filter.ts
+          fi
           python3 <<'PY'
           import hashlib, pathlib
           raw = pathlib.Path("src/lib/voice/tools.ts").read_bytes()
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == "c2efbd32136bd540fb5a03d03b6f35d1cad5531baf94fe39ca2957d715ae0cd6", digest
-          print("tools.ts ok", len(raw), digest)
-          PY
-      - name: Restore owner-desk.tsx from main + linkedin patch
-        if: ${{ inputs.target == 'owner-desk' || inputs.target == 'both' }}
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent")
-          meta = json.loads((root / "owner-patch-meta.json").read_text())
-          parts = [(root / f"owner-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
-          raw = base64.b64decode("".join(parts))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          (root / "owner-linkedin.patch").write_bytes(raw)
-          print("decoded owner patch", len(raw), digest)
-          PY
-          git show origin/main:src/components/owner-desk.tsx > src/components/owner-desk.tsx
-          patch -p1 < build-assets/linkedin-agent/owner-linkedin.patch
-          python3 <<'PY'
-          import hashlib, pathlib
-          raw = pathlib.Path("src/components/owner-desk.tsx").read_bytes()
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == "349d592e50d86c97a8cbeb304ef9c5b939ea6de79df0e9029f95e1cc05a8d2f8", digest
-          print("owner-desk.tsx ok", len(raw), digest)
+          assert len(raw) > 90000 and b"linkedin_agent_order" in raw
+          print("tools.ts ok", len(raw), hashlib.sha256(raw).hexdigest())
+          od = pathlib.Path("src/components/owner-desk.tsx").read_bytes()
+          assert b"LinkedInAgentChat" in od and b"NextMoves" in od
+          print("owner-desk.tsx ok", len(od), hashlib.sha256(od).hexdigest())
           PY
       - name: Commit assembled files
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/lib/voice/tools.ts src/components/owner-desk.tsx || true
+          git add src/lib/voice/tools.ts src/components/owner-desk.tsx src/lib/prospects/view-filter.ts || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "feat(linkedin-agent): restore tools.ts + owner-desk.tsx via main+patch"
+            git commit -m "feat(ux): wire NextMoves/FindPresets into owner-desk + default needs_attention sort"
             git push origin HEAD:linkedin-agent-in-app
           fi

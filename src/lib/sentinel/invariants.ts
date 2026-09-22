@@ -92,9 +92,7 @@ export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
     ));
   }
 
-  // Acquisition OS contactability checks require prospect payloads; caller may pass via snap.prospects when present.
-  const prospects = (snap as InvariantSnapshot & { prospects?: import("../review-brief.ts").Prospect[] }).prospects;
-  if (prospects?.length) out.push(...evaluateContactabilityInvariants(prospects));
+  if (snap.prospects?.length) out.push(...evaluateContactabilityInvariants(snap.prospects));
   return out;
 }
 

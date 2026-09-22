@@ -166,9 +166,15 @@ test("owner-provided email is usable but never labeled verified", () => {
 });
 
 test("DNC stays blocked even after an owner email", () => {
-  const p = { ...firefighter(), stage: "Do Not Contact", suppressed: true };
+  const p = { ...firefighter(), stage: "Do Not Contact", suppressed: false };
   const { prospect } = applyProspectInfoChanges(p, { businessEmail: "john@example.com" });
   assert.equal(reachKind(prospect), "BLOCKED");
+});
+
+test("suppressed stays suppressed even after an owner email", () => {
+  const p = { ...firefighter(), stage: "New", suppressed: true };
+  const { prospect } = applyProspectInfoChanges(p, { businessEmail: "john@example.com" });
+  assert.equal(reachKind(prospect), "SUPPRESSED");
 });
 
 test("notes stay owner notes, not public research claims", () => {

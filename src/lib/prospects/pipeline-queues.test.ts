@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prospect } from "../review-brief.ts";
-import { assignQueue, defaultActivePipelineFilter, filterForQueue, matchesQueue } from "./pipeline-queues.ts";
+import {
+  assignQueue,
+  defaultActivePipelineFilter,
+  filterForQueue,
+  matchesQueue,
+  needsDylan,
+} from "./pipeline-queues.ts";
 import { fromProspect } from "./view-filter.ts";
 
 function base(partial: Partial<Prospect> = {}): Prospect {
@@ -43,19 +49,26 @@ test("needs contact info goes to secondary queue", () => {
   assert.equal(matchesQueue(row, "ACTIVE_PIPELINE", p), false);
 });
 
-test("email-ready lands in active pipeline", () => {
+test("email-ready New lands in active pipeline, not Needs Dylan", () => {
   const p = base({
     contacts: [{ name: "Pat", title: "Owner", email: "pat@acme.example", email_status: "verified", profile_url: "", source: "x", last_verified: "" }],
   });
   assert.equal(assignQueue(p), "ACTIVE_PIPELINE");
+  assert.equal(needsDylan(p), false);
+  const row = fromProspect(p);
+  assert.equal(matchesQueue(row, "ACTIVE_PIPELINE", p), true);
+  assert.equal(matchesQueue(row, "NEEDS_DYLAN", p), false);
 });
 
-test("replied needs Dylan", () => {
+test("replied needs Dylan and still matches Active Pipeline", () => {
   const p = base({
     stage: "Replied",
     contacts: [{ name: "Pat", title: "Owner", email: "pat@acme.example", email_status: "verified", profile_url: "", source: "x", last_verified: "" }],
   });
   assert.equal(assignQueue(p), "NEEDS_DYLAN");
+  const row = fromProspect(p);
+  assert.equal(matchesQueue(row, "NEEDS_DYLAN", p), true);
+  assert.equal(matchesQueue(row, "ACTIVE_PIPELINE", p), true);
 });
 
 test("filterForQueue replace semantics", () => {

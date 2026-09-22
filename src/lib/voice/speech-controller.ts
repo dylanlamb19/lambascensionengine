@@ -10,7 +10,9 @@ export type SpeechSource =
   | "TASK"
   | "NAVIGATION"
   | "TOOL_RESULT"
-  | "STOP";
+  | "STOP"
+  | "CONFIRM"
+  | "LINKEDIN_ORDER";
 
 export type SpeechPriority = 1 | 2 | 3 | 4 | 5;
 
@@ -24,6 +26,8 @@ export const SOURCE_PRIORITY: Record<SpeechSource, SpeechPriority> = {
   TASK: 4,
   TOOL_RESULT: 4,
   NAVIGATION: 5,
+  CONFIRM: 2,
+  LINKEDIN_ORDER: 4,
 };
 
 export type SpeakOpts = {

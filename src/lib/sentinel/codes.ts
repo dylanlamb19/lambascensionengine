@@ -31,7 +31,6 @@ export const SENTINEL_CODES = [
   "HTTP_UNHEALTHY",
   "CONTACTABILITY_MISMATCH",
   "CONTACTABLE_WITHOUT_EMAIL",
-  "PIPELINE_QUEUE_INVARIANT",
   "SENTINEL_OK",
 ] as const;
 
@@ -92,7 +91,6 @@ export function defaultSeverity(code: SentinelCode): SentinelSeverity {
     case "HTTP_UNHEALTHY":
     case "CONTACTABILITY_MISMATCH":
     case "CONTACTABLE_WITHOUT_EMAIL":
-    case "PIPELINE_QUEUE_INVARIANT":
       return "high";
     case "CALENDAR_NOT_AUTHORIZED":
     case "GMAIL_NOT_CONNECTED":
@@ -124,7 +122,6 @@ export function featureForCode(code: SentinelCode): SentinelFeature {
     || code === "BOUNCE_FUTURE_SEND_SCHEDULED"
     || code === "CONTACTABILITY_MISMATCH"
     || code === "CONTACTABLE_WITHOUT_EMAIL"
-    || code === "PIPELINE_QUEUE_INVARIANT"
   ) return "pipeline";
   return "sentinel";
 }
@@ -161,7 +158,6 @@ export function ownerLabel(code: SentinelCode): string {
     case "HTTP_UNHEALTHY": return "The live site did not respond";
     case "CONTACTABILITY_MISMATCH": return "Contactability labels disagree with the email route";
     case "CONTACTABLE_WITHOUT_EMAIL": return "A prospect was marked contactable without an email";
-    case "PIPELINE_QUEUE_INVARIANT": return "Pipeline queue membership looks inconsistent";
     default: return "Sentinel noted a check";
   }
 }

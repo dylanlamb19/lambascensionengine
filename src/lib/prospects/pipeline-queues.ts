@@ -32,52 +32,29 @@ export const QUEUE_LABEL: Record<PipelineQueue, string> = {
   SUPPRESSED: "Suppressed",
 };
 
-/** Extended filter — queue is Acquisition OS Part 2 (derived, not SQL). */
-export type AcqProspectViewFilter = ProspectViewFilter & {
-  queue?: PipelineQueue;
-};
-
+/** Needs Dylan = replies, call prep, proposals, owner exceptions — not every contactable New. */
 const NEEDS_DYLAN_STAGES = new Set([
   "Replied",
   "Call Booked",
   "Proposal Sent",
   "Negotiation",
-  "Approved for Outreach",
-  "Ready for Review",
-  "Qualified",
 ]);
 
 export function needsDylan(p: Prospect | FilterableProspect): boolean {
-  const stage = "stage" in p ? p.stage : "";
-  if (NEEDS_DYLAN_STAGES.has(stage)) return true;
-  if ("reach" in p && p.reach === "READY_TO_CONTACT" && (stage === "New" || stage === "Qualified" || stage === "Approved for Outreach")) {
-    return true;
-  }
-  return false;
+  return NEEDS_DYLAN_STAGES.has(p.stage || "");
 }
 
 export function assignQueue(p: Prospect, opts?: ContactabilityOpts): PipelineQueue {
   const c = evaluateContactability(p, opts);
-  if (c.status === "SUPPRESSED") return "SUPPRESSED";
-  if (p.suppressed) return "SUPPRESSED";
-  if (isArchiveStage(p.stage || "") || c.status === "BLOCKED") {
-    if ((p.stage || "") === "Do Not Contact" || c.status === "BLOCKED") return "ARCHIVE_NOT_PURSUING";
-    if ((p.stage || "") === "Won" || (p.stage || "") === "Lost") return "ARCHIVE_NOT_PURSUING";
-  }
+  if (c.status === "SUPPRESSED" || p.suppressed) return "SUPPRESSED";
   if (p.is_demo || isTestWorkflowUid(p.uid)) return "ARCHIVE_NOT_PURSUING";
-
-  if (needsDylan(p) || isActivePipelineStage(p.stage || "")) return "NEEDS_DYLAN";
-
-  if (c.contactable || c.status === "CONTACTABLE") {
-    // Contactable first-touch sits in Active Pipeline (and Needs Dylan when awaiting send).
-    if (p.stage === "Approved for Outreach" || c.contactable) return "ACTIVE_PIPELINE";
+  if (isArchiveStage(p.stage || "") || c.status === "BLOCKED") return "ARCHIVE_NOT_PURSUING";
+  if (needsDylan(p)) return "NEEDS_DYLAN";
+  if (c.contactable || c.status === "CONTACTABLE" || isActivePipelineStage(p.stage || "")) {
     return "ACTIVE_PIPELINE";
   }
-
-  if (c.status === "NEEDS_RESEARCH") return "NEEDS_RESEARCH";
   if (c.status === "NEEDS_CONTACT_INFORMATION") return "NEEDS_CONTACT_INFORMATION";
-
-  if (isActivePipelineStage(p.stage || "")) return "ACTIVE_PIPELINE";
+  if (c.status === "NEEDS_RESEARCH") return "NEEDS_RESEARCH";
   return "NEEDS_RESEARCH";
 }
 
@@ -86,7 +63,7 @@ export function assignQueue(p: Prospect, opts?: ContactabilityOpts): PipelineQue
  * Hides TEST, DEMO, Needs Contact Info backlog, Needs Research backlog,
  * Suppressed, Not Pursuing / Archived — still reachable via secondary queues.
  */
-export function defaultActivePipelineFilter(): AcqProspectViewFilter {
+export function defaultActivePipelineFilter(): ProspectViewFilter {
   return {
     excludeTest: true,
     excludeDemo: true,
@@ -96,7 +73,7 @@ export function defaultActivePipelineFilter(): AcqProspectViewFilter {
   };
 }
 
-export function filterForQueue(queue: PipelineQueue): AcqProspectViewFilter {
+export function filterForQueue(queue: PipelineQueue): ProspectViewFilter {
   return {
     excludeTest: queue !== "ARCHIVE_NOT_PURSUING",
     excludeDemo: queue !== "ARCHIVE_NOT_PURSUING",
@@ -113,7 +90,7 @@ export function matchesQueue(
   opts?: ContactabilityOpts,
 ): boolean {
   if (queue === "SUPPRESSED") {
-    return row.reach === "SUPPRESSED" || row.stage === "Do Not Contact" || Boolean(full?.suppressed);
+    return row.reach === "SUPPRESSED" || Boolean(full?.suppressed);
   }
   if (queue === "ARCHIVE_NOT_PURSUING") {
     return row.isDemo || row.isTest || row.stage === "Won" || row.stage === "Lost"
@@ -129,18 +106,14 @@ export function matchesQueue(
     if (row.isDemo || row.isTest || row.reach === "SUPPRESSED" || row.reach === "BLOCKED") return false;
     return needsDylan(full || row);
   }
-  // ACTIVE_PIPELINE
+  // ACTIVE_PIPELINE — contactable + in-motion stages (includes replies/calls/proposals).
   if (row.isDemo || row.isTest) return false;
   if (row.reach === "SUPPRESSED" || row.reach === "BLOCKED") return false;
-  if (row.reach === "NEEDS_CONTACT_INFO" || row.reach === "NEEDS_RESEARCH") {
-    // Active stages still show even if reach is stale
-    return isActivePipelineStage(row.stage);
-  }
   if (row.reach === "READY_TO_CONTACT") return true;
-  if (isActivePipelineStage(row.stage)) return true;
+  if (isActivePipelineStage(row.stage) || needsDylan(row)) return true;
   if (full) {
     const c = evaluateContactability(full, opts);
-    return c.contactable || c.status === "CONTACTABLE" && isActivePipelineStage(full.stage || "");
+    return c.status === "CONTACTABLE" || isActivePipelineStage(full.stage || "");
   }
   return false;
 }
@@ -170,10 +143,23 @@ export function queueFromFilterable(row: FilterableProspect): PipelineQueue {
   if (row.isDemo || row.isTest || row.stage === "Won" || row.stage === "Lost" || row.reach === "BLOCKED") {
     return "ARCHIVE_NOT_PURSUING";
   }
-  if (needsDylan(row) || isActivePipelineStage(row.stage)) return "NEEDS_DYLAN";
-  if (row.reach === "READY_TO_CONTACT") return "ACTIVE_PIPELINE";
+  if (needsDylan(row)) return "NEEDS_DYLAN";
+  if (row.reach === "READY_TO_CONTACT" || isActivePipelineStage(row.stage)) return "ACTIVE_PIPELINE";
   if (row.reach === "NEEDS_CONTACT_INFO") return "NEEDS_CONTACT_INFORMATION";
   if (row.reach === "NEEDS_RESEARCH") return "NEEDS_RESEARCH";
   return "NEEDS_RESEARCH";
 }
 
+export function spokenEligibleReport(counts: {
+  contactable: number;
+  needsContact: number;
+  needsResearch: number;
+  blocked: number;
+  suppressed: number;
+}, testMode: boolean): string {
+  const n = counts.contactable;
+  const head = testMode
+    ? `Test Mode is on. ${n} prospect${n === 1 ? "" : "s"} currently CONTACTABLE by email. Nothing was sent.`
+    : `${n} prospect${n === 1 ? "" : "s"} currently CONTACTABLE by email. Nothing was sent.`;
+  return head;
+}

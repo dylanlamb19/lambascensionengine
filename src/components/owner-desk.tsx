@@ -42,8 +42,10 @@ import {
   QUEUE_LABEL,
   type PipelineQueue,
 } from "@/lib/prospects/pipeline-queues";
+import { contactEligibleProspectsFn } from "@/lib/prospects/eligible-actions";
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
+import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";
 import { generateOutreach } from "@/lib/outreach/generate";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
@@ -53,6 +55,9 @@ import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
 import { VoiceBar } from "@/components/voice-bar";
 import { FindVerticalField } from "@/components/find-vertical-field";
+import { LinkedInAgentChat } from "@/components/linkedin-agent-chat";
+import { NextMoves } from "@/components/next-moves";
+import { FindPresets } from "@/components/find-presets";
 import { CalendarDesk } from "@/components/calendar-desk";
 import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
 import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
@@ -301,6 +306,7 @@ export function OwnerDesk() {
   const [testLoop, setTestLoop] = useState<TestLoopState>(EMPTY_TEST_LOOP);
   const [sentinel, setSentinel] = useState<SentinelSnapshot | null>(null);
   const [sentinelBusy, setSentinelBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -313,6 +319,7 @@ export function OwnerDesk() {
   const [voiceListening, setVoiceListening] = useState(false);
   const gateRef = useRef(new ActionGate());
   const araRef = useRef<AraRealtime | null>(null);
+  const pendingLinkedInOrderRef = useRef<{ kind: string; payload: Record<string, unknown> } | null>(null);
   const araGen = useRef(0);
   const araReconnects = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1041,6 +1048,12 @@ export function OwnerDesk() {
       void runFind({ vertical: effect.vertical, location: effect.location, limit: effect.count });
       return;
     }
+    if (effect.type === "contact_eligible") {
+      void contactEligibleProspectsFn().catch(() => {
+        /* Persist eligibility snapshot. Client already spoke live counts. Never send. */
+      });
+      return;
+    }
     if (effect.type === "research") {
       void researchFurther(effect.uid);
       return;
@@ -1552,6 +1565,7 @@ export function OwnerDesk() {
         "get_system_health",
         "navigate_health",
         "update_prospect_information",
+        "contact_eligible_prospects",
       ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -1641,6 +1655,33 @@ export function OwnerDesk() {
       } catch {
         return { ok: false, reason: "I couldn’t look that up.", staysOnScreen: true, changed: false };
       }
+    }
+    if (result.plan.type === "linkedin_agent_order") {
+      const plan = result.plan;
+      if (plan.confirmRequired) {
+        pendingLinkedInOrderRef.current = { kind: plan.kind, payload: plan.payload || {} };
+        const spoken = "Outreach is HIGH risk. Say Confirm LinkedIn order to queue draft connects under soft caps. Nothing was sent.";
+        setVoiceReply(spoken);
+        utter(spoken, "CONFIRM");
+        return;
+      }
+      void (async () => {
+        try {
+          const created = await createLinkedInAgentOrderFn({
+            data: { kind: plan.kind, payload: plan.payload || {} },
+          });
+          const spoken = created.ok
+            ? (String(result.output?.spoken || `Queued LinkedIn agent order: ${plan.kind}.`))
+            : (created.reason || "Could not queue LinkedIn order.");
+          setVoiceReply(spoken);
+          utter(spoken, "LINKEDIN_ORDER");
+        } catch {
+          const spoken = "Could not queue LinkedIn agent order.";
+          setVoiceReply(spoken);
+          utter(spoken, "LINKEDIN_ORDER");
+        }
+      })();
+      return;
     }
     if (result.plan.type === "sentinel_status") {
       try {
@@ -1921,6 +1962,18 @@ export function OwnerDesk() {
       }
     }
     return result.output;
+  }
+
+
+  async function repairBookingMismatch() {
+    setRepairBusy(true);
+    try {
+      await repairBookingInvariantFn();
+      const rerun = await sentinelRunFn({ data: { mode: "owner" } });
+      if (rerun.ok) setSentinel(rerun.snapshot);
+    } finally {
+      setRepairBusy(false);
+    }
   }
 
   async function runSentinelNow() {
@@ -2628,6 +2681,30 @@ export function OwnerDesk() {
         });
         return;
       }
+      // LinkedIn outreach order confirmation (HIGH)
+      if (/^confirm linkedin order$/i.test((text || "").trim().replace(/[?.!,]/g, ""))) {
+        const pending = pendingLinkedInOrderRef.current;
+        if (pending) {
+          pendingLinkedInOrderRef.current = null;
+          void (async () => {
+            try {
+              const created = await createLinkedInAgentOrderFn({
+                data: { kind: pending.kind, payload: { ...pending.payload, confirm: true } },
+              });
+              const spoken = created.ok
+                ? "Queued LinkedIn outreach drafts under soft caps. No auto-send."
+                : (created.reason || "Could not queue LinkedIn order.");
+              setVoiceReply(spoken);
+              utter(spoken, "LINKEDIN_ORDER");
+            } catch {
+              const spoken = "Could not queue LinkedIn agent order.";
+              setVoiceReply(spoken);
+              utter(spoken, "LINKEDIN_ORDER");
+            }
+          })();
+          return;
+        }
+      }
       if (confirmSendPhraseOk(text) || confirmSchedulePhraseOk(text) || confirmPhraseOk(text)) {
         runOwnerConfirm(text);
       }
@@ -3013,6 +3090,35 @@ export function OwnerDesk() {
     }
   }
 
+  async function runHighTicketFill() {
+    setFindBusy(true);
+    setFindMsg("");
+    try {
+      await createLinkedInAgentOrderFn({
+        data: { kind: "fill_leads", payload: { source: "find_clients_ui" }, note: "Fill high-ticket TX leads" },
+      });
+      const result = await fillHighTicketLeadsFn({ data: { maxSearches: 4, perSearchLimit: 6 } });
+      if (!result.ok) {
+        setFindMsg(result.reason);
+        say(result.reason);
+        return;
+      }
+      if (result.prospects) {
+        setRows(result.prospects);
+        saveCompanies(result.prospects);
+      }
+      setFindMsg(result.reason);
+      setView("pipe");
+      say(result.reason);
+    } catch {
+      const msg = "High-ticket fill failed to reach the server.";
+      setFindMsg(msg);
+      say(msg);
+    } finally {
+      setFindBusy(false);
+    }
+  }
+
   async function runFind(opts?: { vertical?: string; location?: string; limit?: number }) {
     const v = opts?.vertical || vert;
     const loc = opts?.location || city;
@@ -3250,12 +3356,16 @@ export function OwnerDesk() {
             <h3 className="font-display text-lg">Pipeline</h3>
             <button className="la-btn la-btn-quiet" onClick={() => dispatchAction({ name: "NAVIGATE_PIPELINE" })}>Open</button>
           </div>
-          {rows.slice(0, 4).map((c) => (
-            <button key={c.uid || c.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: c.uid })}>
-              <span className="la-list-name"><b>{c.name}</b></span>
-              <span className="text-sm text-muted">{c.stage_plain}</span>
+          {visibleRows.slice(0, 4).map((c) => {
+            const full = rows.find((r) => r.uid === c.uid);
+            if (!full) return null;
+            return (
+            <button key={full.uid || full.id} className="la-list-row" onClick={() => dispatchAction({ name: "OPEN_PROSPECT", uid: full.uid })}>
+              <span className="la-list-name"><b>{full.name}</b></span>
+              <span className="text-sm text-muted">{full.stage_plain}</span>
             </button>
-          ))}
+            );
+          })}
         </section>
       );
     }
@@ -3375,6 +3485,7 @@ export function OwnerDesk() {
               utter(text, "SCREEN_READER", `read:page:${brief.screen}`);
             }}
           />
+          <LinkedInAgentChat />
           {FLAGS.DESIGN_DIRECTOR ? (
           <DesignDirectorBar
             status={ddStatus}
@@ -3414,7 +3525,12 @@ export function OwnerDesk() {
         data-home-order={visibleOrder(layout).join(",")}
       >
         {syncErr ? <div className="la-ribbon la-ribbon-bad mb-3">{syncErr}</div> : null}
-        <SystemHealthAlert snapshot={sentinel} onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })} />
+        <SystemHealthAlert
+          snapshot={sentinel}
+          onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })}
+          onRepair={() => void repairBookingMismatch()}
+          repairing={repairBusy}
+        />
         {testModeOn ? (
           <div className="la-quiet-line mb-3">
             <button type="button" className="la-quiet-status" onClick={() => setTestOpen((v) => !v)}>
@@ -3456,7 +3572,9 @@ export function OwnerDesk() {
             running={sentinelBusy}
             onBack={() => dispatchAction({ name: "NAVIGATE_HOME" })}
             onRun={() => void runSentinelNow()}
-          />
+          onRepair={() => void repairBookingMismatch()}
+          repairing={repairBusy}
+        />
         ) : null}
         {view === "home" ? (
           <>
@@ -3506,7 +3624,16 @@ export function OwnerDesk() {
           >
             <p className="la-kicker">Acquisition</p>
             <h2 className="font-display mt-2 text-2xl">Find Clients</h2>
-            <p className="mb-4 mt-1 text-sm text-muted">We’ll look up real companies. We will not invent names.</p>
+            <p className="mb-4 mt-1 text-sm text-muted">We’ll look up real companies. We will not invent names. High-ticket defaults: Dental, Med spa, Law, B2B consulting, SaaS, and CRE across Dallas, Houston, Austin, Fort Worth, and San Antonio.</p>
+            <FindPresets
+              disabled={findBusy || discoveryConfigured === false}
+              onPick={(preset) => {
+                setVert(preset.vertical);
+                setCity(preset.location);
+                setFindLimit(preset.limit);
+                void runFind({ vertical: preset.vertical, location: preset.location, limit: preset.limit });
+              }}
+            />
             {discoveryConfigured === false ? (
               <div className="la-ribbon la-ribbon-bad mb-4">
                 Live Find Clients is off because Google Places is not configured. Add GOOGLE_PLACES_API_KEY on the server, and enable Places API (New) plus Geocoding API. We will not invent businesses. You can still add a company you already know.
@@ -3529,6 +3656,14 @@ export function OwnerDesk() {
             <div className="flex flex-wrap gap-2">
               <button className="la-btn la-btn-primary" type="submit" disabled={findBusy || discoveryConfigured === false}>
                 {findBusy ? "Looking…" : "Find Clients"}
+              </button>
+              <button
+                className="la-btn la-btn-ghost"
+                type="button"
+                disabled={findBusy || discoveryConfigured === false}
+                onClick={() => void runHighTicketFill()}
+              >
+                Fill high-ticket leads
               </button>
               <button className="la-btn la-btn-ghost" type="button" onClick={() => setView("add")}>Add one I already know</button>
               <button className="la-btn la-btn-ghost" type="button" onClick={() => setView("home")}>Cancel</button>
@@ -3576,13 +3711,19 @@ export function OwnerDesk() {
                   key={q}
                   type="button"
                   className="la-btn la-btn-quiet"
-                  data-on={(prospectFilter as { queue?: string }).queue === q ? "1" : "0"}
+                  data-on={prospectFilter.queue === q ? "1" : "0"}
                   onClick={() => dispatchAction({ name: "FILTER_PROSPECTS", filter: filterForQueue(q) })}
                 >
                   {QUEUE_LABEL[q]}
                 </button>
               ))}
             </div>
+            <NextMoves
+              prospects={rows.map(fromProspect)}
+              onFilter={(filter) => dispatchAction({ name: "FILTER_PROSPECTS", filter })}
+              onFindHighTicket={() => setView("find")}
+              onOrderLinkedInEnrich={() => void createLinkedInAgentOrderFn({ data: { kind: "enrich", payload: { focus: "NEEDS_CONTACT_INFO" }, note: "Enrich contacts for Needs Contact Info" } })}
+            />
             <p className="mb-3 text-sm text-muted">{filterSummary(visibleRows.length, prospectFilter, lastDiscovery)}</p>
             {!isFilterEmpty(prospectFilter) ? (
               <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -3609,7 +3750,7 @@ export function OwnerDesk() {
                   </span>
                 </button>
               );
-            }) : <p className="la-empty">{rows.length ? "Nothing matches these filters." : "No companies yet. Find Clients or add one you already know."}</p>}
+            }) : <p className="la-empty">{rows.length ? "Nothing matches these filters." : "No companies yet. Find Clients (high-ticket defaults: Dental, Med spa, Law, B2B, SaaS, CRE in TX metros) or add one you already know."}</p>}
           </section>
         ) : null}
 

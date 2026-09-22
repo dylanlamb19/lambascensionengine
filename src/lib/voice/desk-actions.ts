@@ -38,6 +38,7 @@ import {
   type FilterableProspect,
   type ProspectViewFilter,
 } from "../prospects/view-filter.ts";
+import { spokenEligibleReport } from "../prospects/pipeline-queues.ts";
 import type { LastDiscovery } from "../prospects/last-discovery.ts";
 
 /**
@@ -87,6 +88,7 @@ export const APP_ACTIONS = [
   "RUN_FIND_CLIENTS",
   "SET_FIND_FORM",
   "FILTER_PROSPECTS",
+  "CONTACT_ELIGIBLE_PROSPECTS",
   "RESEARCH_FURTHER",
   "READ_CALL_OPENER",
   "MAKE_EMAIL_SHORTER",
@@ -174,6 +176,7 @@ export const ACTION_TO_TOOL: Record<AppActionName, string> = {
   RUN_FIND_CLIENTS: "run_find_clients",
   SET_FIND_FORM: "set_find_clients_form",
   FILTER_PROSPECTS: "filter_prospects",
+  CONTACT_ELIGIBLE_PROSPECTS: "contact_eligible_prospects",
   RESEARCH_FURTHER: "research_further",
   READ_CALL_OPENER: "get_next_call",
   MAKE_EMAIL_SHORTER: "draft_outreach",
@@ -272,7 +275,8 @@ export type DeskEffect =
   | { type: "image_favorite"; id: string; favorite: boolean }
   | { type: "image_save"; id: string }
   | { type: "image_to_ad"; id: string }
-  | { type: "image_delete"; id: string };
+  | { type: "image_delete"; id: string }
+  | { type: "contact_eligible" };
 
 export function emptyDesk(partial?: Partial<DeskState>): DeskState {
   return {
@@ -710,6 +714,29 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
         lastSpoken: spoken(said),
       });
     }
+    case "CONTACT_ELIGIBLE_PROSPECTS": {
+      let contactable = 0, needsContact = 0, needsResearch = 0, blocked = 0, suppressed = 0;
+      for (const row of world.prospects || []) {
+        const reach = "reach" in row ? row.reach : undefined;
+        if (reach === "READY_TO_CONTACT" && !row.isDemo && !row.isTest) contactable += 1;
+        else if (reach === "NEEDS_CONTACT_INFO") needsContact += 1;
+        else if (reach === "NEEDS_RESEARCH") needsResearch += 1;
+        else if (reach === "BLOCKED") blocked += 1;
+        else if (reach === "SUPPRESSED") suppressed += 1;
+      }
+      const said = spokenEligibleReport(
+        { contactable, needsContact, needsResearch, blocked, suppressed },
+        Boolean(world.testMode),
+      );
+      return withAction(
+        {
+          view: "pipe",
+          lastSpoken: spoken(said),
+          stack: push(state, "pipe"),
+        },
+        { type: "contact_eligible" },
+      );
+    }
     case "OPEN_OUTREACH":
     case "DRAFT_OUTREACH":
     case "READ_OUTREACH": {
@@ -1124,6 +1151,7 @@ const NO_TARGET: AppActionName[] = [
   "OPEN_FIND_CLIENTS", "OPEN_ADD_CLIENT",
   "START_TASKS", "NEXT_TASK", "PREVIOUS_TASK", "GO_BACK", "GET_DAILY_TASKS", "AVAILABILITY", "NEXT_CALL",
   "CANCEL", "STOP_LISTENING", "RUN_FIND_CLIENTS", "SET_FIND_FORM", "FILTER_PROSPECTS",
+  "CONTACT_ELIGIBLE_PROSPECTS",
   "REVIEW_CURRENT_TASK", "RETRY_CURRENT_TASK", "SKIP_CURRENT_TASK", "ACKNOWLEDGE_TASK", "EXPLAIN", "CLOSE_EXPLAIN",
   "LAYOUT", "VISUAL", "IMAGE", "SCROLL_PAGE",
 ];
@@ -1180,6 +1208,8 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
         filterAsk: parsed.filterAsk,
         filterUnknown: parsed.filterUnknown,
       };
+    case "CONTACT_ELIGIBLE_PROSPECTS":
+      return { name: "CONTACT_ELIGIBLE_PROSPECTS" };
     case "OPEN_PROSPECT": return { name: "OPEN_PROSPECT", uid };
     case "OPEN_REVIEW": return { name: onTask ? "REVIEW_CURRENT_TASK" : "OPEN_REVIEW", uid };
     case "SHOW_EVIDENCE": return { name: "SHOW_EVIDENCE", uid };
@@ -1291,6 +1321,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "find": return { name: "RUN_FIND_CLIENTS", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
     case "fill_find": return { name: "SET_FIND_FORM", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
     case "filter": return { name: "FILTER_PROSPECTS", filter: plan.filter, filterAsk: plan.ask, filterUnknown: plan.unknown };
+    case "contact_eligible": return { name: "CONTACT_ELIGIBLE_PROSPECTS" };
     case "research": return { name: "RESEARCH_FURTHER", uid: plan.uid };
     case "open_website": return { name: "OPEN_WEBSITE", uid: plan.uid };
     case "dial": return { name: "CALL_PROSPECT", uid: plan.uid };
