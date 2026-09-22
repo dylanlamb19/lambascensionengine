@@ -267,6 +267,10 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
     return { ...base, intent: "NAVIGATE_PIPELINE", risk: "LOW", confidence: 0.96 };
   }
   if (hit(t, /(open |go to |show (me )?)?settings\b/)) return { ...base, intent: "NAVIGATE_SETTINGS", risk: "LOW", confidence: 0.96 };
+  if (hit(t, /(open |go to |show (me )?)?(system health|sentinel)\b/)) return { ...base, intent: "NAVIGATE_HEALTH", risk: "LOW", confidence: 0.96 };
+  if (hit(t, /is lascengine healthy|are there any bugs|what broke( today)?|did the last (deploy|deployment) pass|is the worker running|what is sentinel watching/)) {
+    return { ...base, intent: "GET_SYSTEM_HEALTH", risk: "LOW", confidence: 0.97 };
+  }
 
   if (hit(t, /what('s| is) next|start my tasks|start tasks|what needs me|what do i need|good morning/)) {
     if (hit(t, /what('s| is) next/)) return { ...base, intent: "NEXT_TASK", risk: "LOW" };

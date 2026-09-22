@@ -17,6 +17,8 @@
     "typecheck": "tsc --noEmit",
     "check:auth": "node scripts/check-auth-invariant.mjs",
     "test": "node --test 'scripts/**/*.test.mjs' && node --experimental-strip-types --test 'src/lib/**/*.test.ts'",
+    "test:src": "node --experimental-strip-types --test 'src/lib/**/*.test.ts'",
+    "test:sentinel": "node --experimental-strip-types --test 'src/lib/sentinel/**/*.test.ts'",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

@@ -33,6 +33,10 @@ import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
 import { VoiceBar } from "@/components/voice-bar";
 import { CalendarDesk } from "@/components/calendar-desk";
+import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
+import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
+import { parseSentinelAsk, sentinelSpeech } from "@/lib/sentinel/speech";
+import type { SentinelSnapshot } from "@/lib/sentinel/types";
 import { ActionGate, makeActionId } from "@/lib/voice/idempotency";
 import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
 import { stopSpeaking } from "@/lib/voice/speech";
@@ -271,6 +275,8 @@ export function OwnerDesk() {
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [sales, setSales] = useState({ ready: 0, followups: 0, replies: 0, calls: 0 });
   const [testLoop, setTestLoop] = useState<TestLoopState>(EMPTY_TEST_LOOP);
+  const [sentinel, setSentinel] = useState<SentinelSnapshot | null>(null);
+  const [sentinelBusy, setSentinelBusy] = useState(false);
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -431,6 +437,10 @@ export function OwnerDesk() {
               if (t.testLoop) setTestLoop(t.testLoop);
             }
           } catch { /* keep default on */ }
+          try {
+            const sen = await sentinelStatusFn();
+            if (!cancelled && sen.ok) setSentinel(sen.snapshot);
+          } catch { /* Sentinel ledger may not exist yet */ }
           try {
             const vis = await loadVisualThemeFn();
             if (!cancelled && vis.ok) {
@@ -1479,6 +1489,8 @@ export function OwnerDesk() {
         "delete_owner_calendar_event",
         "delete_owner_calendar_events_bulk",
         "update_owner_calendar_event",
+        "get_system_health",
+        "navigate_health",
       ])),
       confirmationOpen: false,
       evidenceOpen: live.evidence,
@@ -1564,6 +1576,16 @@ export function OwnerDesk() {
         };
       } catch {
         return { ok: false, reason: "I couldn’t look that up.", staysOnScreen: true, changed: false };
+      }
+    }
+    if (result.plan.type === "sentinel_status") {
+      try {
+        const r = await sentinelStatusFn();
+        if (r.ok && r.snapshot) setSentinel(r.snapshot);
+        const spoken = sentinelSpeech(r.snapshot, result.plan.topic).spoken;
+        return { ...result.output, ok: true, spoken, already_spoken: false, staysOnScreen: true, changed: false, snapshot: r.snapshot };
+      } catch {
+        return { ok: false, spoken: "I don’t have a completed Sentinel observation yet, so I won’t guess.", staysOnScreen: true, changed: false };
       }
     }
     if (name === "get_calendar_availability" || name === "get_next_call") {
@@ -1807,6 +1829,35 @@ export function OwnerDesk() {
       }
     }
     return result.output;
+  }
+
+  async function runSentinelNow() {
+    setSentinelBusy(true);
+    try {
+      const r = await sentinelRunFn({ data: { mode: "owner" } });
+      if (r.ok) setSentinel(r.snapshot);
+    } finally {
+      setSentinelBusy(false);
+    }
+  }
+
+  async function runSentinelAsk(text: string): Promise<boolean> {
+    const ask = parseSentinelAsk(text);
+    if (ask.kind === "none") return false;
+    if (ask.kind === "open") {
+      araRef.current?.cancelResponse();
+      dispatchAction({ name: "NAVIGATE_HEALTH" });
+      return true;
+    }
+    araRef.current?.cancelResponse();
+    try {
+      const r = await sentinelStatusFn();
+      if (r.ok) setSentinel(r.snapshot);
+      utter(sentinelSpeech(r.snapshot, ask.topic).spoken, "TOOL_RESULT");
+    } catch {
+      utter("I don’t have a completed Sentinel observation yet, so I won’t guess.", "TOOL_RESULT");
+    }
+    return true;
   }
 
   async function runOwnerPersonalCalendar(text: string): Promise<boolean> {
@@ -2301,8 +2352,9 @@ export function OwnerDesk() {
       void runDesignDirector(text);
       return;
     }
-    void runOwnerPersonalCalendar(text).then((handled) => {
+    void runOwnerPersonalCalendar(text).then(async (handled) => {
       if (handled) return;
+      if (await runSentinelAsk(text)) return;
       const parsed = parseSpokenCommand(text);
       if (parsed.intent === "READ_PAGE" || parsed.intent === "READ_EVERYTHING" || parsed.intent === "READ_WARNING" || parsed.intent === "READ_FORM" || parsed.intent === "READ_OPTIONS") {
         araRef.current?.cancelResponse();
@@ -2545,8 +2597,9 @@ export function OwnerDesk() {
       void runDesignDirector(text);
       return;
     }
-    void runOwnerPersonalCalendar(text).then((handled) => {
+    void runOwnerPersonalCalendar(text).then(async (handled) => {
       if (handled) return;
+      if (await runSentinelAsk(text)) return;
       const decided = spokenToAction(text, currentDesk(), deskWorld());
       if ("ask" in decided) {
         say(decided.ask);
@@ -3102,6 +3155,7 @@ export function OwnerDesk() {
         data-home-order={visibleOrder(layout).join(",")}
       >
         {syncErr ? <div className="la-ribbon la-ribbon-bad mb-3">{syncErr}</div> : null}
+        <SystemHealthAlert snapshot={sentinel} onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })} />
         {testModeOn ? (
           <div className="la-quiet-line mb-3">
             <button type="button" className="la-quiet-status" onClick={() => setTestOpen((v) => !v)}>
@@ -3122,7 +3176,11 @@ export function OwnerDesk() {
           </div>
         ) : null}
         {view === "settings" ? (
-          <TestDesk
+          <>
+            <div className="mb-4">
+              <SystemHealthStrip snapshot={sentinel} onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })} />
+            </div>
+            <TestDesk
             onBack={() => setView("home")}
             onTestModeChange={(on, list) => {
               setTestModeOn(on);
@@ -3130,6 +3188,15 @@ export function OwnerDesk() {
             }}
             onIntegration={applyIntegration}
             onTestLoop={setTestLoop}
+          />
+          </>
+        ) : null}
+        {view === "health" ? (
+          <SystemHealthPage
+            snapshot={sentinel}
+            running={sentinelBusy}
+            onBack={() => dispatchAction({ name: "NAVIGATE_HOME" })}
+            onRun={() => void runSentinelNow()}
           />
         ) : null}
         {view === "home" ? (
@@ -3156,6 +3223,11 @@ export function OwnerDesk() {
                   <b>{headline}</b>
                   <p>{blurb}</p>
                 </div>
+              </div>
+            ) : null}
+            {view === "home" ? (
+              <div className="mb-5">
+                <SystemHealthStrip snapshot={sentinel} onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })} />
               </div>
             ) : null}
             {visibleOrder(layout).map((id) => renderHomeWidget(id))}

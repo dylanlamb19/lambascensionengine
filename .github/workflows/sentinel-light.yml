@@ -1,0 +1,45 @@
+name: Lascengine Sentinel
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  light:
+    name: Lightweight production health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Production HTTP health
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/lasc-body -w "%{http_code}" --max-time 20 \
+            "https://lamb-ascension-engine.vercel.app/")
+          echo "HTTP ${code}"
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 500 ]; then
+            echo "production HTTP unhealthy"
+            exit 1
+          fi
+      - name: POST Sentinel light check
+        env:
+          JOB_SECRET: ${{ secrets.OUTREACH_JOB_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${JOB_SECRET}" ]; then
+            echo "OUTREACH_JOB_SECRET repository secret is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/sentinel-body -w "%{http_code}" \
+            -X POST "https://lamb-ascension-engine.vercel.app/api/jobs/sentinel?mode=light" \
+            -H "Authorization: Bearer ${JOB_SECRET}" \
+            -H "x-job-secret: ${JOB_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data '{"mode":"light"}' \
+            --max-time 90)
+          echo "HTTP ${code}"
+          cat /tmp/sentinel-body || true
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
+            echo "sentinel light returned non-2xx"
+            exit 1
+          fi

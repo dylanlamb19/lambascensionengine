@@ -16,6 +16,8 @@ export type IntentName =
   | "NAVIGATE_PIPELINE"
   | "NAVIGATE_SETTINGS"
   | "NAVIGATE_CALENDAR"
+  | "NAVIGATE_HEALTH"
+  | "GET_SYSTEM_HEALTH"
   | "CALENDAR_TODAY"
   | "CALENDAR_NEXT"
   | "CALENDAR_PREV"
@@ -86,4 +88,4 @@ export const HIGH_INTENTS: IntentName[] = ["SEND_EMAIL", "SCHEDULE_CALL"];
 export const MEDIUM_INTENTS: IntentName[] = ["APPROVE_PROSPECT", "SKIP_PROSPECT", "STOP_FOLLOWUPS"];
 
 /** Screens Ara is allowed to open. Same names Owner Mode uses. */
-export type OwnerView = "home" | "add" | "find" | "pipe" | "detail" | "outreach" | "call" | "prep" | "settings" | "calendar";
+export type OwnerView = "home" | "add" | "find" | "pipe" | "detail" | "outreach" | "call" | "prep" | "settings" | "calendar" | "health";

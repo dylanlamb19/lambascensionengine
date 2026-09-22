@@ -178,6 +178,18 @@ describe("Ara allowlisted tools", () => {
     assert.match(String(r.output.reason), /cannot turn Test Mode off/i);
   });
 
+  it("Sentinel health is an allowlisted read tool and does not navigate", () => {
+    assert.equal(isAllowedTool("get_system_health"), true);
+    assert.equal(isAllowedTool("navigate_health"), true);
+    const status = executeAllowlistedTool("get_system_health", { topic: "bugs" }, desk);
+    assert.equal(status.ok, true);
+    assert.equal(status.plan.type, "sentinel_status");
+    assert.equal(planToAction(status.plan), null);
+    const open = executeAllowlistedTool("navigate_health", {}, desk);
+    assert.equal(open.plan.type, "navigate");
+    if (open.plan.type === "navigate") assert.equal(open.plan.view, "health");
+  });
+
   it("personal owner calendar events are a real tool, not sales bookings", () => {
     assert.equal(isAllowedTool("create_owner_calendar_event"), true);
     assert.equal(isAllowedTool("list_owner_calendar_events"), true);

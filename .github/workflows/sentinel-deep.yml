@@ -1,0 +1,35 @@
+name: Lascengine Sentinel Deep
+
+on:
+  schedule:
+    - cron: "15 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  deep:
+    name: Daily deeper verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: POST Sentinel deep check
+        env:
+          JOB_SECRET: ${{ secrets.OUTREACH_JOB_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${JOB_SECRET}" ]; then
+            echo "OUTREACH_JOB_SECRET repository secret is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/sentinel-body -w "%{http_code}" \
+            -X POST "https://lamb-ascension-engine.vercel.app/api/jobs/sentinel?mode=deep" \
+            -H "Authorization: Bearer ${JOB_SECRET}" \
+            -H "x-job-secret: ${JOB_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data '{"mode":"deep"}' \
+            --max-time 90)
+          echo "HTTP ${code}"
+          cat /tmp/sentinel-body || true
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
+            echo "sentinel deep returned non-2xx"
+            exit 1
+          fi

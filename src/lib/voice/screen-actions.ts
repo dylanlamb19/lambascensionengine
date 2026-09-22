@@ -23,7 +23,8 @@ export type ScreenName =
   | "CALL"
   | "PREP"
   | "SETTINGS"
-  | "CALENDAR";
+  | "CALENDAR"
+  | "HEALTH";
 
 export function screenNameOf(state: DeskState): ScreenName {
   if (state.taskIx != null && (state.view === "home" || state.view === "pipe")) return "TASKS";
@@ -36,6 +37,7 @@ export function screenNameOf(state: DeskState): ScreenName {
   if (state.view === "prep") return "PREP";
   if (state.view === "settings") return "SETTINGS";
   if (state.view === "calendar") return "CALENDAR";
+  if (state.view === "health") return "HEALTH";
   return "HOME";
 }
 
@@ -65,6 +67,7 @@ const NAV: ScreenAction[] = [
   act("NAVIGATE_PIPELINE", "navigate_pipeline", "NAVIGATE_PIPELINE", "Pipeline", ["open pipeline", "go to pipeline", "pipeline"]),
   act("NAVIGATE_SETTINGS", "navigate_settings", "NAVIGATE_SETTINGS", "Settings", ["open settings", "go to settings", "settings"]),
   act("NAVIGATE_CALENDAR", "navigate_calendar", "NAVIGATE_CALENDAR", "Calendar", ["pull up my calendar", "show me my calendar", "open my calendar", "open calendar", "go to my calendar"]),
+  act("NAVIGATE_HEALTH", "navigate_health", "NAVIGATE_HEALTH", "System Health", ["open system health", "show system health", "go to system health"]),
   act("OPEN_FIND_CLIENTS", "open_find_clients", "OPEN_FIND_CLIENTS", "Find Clients", ["find clients", "open find clients"]),
   act("START_TASKS", "start_my_tasks", "START_TASKS", "Start My Tasks", ["start my tasks", "start tasks"]),
   act("GO_BACK", "go_back", "GO_BACK", "Back", ["go back", "back"]),

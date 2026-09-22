@@ -47,6 +47,7 @@ export function purposeOf(screen: string): string {
     case "PREP": return "Call prep — notes for a sales call.";
     case "CALENDAR": return "Calendar — your real Google Calendar plus Lamb Ascension sales calls.";
     case "SETTINGS": return "Settings — connections, Test Mode, and live-test tools.";
+    case "HEALTH": return "System Health — Sentinel’s last observed production evidence.";
     default: return "Owner Mode.";
   }
 }
@@ -233,6 +234,10 @@ export function buildScreenContext(state: DeskState, world: DeskWorld, _extras?:
         if (world.calendarStatus !== "connected") facts.push({ kind: "UNKNOWN", text: "Google Calendar isn’t connected yet." });
       }
     }
+  } else if (screen === "HEALTH") {
+    lookingAt = "You’re looking at System Health.";
+    important = "Sentinel reports only what it has already observed. It does not invent bugs.";
+    next = "Ask whether production is healthy, or go back Home.";
   } else if (screen === "CALL" || screen === "PREP") {
     lookingAt = `You’re looking at ${screen === "PREP" ? "call prep" : "the call opener"}${company ? ` for ${company.name}` : ""}.`;
     important = "This is based on verified research. Unknowns stay unknown.";

@@ -15,6 +15,7 @@ import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBookTokenRouteImport } from './routes/api/book/$token'
 import { Route as ApiGoogleCallbackRouteImport } from './routes/api/google/callback'
 import { Route as ApiJobsOutreachRouteImport } from './routes/api/jobs/outreach'
+import { Route as ApiJobsSentinelRouteImport } from './routes/api/jobs/sentinel'
 import { Route as ApiVisualAssetsIdRouteImport } from './routes/api/visual-assets/$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -47,6 +48,11 @@ const ApiJobsOutreachRoute = ApiJobsOutreachRouteImport.update({
   path: '/api/jobs/outreach',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiJobsSentinelRoute = ApiJobsSentinelRouteImport.update({
+  id: '/api/jobs/sentinel',
+  path: '/api/jobs/sentinel',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiVisualAssetsIdRoute = ApiVisualAssetsIdRouteImport.update({
   id: '/api/visual-assets/$id',
   path: '/api/visual-assets/$id',
@@ -60,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
+  '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
 }
 export interface FileRoutesByTo {
@@ -69,6 +76,7 @@ export interface FileRoutesByTo {
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
+  '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
 }
 export interface FileRoutesById {
@@ -79,6 +87,7 @@ export interface FileRoutesById {
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
+  '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
 }
 export interface FileRouteTypes {
@@ -90,6 +99,7 @@ export interface FileRouteTypes {
     | '/api/book/$token'
     | '/api/google/callback'
     | '/api/jobs/outreach'
+    | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -99,6 +109,7 @@ export interface FileRouteTypes {
     | '/api/book/$token'
     | '/api/google/callback'
     | '/api/jobs/outreach'
+    | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
   id:
     | '__root__'
@@ -108,6 +119,7 @@ export interface FileRouteTypes {
     | '/api/book/$token'
     | '/api/google/callback'
     | '/api/jobs/outreach'
+    | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
   fileRoutesById: FileRoutesById
 }
@@ -118,6 +130,7 @@ export interface RootRouteChildren {
   ApiBookTokenRoute: typeof ApiBookTokenRoute
   ApiGoogleCallbackRoute: typeof ApiGoogleCallbackRoute
   ApiJobsOutreachRoute: typeof ApiJobsOutreachRoute
+  ApiJobsSentinelRoute: typeof ApiJobsSentinelRoute
   ApiVisualAssetsIdRoute: typeof ApiVisualAssetsIdRoute
 }
 
@@ -165,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiJobsOutreachRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/jobs/sentinel': {
+      id: '/api/jobs/sentinel'
+      path: '/api/jobs/sentinel'
+      fullPath: '/api/jobs/sentinel'
+      preLoaderRoute: typeof ApiJobsSentinelRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/visual-assets/$id': {
       id: '/api/visual-assets/$id'
       path: '/api/visual-assets/$id'
@@ -182,6 +202,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiBookTokenRoute: ApiBookTokenRoute,
   ApiGoogleCallbackRoute: ApiGoogleCallbackRoute,
   ApiJobsOutreachRoute: ApiJobsOutreachRoute,
+  ApiJobsSentinelRoute: ApiJobsSentinelRoute,
   ApiVisualAssetsIdRoute: ApiVisualAssetsIdRoute,
 }
 export const routeTree = rootRouteImport

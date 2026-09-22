@@ -46,6 +46,8 @@ export const ALLOWED_TOOLS = [
   "navigate_home",
   "navigate_pipeline",
   "navigate_settings",
+  "navigate_health",
+  "get_system_health",
   "open_find_clients",
   "open_add_client",
   "find_clients",
@@ -146,6 +148,8 @@ export const TOOL_ALIASES: Record<string, AllowedTool> = {
   NAVIGATE_HOME: "navigate_home",
   NAVIGATE_PIPELINE: "navigate_pipeline",
   NAVIGATE_SETTINGS: "navigate_settings",
+  NAVIGATE_HEALTH: "navigate_health",
+  GET_SYSTEM_HEALTH: "get_system_health",
   OPEN_FIND_CLIENTS: "open_find_clients",
   OPEN_ADD_CLIENT: "open_add_client",
   GO_BACK: "go_back",
@@ -366,7 +370,8 @@ export type ToolPlan =
   | { type: "open"; uid: string }
   | { type: "open_review"; uid: string }
   | { type: "show_evidence"; uid: string }
-  | { type: "navigate"; view: "home" | "pipe" | "settings" | "find" | "add" | "calendar" }
+  | { type: "navigate"; view: "home" | "pipe" | "settings" | "find" | "add" | "calendar" | "health" }
+  | { type: "sentinel_status"; topic?: string }
   | { type: "go_back" }
   | { type: "start_tasks" }
   | { type: "find"; vertical: string; location: string; count: number }
@@ -475,6 +480,8 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "navigate_home", description: "Open the Home screen. Same as the Home button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_pipeline", description: "Open the Pipeline screen. Same as the Pipeline button.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_settings", description: "Open Settings. Same as the Settings button.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "navigate_health", description: "Open System Health / Sentinel. Same as opening the System Health page. Inspect-only.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "get_system_health", description: "Answer from Sentinel’s persisted evidence only: is production healthy, open bugs, last deploy, worker, what Sentinel watches. NEVER invent health. If already_spoken, remain silent.", parameters: { type: "object", properties: { topic: { type: "string" } } } },
     { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. ONLY when the owner explicitly says pull up / show / open / go to my calendar as this turn’s command. NEVER because an earlier scheduling command mentioned calendar. NEVER for ‘add a call’, ‘can you hear me’, or name corrections.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_today", description: "Jump the Calendar to today.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "calendar_next", description: "Move Calendar forward: next day, next week, or next month depending on the current view.", parameters: { type: "object", properties: {} } },
@@ -717,6 +724,16 @@ export function executeAllowlistedTool(
   }
   if (tool === "navigate_settings") {
     return { ok: true, tool, rejected: false, output: { view: "settings", changed: true }, plan: { type: "navigate", view: "settings" } };
+  }
+  if (tool === "navigate_health") {
+    return { ok: true, tool, rejected: false, output: { view: "health", changed: true }, plan: { type: "navigate", view: "health" } };
+  }
+  if (tool === "get_system_health") {
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, pending: true, staysOnScreen: true, changed: false },
+      plan: { type: "sentinel_status", topic: String(args.topic || args.query || "").trim() || undefined },
+    };
   }
   if (tool === "navigate_calendar") {
     if (!shouldAllowCalendarNavigation(ctx.lastOwnerUtterance || "", ctx.pendingOwnerCalendar)) {

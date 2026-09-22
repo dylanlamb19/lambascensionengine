@@ -10,6 +10,7 @@ export const FLAGS = {
   ARA_DEVELOPER_MODE: false,
   EXPERIMENTAL_VOICE_FEATURES: false,
   DESIGN_DIRECTOR: false,
+  SENTINEL_AUTO_FIX: false,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;

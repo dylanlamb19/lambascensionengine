@@ -1,0 +1,37 @@
+name: Lascengine Sentinel Post-Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Post-deploy production verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for Vercel production
+        run: sleep 90
+      - name: POST Sentinel post-deploy smoke
+        env:
+          JOB_SECRET: ${{ secrets.OUTREACH_JOB_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${JOB_SECRET}" ]; then
+            echo "OUTREACH_JOB_SECRET repository secret is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/sentinel-body -w "%{http_code}" \
+            -X POST "https://lamb-ascension-engine.vercel.app/api/jobs/sentinel?mode=post_deploy" \
+            -H "Authorization: Bearer ${JOB_SECRET}" \
+            -H "x-job-secret: ${JOB_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data '{"mode":"post_deploy"}' \
+            --max-time 90)
+          echo "HTTP ${code}"
+          cat /tmp/sentinel-body || true
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
+            echo "sentinel post-deploy returned non-2xx"
+            exit 1
+          fi

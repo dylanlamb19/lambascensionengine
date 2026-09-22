@@ -49,6 +49,7 @@ export const APP_ACTIONS = [
   "NAVIGATE_PIPELINE",
   "NAVIGATE_SETTINGS",
   "NAVIGATE_CALENDAR",
+  "NAVIGATE_HEALTH",
   "CALENDAR_TODAY",
   "CALENDAR_NEXT",
   "CALENDAR_PREV",
@@ -135,6 +136,7 @@ export const ACTION_TO_TOOL: Record<AppActionName, string> = {
   NAVIGATE_PIPELINE: "navigate_pipeline",
   NAVIGATE_SETTINGS: "navigate_settings",
   NAVIGATE_CALENDAR: "navigate_calendar",
+  NAVIGATE_HEALTH: "navigate_health",
   CALENDAR_TODAY: "calendar_today",
   CALENDAR_NEXT: "calendar_next",
   CALENDAR_PREV: "calendar_prev",
@@ -405,6 +407,12 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
         calAnchor: action.calendarView === "day" && action.hour == null ? state.calAnchor : state.calAnchor,
         stack: push(state, "calendar"),
         lastSpoken: spoken("Opening Calendar."),
+      });
+    case "NAVIGATE_HEALTH":
+      return withAction({
+        view: "health",
+        stack: push(state, "health"),
+        lastSpoken: spoken("Opening System Health."),
       });
     case "CALENDAR_TODAY":
       return withAction({
@@ -1111,7 +1119,7 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
 }
 
 const NO_TARGET: AppActionName[] = [
-  "NAVIGATE_HOME", "NAVIGATE_PIPELINE", "NAVIGATE_SETTINGS", "NAVIGATE_CALENDAR",
+  "NAVIGATE_HOME", "NAVIGATE_PIPELINE", "NAVIGATE_SETTINGS", "NAVIGATE_CALENDAR", "NAVIGATE_HEALTH",
   "CALENDAR_TODAY", "CALENDAR_NEXT", "CALENDAR_PREV", "CALENDAR_SET_VIEW",
   "OPEN_FIND_CLIENTS", "OPEN_ADD_CLIENT",
   "START_TASKS", "NEXT_TASK", "PREVIOUS_TASK", "GO_BACK", "GET_DAILY_TASKS", "AVAILABILITY", "NEXT_CALL",
@@ -1130,6 +1138,8 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
     case "NAVIGATE_PIPELINE": return { name: "NAVIGATE_PIPELINE" };
     case "NAVIGATE_SETTINGS": return { name: "NAVIGATE_SETTINGS" };
     case "NAVIGATE_CALENDAR": return { name: "NAVIGATE_CALENDAR" };
+    case "NAVIGATE_HEALTH": return { name: "NAVIGATE_HEALTH" };
+    case "GET_SYSTEM_HEALTH": return null;
     case "CALENDAR_TODAY": return { name: "CALENDAR_TODAY" };
     case "CALENDAR_NEXT": return { name: "CALENDAR_NEXT" };
     case "CALENDAR_PREV": return { name: "CALENDAR_PREV" };
@@ -1270,6 +1280,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
       if (plan.view === "pipe") return { name: "NAVIGATE_PIPELINE" };
       if (plan.view === "settings") return { name: "NAVIGATE_SETTINGS" };
       if (plan.view === "calendar") return { name: "NAVIGATE_CALENDAR" };
+      if (plan.view === "health") return { name: "NAVIGATE_HEALTH" };
       if (plan.view === "find") return { name: "OPEN_FIND_CLIENTS" };
       if (plan.view === "add") return { name: "OPEN_ADD_CLIENT" };
       return null;
@@ -1333,6 +1344,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "owner_calendar_list": return null;
     case "owner_calendar_delete": return null;
     case "owner_calendar_update": return null;
+    case "sentinel_status": return null;
     default: return null;
   }
 }
