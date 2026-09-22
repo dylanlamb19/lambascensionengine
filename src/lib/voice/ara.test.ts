@@ -14,7 +14,7 @@ import {
   type AraDeskContext,
 } from "./tools.ts";
 import { ARA_UNAVAILABLE, ARA_VOICE, buildAraInstructions, ownerTextItem, sessionUpdatePayload } from "./ara-context.ts";
-import { publicAraSessionPayload } from "./ara-token.ts";
+import { publicAraSessionPayload, araClientSecretsMintBodies } from "./ara-token.ts";
 import { executeIfUntrustedSource, toolsInvokedByUntrustedText } from "./untrusted-tools.ts";
 import { makeVoiceAudit, auditHasAudio } from "./audit.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
@@ -489,6 +489,27 @@ describe("Ara session payload / outage / key leakage", () => {
     }
     const blocked = publicAraSessionPayload({ value: key, expires_at: 1 }, key);
     assert.equal(blocked.ok, false);
+  });
+
+  it("accepts nested client_secret token shapes", () => {
+    const nested = publicAraSessionPayload(
+      { client_secret: { value: "xai-realtime-client-secret-nested", expires_at: 99 } },
+      undefined,
+    );
+    assert.equal(nested.ok, true);
+    if (nested.ok) {
+      assert.equal(nested.token, "xai-realtime-client-secret-nested");
+      assert.equal(nested.expiresAt, 99);
+    }
+    const secret = publicAraSessionPayload({ secret: "xai-realtime-client-secret-alt" }, undefined);
+    assert.equal(secret.ok, true);
+    if (secret.ok) assert.equal(secret.token, "xai-realtime-client-secret-alt");
+  });
+
+  it("first client_secrets mint body omits unsupported session field", () => {
+    const bodies = araClientSecretsMintBodies();
+    assert.equal("session" in bodies[0]!, false);
+    assert.deepEqual(bodies[0], { expires_after: { seconds: 300 } });
   });
 
   it("xAI API key never appears in browser voice/client files", () => {

@@ -4,8 +4,21 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { publicAraSessionPayload } from "./ara-token";
-import { voiceFailure } from "./voice-failure";
+import { araClientSecretsMintBodies, publicAraSessionPayload } from "./ara-token";
+import { classifyMintHttp, voiceFailure } from "./voice-failure";
+
+const CLIENT_SECRETS_URL = "https://api.x.ai/v1/realtime/client_secrets";
+
+async function postClientSecrets(apiKey: string, body: Record<string, unknown>): Promise<Response> {
+  return fetch(CLIENT_SECRETS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
 
 export const createAraSessionFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
@@ -13,19 +26,17 @@ export const createAraSessionFn = createServerFn({ method: "POST" })
     const apiKey = process.env.XAI_API_KEY?.trim();
     if (!apiKey) return voiceFailure("XAI_KEY_MISSING");
     try {
-      const res = await fetch("https://api.x.ai/v1/realtime/client_secrets", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          expires_after: { seconds: 300 },
-          session: { model: "grok-voice-latest" },
-        }),
-      });
-      if (!res.ok) return voiceFailure("SESSION_CREATE_FAILED");
-      const body = (await res.json()) as { value?: string; expires_at?: number };
+      const bodies = araClientSecretsMintBodies();
+      let res = await postClientSecrets(apiKey, bodies[0]!);
+      // xAI docs disagree on whether `session` is allowed. Retry the other shape only on 400.
+      if (res.status === 400 && bodies[1]) {
+        res = await postClientSecrets(apiKey, bodies[1]);
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        return voiceFailure(classifyMintHttp(res.status, text));
+      }
+      const body = await res.json();
       const pub = publicAraSessionPayload(body, apiKey);
       if (!pub.ok) return voiceFailure("SESSION_CREATE_FAILED");
       try {

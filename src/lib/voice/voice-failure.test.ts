@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { voiceFailure, voiceFailureReason } from "./voice-failure.ts";
+import { classifyMintHttp, voiceFailure, voiceFailureReason } from "./voice-failure.ts";
 
 test("missing xAI key is a distinct category, not a generic outage", () => {
   const miss = voiceFailure("XAI_KEY_MISSING");
@@ -20,6 +20,7 @@ test("every reconnect failure category is named", () => {
     "AUDIO_OUTPUT_BLOCKED",
     "PROVIDER_ERROR",
     "VOICE_AUTH_FAILED",
+    "VOICE_CREDITS_EXHAUSTED",
     "VOICE_RATE_LIMITED",
     "VOICE_UPSTREAM_4XX",
     "VOICE_UPSTREAM_5XX",
@@ -37,6 +38,20 @@ test("session mint returns XAI_KEY_MISSING when the key is absent", () => {
   assert.match(src, /XAI_KEY_MISSING/);
   assert.match(src, /SESSION_CREATE_FAILED/);
   assert.match(src, /process\.env\.XAI_API_KEY/);
+  assert.match(src, /classifyMintHttp/);
+  assert.match(src, /araClientSecretsMintBodies/);
+});
+
+test("mint HTTP classification does not dump provider bodies", () => {
+  const credits = classifyMintHttp(403, "You have run out of credits [WKE=personal-team-blocked:spending-limit]");
+  assert.equal(credits, "VOICE_CREDITS_EXHAUSTED");
+  assert.equal(classifyMintHttp(403, "forbidden"), "VOICE_AUTH_FAILED");
+  assert.equal(classifyMintHttp(401, "invalid api key"), "VOICE_AUTH_FAILED");
+  assert.equal(classifyMintHttp(429, "slow down"), "VOICE_RATE_LIMITED");
+  assert.equal(classifyMintHttp(500, "boom"), "VOICE_UPSTREAM_5XX");
+  assert.equal(classifyMintHttp(400, "unknown field session"), "VOICE_UPSTREAM_4XX");
+  const fail = voiceFailure(credits);
+  assert.doesNotMatch(fail.reason, /WKE=|personal-team-blocked|api-key/i);
 });
 
 test("Reconnect Ara Voice always mints a real session", () => {

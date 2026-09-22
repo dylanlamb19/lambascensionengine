@@ -6,6 +6,7 @@ export type VoiceFailureCode =
   | "AUDIO_OUTPUT_BLOCKED"
   | "PROVIDER_ERROR"
   | "VOICE_AUTH_FAILED"
+  | "VOICE_CREDITS_EXHAUSTED"
   | "VOICE_RATE_LIMITED"
   | "VOICE_UPSTREAM_4XX"
   | "VOICE_UPSTREAM_5XX"
@@ -22,6 +23,7 @@ const LABEL: Record<VoiceFailureCode, string> = {
   AUDIO_OUTPUT_BLOCKED: "Ara's voice isn't available (AUDIO_OUTPUT_BLOCKED).",
   PROVIDER_ERROR: "Ara's voice isn't available (PROVIDER_ERROR).",
   VOICE_AUTH_FAILED: "Ara's voice isn't available (VOICE_AUTH_FAILED).",
+  VOICE_CREDITS_EXHAUSTED: "Ara's voice isn't available — xAI credits ran out. Add credits at grok.com. (VOICE_CREDITS_EXHAUSTED)",
   VOICE_RATE_LIMITED: "Ara's voice isn't available (VOICE_RATE_LIMITED).",
   VOICE_UPSTREAM_4XX: "Ara's voice isn't available (VOICE_UPSTREAM_4XX).",
   VOICE_UPSTREAM_5XX: "Ara's voice isn't available (VOICE_UPSTREAM_5XX).",
@@ -46,6 +48,20 @@ export function classifyTtsHttp(status: number): VoiceFailureCode {
   if (status >= 500) return "VOICE_UPSTREAM_5XX";
   if (status >= 400) return "VOICE_UPSTREAM_4XX";
   return "PROVIDER_ERROR";
+}
+
+/** Map an xAI realtime client_secrets HTTP status. Body is used only to detect credits; never returned. */
+export function classifyMintHttp(status: number, bodyText = ""): VoiceFailureCode {
+  const snippet = bodyText.slice(0, 800).toLowerCase();
+  const credits = /spending-limit|out of credits|run out of credits|need a grok subscription/.test(snippet);
+  if (status === 401 || status === 403) {
+    if (credits) return "VOICE_CREDITS_EXHAUSTED";
+    return "VOICE_AUTH_FAILED";
+  }
+  if (status === 429) return "VOICE_RATE_LIMITED";
+  if (status >= 500) return "VOICE_UPSTREAM_5XX";
+  if (status >= 400) return "VOICE_UPSTREAM_4XX";
+  return "SESSION_CREATE_FAILED";
 }
 
 export function classifyTtsTransportError(err: unknown): VoiceFailureCode {
