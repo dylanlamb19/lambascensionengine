@@ -1,0 +1,9 @@
+{
+  "parts": 29,
+  "sha256": "325c03975a768894dd79cd667718f8ef7d8a7f0eca1a9ef882703fffe32230c8",
+  "files": [
+    "src/lib/voice/desk-actions.ts",
+    "src/lib/voice/tools.ts",
+    "src/components/owner-desk.tsx"
+  ]
+}
