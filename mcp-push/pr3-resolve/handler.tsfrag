@@ -1,1 +1,31 @@
-PLACEHOLDER_H
+  if (tool === "contact_eligible_prospects") {
+    let contactable = 0, needsContact = 0, needsResearch = 0, blocked = 0, suppressed = 0;
+    const contactableUids: string[] = [];
+    for (const row of ctx.prospects || []) {
+      const p: Prospect = {
+        id: 0, uid: row.uid, name: row.name, vertical: row.vertical || "", city: row.city || "",
+        website: row.website || "UNKNOWN", phone: row.phone || "UNKNOWN",
+        review_count: row.review_count || 0, google_rating: row.google_rating || "UNKNOWN",
+        job_value_est: 0, score: row.score || 0, fit: "possible", fit_plain: "",
+        stage: row.stage || "New", stage_plain: row.stage_plain || "",
+        research_status: row.research_status || "none", findings: [],
+        contacts: row.recipient ? [{ name: row.decisionMaker || "UNKNOWN", title: "UNKNOWN", email: row.recipient, email_status: "unverified" as const, profile_url: "", source: "prospect record", last_verified: "" }] : [],
+        is_demo: Boolean(row.is_demo), suppressed: Boolean(row.suppressed),
+        readiness: row.fit_headline === "GOOD FIT" ? "STRONG CANDIDATE FOR FURTHER QUALIFICATION" : row.fit_headline === "POSSIBLE FIT" ? "POSSIBLE CANDIDATE" : undefined,
+      };
+      const c = evaluateContactability(p);
+      if (c.status === "CONTACTABLE" && c.contactable) { contactable += 1; if (row.uid) contactableUids.push(row.uid); }
+      else if (c.status === "NEEDS_CONTACT_INFORMATION") needsContact += 1;
+      else if (c.status === "NEEDS_RESEARCH") needsResearch += 1;
+      else if (c.status === "BLOCKED") blocked += 1;
+      else if (c.status === "SUPPRESSED") suppressed += 1;
+    }
+    const spoken = ctx.testMode
+      ? `Test Mode is on. ${contactable} prospect${contactable === 1 ? "" : "s"} currently CONTACTABLE by email. Nothing was sent.`
+      : `${contactable} prospect${contactable === 1 ? "" : "s"} currently CONTACTABLE by email. Nothing was sent.`;
+    return {
+      ok: true, tool, rejected: false,
+      output: { ok: true, counts: { contactable, needsContactInformation: needsContact, needsResearch, blocked, suppressed }, contactableUids, testMode: Boolean(ctx.testMode), spoken, emailSent: false, changed: false },
+      plan: { type: "none" },
+    };
+  }
