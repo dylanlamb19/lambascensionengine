@@ -1,0 +1,35 @@
+name: Assemble email-campaigns large py
+on:
+  push:
+    branches: [email-campaigns-os]
+    paths:
+      - "build-assets/email-campaigns-large-py/chunk13.txt"
+      - "build-assets/email-campaigns-large-py/meta.json"
+  workflow_dispatch:
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: email-campaigns-os
+      - name: Concat + run assembler
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path("build-assets/email-campaigns-large-py")
+          meta = json.loads((root / "meta.json").read_text())
+          text = "".join((root / f"chunk{i:02d}.txt").read_text() for i in range(meta["chunks"]))
+          assert hashlib.sha256(text.encode()).hexdigest() == meta["sha256"]
+          pathlib.Path("scripts").mkdir(exist_ok=True)
+          pathlib.Path("scripts/assemble_email_campaigns_large.py").write_text(text)
+          print("assembler bytes", len(text))
+          PY
+          python3 scripts/assemble_email_campaigns_large.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/voice/desk-actions.ts src/lib/voice/tools.ts src/components/owner-desk.tsx scripts/assemble_email_campaigns_large.py
+          if git diff --cached --quiet; then echo none; else git commit -m "feat(campaigns): assemble Ara tools + Owner Desk Campaigns UI" && git push; fi
