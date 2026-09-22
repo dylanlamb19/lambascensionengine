@@ -15,35 +15,54 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: linkedin-agent-in-app
-      - name: Assemble tools.ts (zlib+b64)
+          fetch-depth: 0
+      - name: Restore tools.ts from main + linkedin patch
         if: ${{ inputs.target == 'tools' || inputs.target == 'both' }}
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import base64, hashlib, json, pathlib, zlib
-          root = pathlib.Path("build-assets/linkedin-agent/tools-zlib")
-          meta = json.loads((root / "meta.json").read_text())
-          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
-          raw = zlib.decompress(base64.b64decode("".join(parts)))
+          import base64, hashlib, json, pathlib
+          root = pathlib.Path("build-assets/linkedin-agent")
+          meta = json.loads((root / "tools-patch-meta.json").read_text())
+          parts = [(root / f"tools-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
+          raw = base64.b64decode("".join(parts))
           digest = hashlib.sha256(raw).hexdigest()
           assert digest == meta["sha256"], (digest, meta["sha256"])
-          pathlib.Path("src/lib/voice/tools.ts").write_bytes(raw)
-          print("wrote tools.ts", len(raw), digest)
+          (root / "tools-linkedin.patch").write_bytes(raw)
+          print("decoded tools patch", len(raw), digest)
           PY
-      - name: Assemble owner-desk.tsx (zlib+b64)
+          git show origin/main:src/lib/voice/tools.ts > src/lib/voice/tools.ts
+          patch -p1 < build-assets/linkedin-agent/tools-linkedin.patch
+          python3 <<'PY'
+          import hashlib, pathlib
+          raw = pathlib.Path("src/lib/voice/tools.ts").read_bytes()
+          digest = hashlib.sha256(raw).hexdigest()
+          assert digest == "c2efbd32136bd540fb5a03d03b6f35d1cad5531baf94fe39ca2957d715ae0cd6", digest
+          print("tools.ts ok", len(raw), digest)
+          PY
+      - name: Restore owner-desk.tsx from main + linkedin patch
         if: ${{ inputs.target == 'owner-desk' || inputs.target == 'both' }}
         run: |
           set -euo pipefail
           python3 <<'PY'
-          import base64, hashlib, json, pathlib, zlib
-          root = pathlib.Path("build-assets/linkedin-agent/owner-zlib")
-          meta = json.loads((root / "meta.json").read_text())
-          parts = [(root / f"part{i:02d}.b64").read_text().strip() for i in range(meta["parts"])]
-          raw = zlib.decompress(base64.b64decode("".join(parts)))
+          import base64, hashlib, json, pathlib
+          root = pathlib.Path("build-assets/linkedin-agent")
+          meta = json.loads((root / "owner-patch-meta.json").read_text())
+          parts = [(root / f"owner-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
+          raw = base64.b64decode("".join(parts))
           digest = hashlib.sha256(raw).hexdigest()
           assert digest == meta["sha256"], (digest, meta["sha256"])
-          pathlib.Path("src/components/owner-desk.tsx").write_bytes(raw)
-          print("wrote owner-desk.tsx", len(raw), digest)
+          (root / "owner-linkedin.patch").write_bytes(raw)
+          print("decoded owner patch", len(raw), digest)
+          PY
+          git show origin/main:src/components/owner-desk.tsx > src/components/owner-desk.tsx
+          patch -p1 < build-assets/linkedin-agent/owner-linkedin.patch
+          python3 <<'PY'
+          import hashlib, pathlib
+          raw = pathlib.Path("src/components/owner-desk.tsx").read_bytes()
+          digest = hashlib.sha256(raw).hexdigest()
+          assert digest == "349d592e50d86c97a8cbeb304ef9c5b939ea6de79df0e9029f95e1cc05a8d2f8", digest
+          print("owner-desk.tsx ok", len(raw), digest)
           PY
       - name: Commit assembled files
         run: |
@@ -54,6 +73,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "feat(linkedin-agent): assemble tools.ts + owner-desk.tsx from zlib chunks"
+            git commit -m "feat(linkedin-agent): restore tools.ts + owner-desk.tsx via main+patch"
             git push origin HEAD:linkedin-agent-in-app
           fi
