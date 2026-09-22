@@ -9,7 +9,7 @@ import type {
   LinkedInAgentOrderKind,
   LinkedInAgentOrderStatus,
   LinkedInAgentRole,
-  type JsonValue,
+  JsonValue,
 } from "./types";
 
 type MsgRow = {
