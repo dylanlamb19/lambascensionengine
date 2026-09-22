@@ -1,13 +1,12 @@
 --- a/src/lib/voice/tools.ts
 +++ b/src/lib/voice/tools.ts
-@@ -1,5 +1,4 @@
--
+@@ -1,4 +1,4 @@
 -import { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk } from "./intents.ts";
 +import { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk as confirmPhraseOkBase } from "./intents.ts";
  import { allowSendRecipient } from "../mail/test-mode.ts";
  import type { IntentName } from "./types.ts";
  import { clickAllowed, selectorRejected, controlRisk } from "../ara-computer/guard.ts";
-@@ -142,6 +141,7 @@
+@@ -141,6 +141,7 @@
    "get_current_design",
    "apply_design_operations",
    "update_prospect_information",
@@ -15,7 +14,7 @@
  ] as const;
  
  export type AllowedTool = (typeof ALLOWED_TOOLS)[number];
-@@ -465,7 +465,8 @@
+@@ -464,7 +465,8 @@
    | { type: "pick_background"; nsfw?: boolean }
    | { type: "web_research"; query: string; mode: "quick" | "deep"; uid?: string }
    | { type: "read_page"; url: string }
@@ -25,7 +24,7 @@
  
  export type ToolResult = {
    ok: boolean;
-@@ -494,6 +495,8 @@
+@@ -493,6 +495,8 @@
      { type: "function", name: "navigate_health", description: "Open System Health / Sentinel. Same as opening the System Health page. Inspect-only.", parameters: { type: "object", properties: {} } },
      { type: "function", name: "get_system_health", description: "Answer from Sentinel’s persisted evidence only: is production healthy, open bugs, last deploy, worker, what Sentinel watches. NEVER invent health. If already_spoken, remain silent.", parameters: { type: "object", properties: { topic: { type: "string" } } } },
      { type: "function", name: "update_prospect_information", description: "Add or edit known prospect fields the owner just provided. Allowlisted fields only. Never invent values. Never send email. Provenance is OWNER PROVIDED. If Dylan said ‘add information’ without the values, call this with prompt_only=true. Use the currently open prospect_uid.", parameters: { type: "object", properties: { ...uid, prompt_only: { type: "boolean" }, decision_maker_name: { type: "string" }, decision_maker_role: { type: "string" }, business_email: { type: "string" }, business_phone: { type: "string" }, decision_maker_phone: { type: "string" }, website: { type: "string" }, contact_page: { type: "string" }, linkedin: { type: "string" }, profile_url: { type: "string" }, industry: { type: "string" }, city: { type: "string" }, notes: { type: "string" }, clear_fields: { type: "array", items: { type: "string" } }, confirm_destructive: { type: "boolean" } } } },
@@ -34,7 +33,7 @@
      { type: "function", name: "navigate_calendar", description: "Open the Calendar screen. ONLY when the owner explicitly says pull up / show / open / go to my calendar as this turn’s command. NEVER because an earlier scheduling command mentioned calendar. NEVER for ‘add a call’, ‘can you hear me’, or name corrections.", parameters: { type: "object", properties: {} } },
      { type: "function", name: "calendar_today", description: "Jump the Calendar to today.", parameters: { type: "object", properties: {} } },
      { type: "function", name: "calendar_next", description: "Move Calendar forward: next day, next week, or next month depending on the current view.", parameters: { type: "object", properties: {} } },
-@@ -1620,6 +1623,61 @@
+@@ -1619,6 +1623,61 @@
        plan: { type: "arm", intent: "SEND_EMAIL", uid: target.uid, confirmPhrase: "Confirm send" },
      };
    }
@@ -96,7 +95,7 @@
    return reject(name, "That tool is not on the allowlist.");
  }
  
-@@ -1637,4 +1695,10 @@
+@@ -1636,4 +1695,10 @@
    return fallback;
  }
  
