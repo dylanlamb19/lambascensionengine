@@ -1,13 +1,12 @@
 name: Apply Acquisition OS
 on:
+  workflow_dispatch:
   push:
     branches: [acquisition-os-milestone]
     paths:
-      - "acq-src-chunks/**"
-      - "scripts/join-acq-src-chunks.mjs"
-      - "scripts/apply-acquisition-os-patches.mjs"
+      - "acq-payload-parts/**"
+      - "scripts/install-acq-os-from-payload.mjs"
       - ".github/workflows/apply-acquisition-os.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,8 +19,8 @@ jobs:
         with:
           ref: acquisition-os-milestone
           fetch-depth: 0
-      - name: Join source chunks and patch
-        run: node scripts/join-acq-src-chunks.mjs
+      - name: Install sources from payload parts + patch
+        run: node scripts/install-acq-os-from-payload.mjs
       - name: Commit assembled sources
         run: |
           git config user.name "github-actions[bot]"
@@ -30,6 +29,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "feat(acq): assemble Acquisition OS Parts 1-2 (+ stretch) from chunks"
+            git commit -m "feat(acq): assemble Acquisition OS Parts 1-2 (+ stretch) from payload"
             git push
           fi
