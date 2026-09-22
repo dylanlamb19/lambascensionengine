@@ -1,6 +1,11 @@
 name: Resolve PR2 merge main into linkedin-agent-in-app
 on:
   workflow_dispatch:
+  push:
+    branches: [linkedin-agent-in-app]
+    paths:
+      - 'build-assets/linkedin-agent/RESOLVE_PR2_TRIGGER'
+      - '.github/workflows/resolve-pr2-merge.yml'
 jobs:
   merge-resolve:
     runs-on: ubuntu-latest
@@ -12,6 +17,7 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Merge main; keep LinkedIn + FindVerticalField + NextMoves
         run: |
           set -euo pipefail
