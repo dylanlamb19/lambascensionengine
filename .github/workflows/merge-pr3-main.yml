@@ -11,7 +11,7 @@ jobs:
         with:
           ref: acquisition-os-milestone
           fetch-depth: 0
-      - name: Merge origin/main and apply pr3-resolve
+      - name: Merge origin/main and resolve
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -22,23 +22,8 @@ jobs:
           merge_rc=$?
           set -e
           echo "merge exit=$merge_rc"
-          test -d mcp-push/pr3-resolve
-          # Conflict resolutions / overlays
-          if [ -f src/lib/prospects/view-filter.ts ]; then
-            # Prefer Acquisition OS view-filter (queue + SUPPRESSED); restore PR2 default sort
-            if git ls-files -u | grep -q 'src/lib/prospects/view-filter.ts'; then
-              git checkout --ours -- src/lib/prospects/view-filter.ts
-            fi
-            sed -i 's/filter\.sort || "score"/filter.sort || "needs_attention"/g' src/lib/prospects/view-filter.ts
-          fi
-          cp mcp-push/pr3-resolve/tools.ts src/lib/voice/tools.ts
-          cp mcp-push/pr3-resolve/owner-desk.tsx src/components/owner-desk.tsx
-          cp mcp-push/pr3-resolve/contactability-check.ts src/lib/sentinel/contactability-check.ts
-          if [ -f migrations/0018_linkedin_agent.sql ]; then
-            rm -f migrations/0018_acquisition_contactability.sql
-            cp mcp-push/pr3-resolve/0019_acquisition_contactability.sql migrations/0019_acquisition_contactability.sql
-          fi
-          if git grep -n '<<<<<<<' -- . ':!mcp-push' ':!acq-micro' ':!acq-bundle-parts' ':!acq-payload-parts' ':!acq-src-chunks' ':!.github/workflows/merge-pr3-main.yml' 2>/dev/null; then
+          python3 scripts/resolve-pr3-vs-main.py
+          if git grep -n '<<<<<<<' -- . ':!mcp-push' ':!acq-micro' ':!acq-bundle-parts' ':!acq-payload-parts' ':!acq-src-chunks' ':!.github/workflows' 2>/dev/null; then
             echo "Unresolved conflict markers remain" >&2
             exit 1
           fi
@@ -52,6 +37,6 @@ Renumber acquisition migration to 0019_*. Fix Sentinel typecheck.
 EOF
 )"
           else
-            git diff --cached --quiet || git commit -m "fix(acq): apply pr3-resolve + 0019 migration vs main"
+            git diff --cached --quiet || git commit -m "fix(acq): resolve vs main + typecheck + 0019 migration"
           fi
           git push origin HEAD:acquisition-os-milestone
