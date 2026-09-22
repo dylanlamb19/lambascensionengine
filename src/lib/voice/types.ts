@@ -29,9 +29,17 @@ export type IntentName =
   | "DRAFT_OUTREACH"
   | "FIND_CLIENTS"
   | "RESEARCH_FURTHER"
+  | "FIND_CONTACT"
+  | "OPEN_WEBSITE"
+  | "CALL_PROSPECT"
   | "EXPLAIN_PROSPECT"
   | "SHOW_EXPLAIN_PANEL"
   | "CLOSE_EXPLAIN"
+  | "READ_PAGE"
+  | "READ_EVERYTHING"
+  | "READ_WARNING"
+  | "READ_FORM"
+  | "READ_OPTIONS"
   | "READ_OUTREACH"
   | "APPROVE_PROSPECT"
   | "SKIP_PROSPECT"
@@ -50,6 +58,7 @@ export type IntentName =
   | "NEXT_CALL"
   | "AVAILABILITY"
   | "SCHEDULE_CALL"
+  | "CREATE_OWNER_CALENDAR_EVENT"
   | "UNKNOWN";
 
 export type ParsedIntent = {

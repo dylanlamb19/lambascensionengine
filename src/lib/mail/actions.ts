@@ -10,27 +10,61 @@ function recipientOf(p: { contacts?: { email?: string }[]; name: string }): stri
 export const googleStatusFn = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
-    const { googleStatus } = await import("./sql.server");
-    const { googleOAuthConfigured } = await import("../google/oauth");
-    const status = await googleStatus(context.userId);
-    return { ok: true as const, configured: googleOAuthConfigured(), ...status };
+    const { loadIntegrationStatus } = await import("./integration-status.server");
+    const { gmailHealth, calendarHealth } = await import("./integration-status");
+    const integration = await loadIntegrationStatus(context.userId);
+    return {
+      ok: true as const,
+      configured: integration.google_oauth_configured,
+      gmail: gmailHealth(integration),
+      calendar: calendarHealth(integration),
+      gmailEmail: integration.gmail_identity,
+      calendarEmail: integration.calendar_identity,
+      error: "",
+      integration,
+    };
   });
 
 export const googleStartFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { kind: "gmail" | "calendar"; origin: string }) => data)
   .handler(async ({ data, context }) => {
-    const { googleOAuthConfigured, authorizeUrl } = await import("../google/oauth");
+    const { googleOAuthConfigured, googleOAuthSetup, authorizeUrl } = await import("../google/oauth");
+    const missing = googleOAuthSetup();
     if (!googleOAuthConfigured()) {
       return {
         ok: false as const,
-        reason: "Google isn’t set up on this server yet. We will not ask for your Gmail password. Whoever hosts Lamb Ascension needs to add the Google OAuth keys.",
+        reason: data.kind === "calendar"
+          ? "Google Calendar can’t be connected yet because Google OAuth isn’t configured on this server."
+          : "Gmail can’t be connected yet because Google OAuth isn’t configured on this server.",
+        missing,
+        next: "Whoever hosts Lamb Ascension needs to add the missing values. We will not ask for your Gmail password.",
       };
     }
-    const { saveOauthState } = await import("./sql.server");
+    if (data.kind === "calendar") {
+      const { accessFor } = await import("./live.server");
+      const { probeCalendarApiEnabled } = await import("../google/calendar");
+      const { CALENDAR_API_DISABLED_MESSAGE } = await import("../google/calendar-errors");
+      const gmailTokens = await accessFor(context.userId, "gmail");
+      if (gmailTokens) {
+        const api = await probeCalendarApiEnabled(gmailTokens.access_token);
+        if (api.enabled === false) {
+          return {
+            ok: false as const,
+            reason: CALENDAR_API_DISABLED_MESSAGE,
+            code: "CALENDAR_API_DISABLED" as const,
+            missing,
+            next: "Enable Google Calendar API in Google Cloud for LambAscensionEngine, then press Connect Google Calendar again. Gmail is unchanged.",
+          };
+        }
+      }
+    }
+    const { saveOauthState, googleStatus } = await import("./sql.server");
     const rec = await saveOauthState(context.userId, data.kind);
-    const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin });
-    return { ok: true as const, url };
+    const accounts = await googleStatus(context.userId);
+    const loginHint = data.kind === "calendar" ? (accounts.gmailEmail || undefined) : undefined;
+    const url = authorizeUrl({ state: rec.state, kind: data.kind, requestUrl: data.origin, loginHint });
+    return { ok: true as const, url, missing };
   });
 
 export const googleDisconnectFn = createServerFn({ method: "POST" })
@@ -146,7 +180,7 @@ export const availabilityFn = createServerFn({ method: "GET" })
     const { offeredSlots, CALENDAR_UNREADABLE } = await import("../google/calendar");
     const tokens = await accessFor(context.userId, "calendar");
     if (!tokens) return { ok: false as const, reason: "Calendar is not connected.", slots: [] as { start: string; end: string; label: string }[] };
-    const result = await offeredSlots(tokens.access_token, { count: 3 });
+    const result = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email });
     if (!result.ok) return { ok: false as const, reason: CALENDAR_UNREADABLE, slots: [] };
     const slots = result.slots.map((s) => ({ start: s.start.toISOString(), end: s.end.toISOString(), label: s.label }));
     return { ok: true as const, slots };
@@ -168,7 +202,7 @@ export const scheduleCallFn = createServerFn({ method: "POST" })
     const start = new Date(data.start);
     const end = new Date(data.end);
     const now = new Date();
-    const avail = await offeredSlots(tokens.access_token, { from: now, count: 8 });
+    const avail = await offeredSlots(tokens.access_token, { from: now, count: 8, calendarId: tokens.email });
     if (!avail.ok) return { ok: false as const, reason: CALENDAR_UNREADABLE };
     const check = slotIsOffered({ start, end }, avail.slots, now);
     if (!check.ok) return { ok: false as const, reason: check.reason };
@@ -271,6 +305,180 @@ export const calendarAgendaFn = createServerFn({ method: "POST" })
     }
     events.sort((a, b) => a.start.localeCompare(b.start));
     return { ok: true as const, connected: true, events };
+  });
+
+export const calendarTestEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { action: "create" | "delete"; eventId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const { loadSettings } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { offeredSlots, createEvent, deleteEvent, listEvents } = await import("../google/calendar");
+    const settings = await loadSettings(context.userId);
+    if (!settings.testMode) {
+      return { ok: false as const, reason: "Turn Test Mode on to create an internal Calendar test event." };
+    }
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) return { ok: false as const, reason: "Calendar is not connected.", code: "CALENDAR_NOT_AUTHORIZED" as const };
+    if (data.action === "delete") {
+      const id = (data.eventId || "").trim();
+      if (!id) return { ok: false as const, reason: "No test event to delete." };
+      const gone = await deleteEvent(tokens.access_token, id);
+      if (!gone.ok) return { ok: false as const, reason: gone.error, code: gone.code };
+      return { ok: true as const, deleted: true as const, eventId: id };
+    }
+    const avail = await offeredSlots(tokens.access_token, { count: 1, calendarId: tokens.email });
+    if (!avail.ok || !avail.slots[0]) {
+      return { ok: false as const, reason: avail.ok ? "No verified free slot was found." : avail.reason, code: avail.ok ? "FREEBUSY_FAILED" as const : avail.code };
+    }
+    const slot = avail.slots[0];
+    const created = await createEvent(tokens.access_token, {
+      title: "LambAscensionEngine Calendar Test",
+      start: slot.start,
+      end: slot.end,
+      description: "Internal Test Mode event. No prospect was contacted.",
+    });
+    if (!created.ok) return { ok: false as const, reason: created.error, code: created.code };
+    const seen = await listEvents(tokens.access_token, slot.start, slot.end);
+    const visible = seen.ok && seen.events.some((e) => e.id === created.id);
+    return {
+      ok: true as const,
+      eventId: created.id,
+      start: slot.start.toISOString(),
+      end: slot.end.toISOString(),
+      visibleInEngine: visible,
+    };
+  });
+
+export const createOwnerCalendarEventFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: {
+    title: string;
+    when?: string;
+    date?: string;
+    time?: string;
+    durationMinutes?: number;
+    description?: string;
+    location?: string;
+    requestId?: string;
+  }) => data)
+  .handler(async ({ data, context }) => {
+    const { createHash } = await import("node:crypto");
+    const { loadSettings, audit } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { createEvent, findMatchingEvent } = await import("../google/calendar");
+    const {
+      resolveOwnerWhen,
+      sanitizeOwnerTitle,
+      parseOwnerCalendarSpeech,
+      ownerEventFingerprint,
+      ownerEventSuccessSpeech,
+      ownerEventFailureSpeech,
+      OWNER_TZ_DEFAULT,
+    } = await import("../calendar/owner-event");
+
+    const parsedSpeech = parseOwnerCalendarSpeech(
+      [data.title, data.when, data.date, data.time].filter((s) => typeof s === "string" && s.trim()).join(" "),
+    );
+    const title = parsedSpeech.matched && parsedSpeech.title
+      ? parsedSpeech.title
+      : sanitizeOwnerTitle(data.title || "");
+    if (!title) {
+      return {
+        ok: false as const,
+        created: false as const,
+        need: "when" as const,
+        question: "What should I call that calendar event?",
+        spoken: "What should I call that calendar event?",
+      };
+    }
+    const settings = await loadSettings(context.userId);
+    const timezone = settings.timezone || OWNER_TZ_DEFAULT;
+    const resolved = resolveOwnerWhen({
+      when: data.when || (parsedSpeech.matched ? parsedSpeech.when : undefined),
+      date: data.date,
+      time: data.time,
+      durationMinutes: data.durationMinutes,
+      timezone,
+      now: new Date(),
+    });
+    if (!resolved.ok) {
+      return {
+        ok: false as const,
+        created: false as const,
+        need: resolved.need,
+        question: resolved.question,
+        spoken: resolved.question,
+      };
+    }
+
+    const tokens = await accessFor(context.userId, "calendar");
+    if (!tokens) {
+      return {
+        ok: false as const,
+        created: false as const,
+        reason: "Calendar isn’t connected, so nothing was added.",
+        spoken: ownerEventFailureSpeech(),
+        code: "CALENDAR_NOT_AUTHORIZED" as const,
+      };
+    }
+
+    const fingerprint = ownerEventFingerprint({
+      title,
+      startIso: resolved.start.toISOString(),
+      durationMinutes: resolved.durationMinutes,
+    });
+    const eventId = createHash("sha256").update(`${context.userId}:${fingerprint}`).digest("hex").slice(0, 32);
+
+    const created = await createEvent(tokens.access_token, {
+      title,
+      start: resolved.start,
+      end: resolved.end,
+      description: (data.description || "").slice(0, 1000),
+      location: (data.location || "").slice(0, 200) || undefined,
+      timeZone: timezone,
+      eventId,
+      reminderMinutes: [0],
+    });
+
+    let id = created.ok ? created.id : "";
+    let alreadyExisted = created.ok ? Boolean(created.alreadyExisted) : false;
+    if (!created.ok) {
+      const existing = await findMatchingEvent(tokens.access_token, { title, start: resolved.start });
+      if (existing) {
+        id = existing.id;
+        alreadyExisted = true;
+      } else {
+        await audit(context.userId, "create_owner_calendar_event", `failed:${title}`, { method: "VOICE" });
+        return {
+          ok: false as const,
+          created: false as const,
+          reason: created.error,
+          spoken: ownerEventFailureSpeech(),
+          code: created.code,
+        };
+      }
+    }
+
+    await audit(context.userId, "create_owner_calendar_event", alreadyExisted ? `exists:${title}` : `created:${title}`, { method: "VOICE", providerIds: id });
+    const spoken = ownerEventSuccessSpeech(title, resolved.whenLabel);
+    return {
+      ok: true as const,
+      created: true as const,
+      alreadyExisted,
+      eventId: id,
+      title,
+      whenLabel: resolved.whenLabel,
+      start: resolved.start.toISOString(),
+      end: resolved.end.toISOString(),
+      fingerprint,
+      attendees: 0 as const,
+      guests: 0 as const,
+      prospect: false as const,
+      sales: false as const,
+      emailSent: false as const,
+      spoken,
+    };
   });
 
 export type AgendaEvent = {

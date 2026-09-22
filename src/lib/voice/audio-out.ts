@@ -127,7 +127,6 @@ function primeAudioSession() {
 function attachHost(el: HTMLAudioElement) {
   el.setAttribute("playsinline", "true");
   el.setAttribute("webkit-playsinline", "true");
-  el.setAttribute("autoplay", "true");
   el.setAttribute("data-ara-voice-out", "1");
   el.preload = "auto";
   el.muted = false;
@@ -135,27 +134,15 @@ function attachHost(el: HTMLAudioElement) {
   el.volume = 1;
   el.autoplay = true;
   (el as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
-  el.controls = true;
-  el.className = "la-ara-player";
-  el.style.cssText = [
-    "display:block",
-    "position:fixed",
-    "left:10px",
-    "top:8px",
-    "width:min(22rem, calc(100vw - 20px))",
-    "height:36px",
-    "z-index:2147483000",
-    "opacity:1",
-    "pointer-events:auto",
-    "background:#111",
-  ].join(";");
-  const root = document.body || document.documentElement;
-  if (root && el.parentElement !== root) root.appendChild(el);
+  el.controls = false;
+  el.removeAttribute("controls");
+  el.className = "";
+  el.style.cssText = "display:none;width:0;height:0;position:absolute;pointer-events:none;";
 }
 
 function makePlayer(): HTMLAudioElement | null {
-  if (typeof document === "undefined" || typeof Audio === "undefined") return null;
-  const el = document.createElement("audio");
+  if (typeof Audio === "undefined") return null;
+  const el = new Audio();
   attachHost(el);
   return el;
 }
@@ -170,17 +157,13 @@ let endedHandler: (() => void) | null = null;
 let holdBlob: Blob | null = null;
 
 function ensureHost(): HTMLAudioElement | null {
-  if (typeof document === "undefined") return null;
-  const existing = document.getElementById("la-ara-voice-out") as HTMLAudioElement | null;
-  if (existing) {
-    try { existing.srcObject = null; } catch { /* ignore */ }
-    existing.muted = false;
-    existing.defaultMuted = false;
-    existing.volume = 1;
-    existing.autoplay = true;
-    attachHost(existing);
-    hostEl = existing;
-    return existing;
+  if (hostEl) {
+    attachHost(hostEl);
+    return hostEl;
+  }
+  if (typeof document !== "undefined") {
+    const leftover = document.getElementById("la-ara-voice-out");
+    if (leftover) leftover.remove();
   }
   const el = makePlayer();
   if (el) el.id = "la-ara-voice-out";
@@ -217,8 +200,8 @@ function playBlob(el: HTMLAudioElement, blob: Blob, mode: typeof hostMode): Prom
   el.volume = 1;
   el.src = url;
   hostMode = mode;
-  el.controls = true;
-  el.style.opacity = "1";
+  el.controls = false;
+  el.removeAttribute("controls");
   el.setAttribute("data-ara-src", mode);
   bindEnded(el);
   return el.play().then(() => {
@@ -245,43 +228,51 @@ function startHold(el: HTMLAudioElement) {
 }
 
 /**
- * Must run inside a tap. Plays a short cue through the phone media mixer
- * (Bluetooth A2DP), then keeps that same <audio> playing a quiet hold so
- * later speech can chain off `ended` — new Audio() after the tap is blocked
- * in the Grok preview iframe on Android.
+ * Must run inside a tap. Unlocks Web Audio so Ara can speak after Conversation starts.
+ * Does not mount an HTML audio player — recovered Ara uses AudioContext, not a visible <audio>.
  */
-export function unlockAraOutput(opts?: { cue?: boolean }): boolean {
+export function unlockAraOutput(_opts?: { cue?: boolean }): boolean {
   primeAudioSession();
-  if (typeof Audio === "undefined") return false;
-  const host = ensureHost();
-  if (!host) return false;
-  holdOpen = true;
-  const wantCue = opts?.cue !== false && !cued;
-  if (wantCue) {
-    cued = true;
-    void playBlob(host, toPhoneWav(cuePcm24()), "cue").then(() => {
-      host.onended = () => {
-        host.setAttribute("data-ara-playing", "0");
-        if (endedHandler) endedHandler();
-        else startHold(host);
-      };
-    }).catch(() => {
-      cued = false;
-      startHold(host);
-    });
+  if (typeof AudioContext === "undefined" && typeof window === "undefined") return false;
+  try {
+    const w = typeof window !== "undefined" ? window : null;
+    const Ctx = w && ((w as unknown as { AudioContext?: typeof AudioContext }).AudioContext
+      || (w as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+    if (!Ctx) return true;
+    if (!unlockCtx) unlockCtx = new Ctx();
+    if (unlockCtx.state === "suspended") void unlockCtx.resume();
+    return true;
+  } catch {
+    return false;
   }
-  return true;
+}
+
+let unlockCtx: AudioContext | null = null;
+
+/** Pause, revoke blobs, and remove any leftover Ara <audio> from the document. */
+export function teardownAraOutput(): void {
+  holdOpen = false;
+  cued = false;
+  hostMode = "idle";
+  revokeHostUrl();
+  const fromDoc = typeof document !== "undefined"
+    ? document.getElementById("la-ara-voice-out") as HTMLAudioElement | null
+    : null;
+  const el = hostEl || fromDoc;
+  if (el) {
+    try { el.pause(); } catch { /* ignore */ }
+    el.onended = null;
+    el.controls = false;
+    el.removeAttribute("controls");
+    try { el.removeAttribute("src"); el.src = ""; el.load(); } catch { /* ignore */ }
+    try { el.remove(); } catch { /* ignore */ }
+  }
+  hostEl = null;
 }
 
 export function replayAraOutput(): boolean {
-  holdOpen = true;
   if (replayHandler) return replayHandler();
-  const host = ensureHost();
-  if (!host) return false;
-  host.muted = false;
-  host.volume = 1;
-  void host.play().catch(() => undefined);
-  return true;
+  return false;
 }
 
 export function araOutputContext(): AudioContext | null {
@@ -369,11 +360,7 @@ export class AraAudioPipeline {
     this.pending = [];
     this.pendingSamples = 0;
     holdOpen = false;
-    const host = hostEl || (typeof document !== "undefined" ? document.getElementById("la-ara-voice-out") as HTMLAudioElement | null : null);
-    if (host) {
-      try { host.pause(); } catch { /* ignore */ }
-      host.setAttribute("data-ara-playing", "0");
-    }
+    teardownAraOutput();
   }
 
   flush() {

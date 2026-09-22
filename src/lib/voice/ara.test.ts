@@ -18,6 +18,7 @@ import { publicAraSessionPayload } from "./ara-token.ts";
 import { executeIfUntrustedSource, toolsInvokedByUntrustedText } from "./untrusted-tools.ts";
 import { makeVoiceAudit, auditHasAudio } from "./audit.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
+import { EMPTY_TEST_LOOP } from "../mail/test-loop.ts";
 import { planToAction } from "./desk-actions.ts";
 
 const desk: AraDeskContext = {
@@ -174,7 +175,79 @@ describe("Ara allowlisted tools", () => {
   it("disable_test_mode is refused", () => {
     const r = executeAllowlistedTool("disable_test_mode", {}, desk);
     assert.equal(r.rejected, true);
-    assert.match(String(r.output.reason), /Test Mode stays on/i);
+    assert.match(String(r.output.reason), /cannot turn Test Mode off/i);
+  });
+
+  it("personal owner calendar events are a real tool, not sales bookings", () => {
+    assert.equal(isAllowedTool("create_owner_calendar_event"), true);
+    const missingTime = executeAllowlistedTool("create_owner_calendar_event", { title: "Dentist appointment", when: "tomorrow" }, desk);
+    assert.equal(missingTime.ok, false);
+    assert.equal(missingTime.output.created, false);
+    assert.equal(missingTime.output.need, "time");
+    assert.match(String(missingTime.output.question), /What time tomorrow/i);
+    assert.equal(missingTime.plan.type, "none");
+    assert.equal(planToAction(missingTime.plan), null);
+
+    const ready = executeAllowlistedTool("create_owner_calendar_event", {
+      title: "Go to SouthState Bank and withdraw cash",
+      when: "tomorrow at 4 PM",
+    }, { ...desk, timezone: "America/Chicago" });
+    assert.equal(ready.ok, true);
+    assert.equal(ready.plan.type, "owner_calendar_event");
+    assert.equal(ready.output.attendees, 0);
+    assert.equal(ready.output.prospect, false);
+    assert.equal(ready.output.sales, false);
+    assert.equal(ready.output.created, false);
+    assert.equal(planToAction(ready.plan), null);
+    if (ready.plan.type === "owner_calendar_event") {
+      assert.equal(ready.plan.title, "Go to SouthState Bank and withdraw cash");
+    }
+
+    const fromSpeech = executeAllowlistedTool("create_owner_calendar_event", {
+      title: "Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash",
+    }, { ...desk, timezone: "America/Chicago" });
+    assert.equal(fromSpeech.ok, true);
+    assert.equal(fromSpeech.plan.type, "owner_calendar_event");
+    if (fromSpeech.plan.type === "owner_calendar_event") {
+      assert.equal(fromSpeech.plan.title, "Go to SouthState Bank and withdraw cash");
+    }
+
+    const sales = executeAllowlistedTool("schedule_call", { uid: "uid-fire" }, desk);
+    assert.equal(sales.plan.type, "arm");
+    if (sales.plan.type === "arm") assert.equal(sales.plan.intent, "SCHEDULE_CALL");
+
+    const last = executeAllowlistedTool("get_last_owner_calendar_event", {}, desk);
+    assert.match(String(last.output.spoken), /haven.t added/i);
+    const after = executeAllowlistedTool("get_last_owner_calendar_event", {}, {
+      ...desk,
+      lastOwnerEvent: {
+        id: "evt1",
+        title: "Go to SouthState Bank and withdraw cash",
+        whenLabel: "tomorrow at 4:00 PM",
+        start: "2026-09-21T21:00:00.000Z",
+        end: "2026-09-21T21:30:00.000Z",
+        fingerprint: "fp",
+      },
+    });
+    assert.match(String(after.output.spoken), /SouthState Bank/);
+  });
+
+  it("Ara instructions distinguish personal calendar from sales booking", () => {
+    const text = buildAraInstructions({ ...desk, timezone: "America/Chicago" });
+    assert.match(text, /create_owner_calendar_event/);
+    assert.match(text, /Do NOT use schedule_call for personal reminders/i);
+    assert.match(text, /Owner timezone: America\/Chicago/);
+    assert.match(text, /Never say you don.t have a tool for personal reminders/i);
+    assert.match(text, /Always-available personal calendar tools/);
+    assert.doesNotMatch(text, /I don't have a tool to add personal reminders/);
+  });
+
+  it("Conversation Mode intercepts personal calendar speech before Ara can refuse", () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../components/owner-desk.tsx"), "utf8");
+    assert.match(src, /shouldSilenceAraForOwnerCalendar/);
+    assert.match(src, /isOwnerCalendarRefusalSpeech/);
+    assert.match(src, /runOwnerPersonalCalendar/);
+    assert.match(src, /createOwnerCalendarEventFn/);
   });
 
   it("uppercase action names and prospect_uid still operate the UI", () => {
@@ -243,9 +316,34 @@ describe("Ara session payload / outage / key leakage", () => {
     assert.match(text, /Test Mode/);
     assert.match(text, /Confirm send/);
     assert.match(text, /You can operate Lamb Ascension|operate Lamb Ascension/);
-    assert.match(text, /Available tools on this screen/);
+    assert.match(text, /Available on-screen buttons/);
+    assert.match(text, /create_owner_calendar_event/);
     assert.doesNotMatch(text, /cannot click|no direct UI|DOM access|My tools are limited/i);
     assert.match(text, /navigate_pipeline/);
+  });
+
+  it("Ara answers test-loop questions from live server state", () => {
+    const silent = buildAraInstructions(desk);
+    assert.doesNotMatch(silent, /The test follow-up was sent/);
+    const text = buildAraInstructions({
+      ...desk,
+      testLoop: {
+        ...EMPTY_TEST_LOOP,
+        recipient: "me@test.com",
+        allowlisted: true,
+        initialSent: true,
+        followupScheduled: true,
+        followupSent: true,
+        pendingFollowups: 0,
+        replyDetected: true,
+        replyCount: 1,
+        sequenceStopped: true,
+      },
+    });
+    assert.match(text, /Yes\. The test follow-up was sent/);
+    assert.match(text, /Yes\. A reply was detected on the test thread/);
+    assert.match(text, /No remaining follow-ups are scheduled for that test thread/);
+    assert.match(text, /not a real prospect/i);
   });
 
   it("Ara has executable Home visual design tools", () => {

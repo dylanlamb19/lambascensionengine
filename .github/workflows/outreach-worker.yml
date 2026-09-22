@@ -1,0 +1,33 @@
+name: Outreach Worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    name: Wake production outreach worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST existing production worker endpoint
+        env:
+          JOB_SECRET: ${{ secrets.OUTREACH_JOB_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${JOB_SECRET}" ]; then
+            echo "OUTREACH_JOB_SECRET repository secret is not set"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/worker-body -w "%{http_code}" \
+            -X POST "https://lamb-ascension-engine.vercel.app/api/jobs/outreach" \
+            -H "Authorization: Bearer ${JOB_SECRET}" \
+            -H "x-job-secret: ${JOB_SECRET}" \
+            -H "Content-Type: application/json" \
+            --max-time 90)
+          echo "HTTP ${code}"
+          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
+            echo "worker endpoint returned non-2xx"
+            exit 1
+          fi

@@ -1,6 +1,7 @@
 import type { IntentName, ParsedIntent, Risk, VoiceContext } from "./types.ts";
 import { HIGH_INTENTS, MEDIUM_INTENTS } from "./types.ts";
 import { parseSpokenHour } from "../calendar/range.ts";
+import { isPersonalCalendarCommand } from "../calendar/owner-event.ts";
 
 function riskOf(intent: IntentName): Risk {
   if (HIGH_INTENTS.includes(intent)) return "HIGH";
@@ -210,6 +211,9 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /read( me)? (their |the )?reply|what did they say/)) return { ...base, intent: "READ_REPLY", risk: "LOW" };
   if (hit(t, /draft a response|draft a reply|write a response/)) return { ...base, intent: "DRAFT_RESPONSE", risk: "LOW" };
   if (hit(t, /stop (their |the )?follow-?ups/)) return { ...base, intent: "STOP_FOLLOWUPS", risk: "MEDIUM" };
+  if (isPersonalCalendarCommand(stripped)) {
+    return { ...base, intent: "CREATE_OWNER_CALENDAR_EVENT", risk: "LOW", confidence: 0.98 };
+  }
   if (hit(t, /when is my next (sales )?call|next sales call/)) return { ...base, intent: "NEXT_CALL", risk: "LOW" };
   if (hit(t, /what times am i (available|free)|available wednesday|free wednesday|open times/)) return { ...base, intent: "AVAILABILITY", risk: "LOW" };
   if (hit(t, /schedule (them|it|the call)|book (them|the call)/)) return { ...base, intent: "SCHEDULE_CALL", risk: "HIGH" };
@@ -232,6 +236,22 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /go back to today|show( me)? today|^today$/)) return { ...base, intent: "CALENDAR_TODAY", risk: "LOW", confidence: 0.96 };
   if (hit(t, /do i have anything at|anything at \d/)) {
     return { ...base, intent: "CALENDAR_AT", risk: "LOW", confidence: 0.95, hour: parseSpokenHour(t) ?? undefined };
+  }
+
+  if (hit(t, /read everything( on (this |the )?(page|screen))?|read (the )?whole (page|screen)|read it all/)) {
+    return { ...base, intent: "READ_EVERYTHING", risk: "LOW", confidence: 0.98 };
+  }
+  if (hit(t, /read (the |this )?(warning|error|blocker)|what does the warning say/)) {
+    return { ...base, intent: "READ_WARNING", risk: "LOW", confidence: 0.97 };
+  }
+  if (hit(t, /read (the |this )?form|what('s| is) (on )?the form/)) {
+    return { ...base, intent: "READ_FORM", risk: "LOW", confidence: 0.96 };
+  }
+  if (hit(t, /what are my options|what can i (do|press)|read (the |my )?options/)) {
+    return { ...base, intent: "READ_OPTIONS", risk: "LOW", confidence: 0.96 };
+  }
+  if (hit(t, /read (this |the )?(page|screen)|read (this|it)( aloud)?|what does this say/)) {
+    return { ...base, intent: "READ_PAGE", risk: "LOW", confidence: 0.97 };
   }
 
   if (hit(t, /what am i looking at|explain this screen|what does this (page |screen )?mean|what should i (care about|do next) here|what is this page|what does this mean|where are we( now)?|what page is this/)) {
@@ -291,6 +311,27 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /find clients|open find clients|look for clients/)) return { ...base, intent: "FIND_CLIENTS", risk: "LOW" };
   if (hit(t, /find companies|find \d+|find high-ticket/)) return { ...base, intent: "FIND_CLIENTS", risk: "LOW" };
 
+  if (hit(t, /find (the |their |a )?(owner|decision[- ]maker|contact( person| method| info| information)?)|who (owns|is the owner)|look up (the |their )?owner/)) {
+    const named = t.match(/(?:for|at|with|about) (.+)$/);
+    const companyQuery = named && !THIS_RE.test(named[1]) ? named[1].trim() : "";
+    return { ...base, intent: "FIND_CONTACT", risk: "LOW", confidence: 0.96, companyQuery };
+  }
+
+  if (hit(t, /open (their |the |this )?(web ?site|site|homepage)|visit (their |the )?web ?site/)) {
+    const named = t.match(/(?:for|of) (.+)$/);
+    return { ...base, intent: "OPEN_WEBSITE", risk: "LOW", confidence: 0.96, companyQuery: named ? named[1].trim() : "" };
+  }
+
+  const more = t.match(/^(?:tell me more|learn more|view what we know)(?: about (.+))?$/);
+  if (more) {
+    return { ...base, intent: "OPEN_REVIEW", risk: "LOW", confidence: 0.96, companyQuery: (more[1] || "").trim() };
+  }
+
+  const whatDo = t.match(/what should i do (?:with|about|for) (.+)/);
+  if (whatDo) {
+    return { ...base, intent: "EXPLAIN_PROSPECT", risk: "LOW", confidence: 0.96, companyQuery: whatDo[1].trim() };
+  }
+
   if (hit(t, /go back|^back$/)) return { ...base, intent: "GO_BACK", risk: "LOW" };
 
   if (hit(t, /show( me)? (the )?evidence|see (the )?evidence|read the evidence/)) return { ...base, intent: "SHOW_EVIDENCE", risk: "LOW" };
@@ -313,6 +354,15 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /read( me)? the (email|outreach|draft)|what('s| is) the email/)) return { ...base, intent: "READ_OUTREACH", risk: "LOW" };
   if (hit(t, /make (that |the )?email shorter|shorten the email/)) return { ...base, intent: "MAKE_EMAIL_SHORTER", risk: "LOW" };
   if (hit(t, /call opener|what should i say on the call|what to say/)) return { ...base, intent: "READ_CALL_OPENER", risk: "LOW" };
+
+  if (hit(t, /^(call them|call this( one| company| business)?|call it|dial them|place the call|call the (listing )?number)$/) || hit(t, /\b(call them|dial them)\b/)) {
+    return { ...base, intent: "CALL_PROSPECT", risk: "LOW", confidence: 0.96 };
+  }
+  const callNamed = t.match(/^call (.+)$/);
+  if (callNamed && !/opener|prep|schedule|calendar|follow/.test(callNamed[1])) {
+    const q = callNamed[1].trim();
+    return { ...base, intent: "CALL_PROSPECT", risk: "LOW", confidence: 0.9, companyQuery: THIS_RE.test(q) ? "" : q };
+  }
 
   if (hit(t, /approve (the |this )?prospect|approve them|approve this/)) return { ...base, intent: "APPROVE_PROSPECT", risk: "MEDIUM" };
   if (hit(t, /skip (them|this|it|this company)|do not contact/)) return { ...base, intent: "SKIP_PROSPECT", risk: "MEDIUM" };
@@ -347,7 +397,7 @@ export function resolveCompany(query: string, ctx: VoiceContext): { uids: string
 export function needsTarget(intent: IntentName): boolean {
   return [
     "OPEN_PROSPECT", "OPEN_REVIEW", "OPEN_OUTREACH", "DRAFT_OUTREACH",
-    "RESEARCH_FURTHER", "READ_OUTREACH",
+    "RESEARCH_FURTHER", "FIND_CONTACT", "OPEN_WEBSITE", "CALL_PROSPECT", "READ_OUTREACH",
     "APPROVE_PROSPECT", "SKIP_PROSPECT", "SHOW_EVIDENCE", "READ_CALL_OPENER",
     "MAKE_EMAIL_SHORTER", "SEND_EMAIL", "READ_REPLY", "DRAFT_RESPONSE", "STOP_FOLLOWUPS", "SCHEDULE_CALL",
   ].includes(intent);

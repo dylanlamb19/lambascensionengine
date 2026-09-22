@@ -5,6 +5,7 @@ import { mapSpokenVertical } from "../discovery/places.ts";
 import { currentTask, currentTaskUid, labeledActionsFor, matchSpokenLabel } from "./screen-actions.ts";
 import { addDays, hourOf, shiftAnchor, ymdInTz, type CalView } from "../calendar/range.ts";
 import { buildScreenContext, explainScreen } from "./screen-context.ts";
+import { readScreen } from "./read-screen.ts";
 import {
   applyLayoutCommand,
   DEFAULT_HOME_LAYOUT,
@@ -60,9 +61,17 @@ export const APP_ACTIONS = [
   "DRAFT_OUTREACH",
   "OPEN_OUTREACH",
   "READ_OUTREACH",
+  "OPEN_WEBSITE",
+  "CALL_PROSPECT",
+  "FIND_CONTACT",
   "STOP_FOLLOWUPS",
   "EXPLAIN",
   "CLOSE_EXPLAIN",
+  "READ_PAGE",
+  "READ_EVERYTHING",
+  "READ_WARNING",
+  "READ_FORM",
+  "READ_OPTIONS",
   "GO_BACK",
   "RUN_FIND_CLIENTS",
   "SET_FIND_FORM",
@@ -103,6 +112,7 @@ export type AppAction = {
   showPanel?: boolean;
   visual?: VisualCommand;
   image?: ImageCommand;
+  readMode?: "page" | "everything" | "warning" | "form" | "options";
 };
 
 /** Shared action → Ara tool name. Buttons and Ara both end here. */
@@ -133,9 +143,17 @@ export const ACTION_TO_TOOL: Record<AppActionName, string> = {
   DRAFT_OUTREACH: "draft_outreach",
   OPEN_OUTREACH: "open_outreach",
   READ_OUTREACH: "read_outreach",
+  OPEN_WEBSITE: "open_website",
+  CALL_PROSPECT: "call_prospect",
+  FIND_CONTACT: "find_contact",
   STOP_FOLLOWUPS: "stop_followups",
   EXPLAIN: "explain_current_screen",
   CLOSE_EXPLAIN: "close_explain_panel",
+  READ_PAGE: "read_current_screen",
+  READ_EVERYTHING: "read_everything_on_screen",
+  READ_WARNING: "read_current_screen",
+  READ_FORM: "read_current_screen",
+  READ_OPTIONS: "read_current_screen",
   GO_BACK: "go_back",
   RUN_FIND_CLIENTS: "run_find_clients",
   SET_FIND_FORM: "set_find_clients_form",
@@ -196,10 +214,10 @@ export type VisibleCalEvent = {
 };
 
 export type DeskWorld = {
-  prospects: { uid: string; name: string; score: number; stage_plain?: string }[];
+  prospects: { uid: string; name: string; score: number; stage_plain?: string; website?: string; phone?: string }[];
   tasks: { title: string; plain: string; uid?: string; id?: string; retry?: boolean }[];
-  gmail?: "connected" | "missing" | "attention";
-  calendarStatus?: "connected" | "missing" | "attention";
+  gmail?: import("../mail/integration-status.ts").ConnectionHealth;
+  calendarStatus?: import("../mail/integration-status.ts").ConnectionHealth;
   calendarUnreadable?: boolean;
   calendarReason?: string;
   calendarRange?: string;
@@ -207,6 +225,10 @@ export type DeskWorld = {
   nextCall?: { prospectUid: string; start: string; title: string; companyName?: string } | null;
   findMsg?: string;
   testMode?: boolean;
+  discoveryConfigured?: boolean | null;
+  missingIntegrations?: { name: string; ready: boolean }[];
+  integration?: import("../mail/integration-status.ts").IntegrationStatus;
+  testLoop?: import("../mail/test-loop.ts").TestLoopState;
 };
 
 export type DeskEffect =
@@ -225,6 +247,8 @@ export type DeskEffect =
   | { type: "scroll"; dy: number }
   | { type: "visual_generate"; prompt: string; nsfw: boolean; aspectRatio?: string; quality?: string; style?: string }
   | { type: "pick_background"; nsfw?: boolean }
+  | { type: "open_url"; url: string }
+  | { type: "dial"; phone: string }
   | { type: "image_generate"; prompt: string; n: number; kind: GalleryState["lastKind"]; nsfw: boolean; asBackground?: boolean; aspectRatio?: string; quality?: string; style?: string; intendedUse?: string }
   | { type: "image_favorite"; id: string; favorite: boolean }
   | { type: "image_save"; id: string }
@@ -680,16 +704,48 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
         { type: "shorten_email", uid },
       );
     }
-    case "RESEARCH_FURTHER": {
+    case "RESEARCH_FURTHER":
+    case "FIND_CONTACT": {
       const uid = action.uid || currentTaskUid(state, world);
       if (!uid) return withAction({ lastSpoken: spoken("Which company do you mean?") });
       return withAction(
         {
           view: "detail",
           openUid: uid,
-          lastSpoken: spoken(`Researching ${nameOf(world, uid)} further. I’ll use public sources only.`),
+          lastSpoken: spoken(action.name === "FIND_CONTACT"
+            ? `Looking for a decision maker at ${nameOf(world, uid)}. Public sources only. I will not guess an email.`
+            : `Researching ${nameOf(world, uid)} further. I’ll use public sources only.`),
         },
         { type: "research", uid },
+      );
+    }
+    case "OPEN_WEBSITE": {
+      const uid = action.uid || currentTaskUid(state, world);
+      if (!uid) return withAction({ lastSpoken: spoken("Which company do you mean?") });
+      const site = (world.prospects.find((p) => p.uid === uid)?.website || "").trim();
+      let url = "";
+      try {
+        if (site && site.toUpperCase() !== "UNKNOWN") {
+          url = new URL(site.includes("://") ? site : `https://${site}`).toString();
+          if (!url.startsWith("http://") && !url.startsWith("https://")) url = "";
+        }
+      } catch { url = ""; }
+      if (!url) return withAction({ lastSpoken: spoken(`No verified website on file for ${nameOf(world, uid)}.`) });
+      return withAction(
+        { lastSpoken: spoken(`Opening the website we have on file for ${nameOf(world, uid)}.`) },
+        { type: "open_url", url },
+      );
+    }
+    case "CALL_PROSPECT": {
+      const uid = action.uid || currentTaskUid(state, world);
+      if (!uid) return withAction({ lastSpoken: spoken("Which company do you mean?") });
+      const phone = (world.prospects.find((p) => p.uid === uid)?.phone || "").trim();
+      if (!phone || phone.toUpperCase() === "UNKNOWN") {
+        return withAction({ lastSpoken: spoken(`No phone number on file for ${nameOf(world, uid)}. I will not invent one.`) });
+      }
+      return withAction(
+        { lastSpoken: spoken(`The listing number is ${phone}.`) },
+        { type: "dial", phone },
       );
     }
     case "SKIP_PROSPECT": {
@@ -728,14 +784,32 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
     case "EXPLAIN": {
       const uid = action.uid || state.openUid;
       const brief = buildScreenContext({ ...state, openUid: uid || state.openUid }, world);
+      const co = uid ? world.prospects.find((p) => p.uid === uid) : null;
+      const extra = co
+        ? ` For ${co.name}: ${co.website ? "website on file. " : "website UNKNOWN. "}${co.phone ? `listing phone ${co.phone}. ` : "phone UNKNOWN. "}Find a legitimate public contact before outreach. Do not invent an email.`
+        : "";
       return withAction({
         explainOpen: action.showPanel ? true : state.explainOpen,
         openUid: uid || state.openUid,
-        lastSpoken: spoken(explainScreen(brief)),
+        lastSpoken: spoken(explainScreen(brief) + extra),
       });
     }
     case "CLOSE_EXPLAIN":
       return withAction({ explainOpen: false });
+    case "READ_PAGE":
+    case "READ_EVERYTHING":
+    case "READ_WARNING":
+    case "READ_FORM":
+    case "READ_OPTIONS": {
+      const mode = action.readMode
+        || (action.name === "READ_EVERYTHING" ? "everything"
+          : action.name === "READ_WARNING" ? "warning"
+            : action.name === "READ_FORM" ? "form"
+              : action.name === "READ_OPTIONS" ? "options"
+                : "page");
+      const brief = buildScreenContext(state, world);
+      return withAction({ lastSpoken: spoken(readScreen(brief, mode)) });
+    }
     case "PREPARE_SEND": {
       const uid = action.uid || state.openUid;
       if (!uid) return withAction({ lastSpoken: spoken("Which company do you mean?") });
@@ -1064,12 +1138,21 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
     case "EXPLAIN_PROSPECT": return { name: "EXPLAIN", uid };
     case "SHOW_EXPLAIN_PANEL": return { name: "EXPLAIN", uid, showPanel: true };
     case "CLOSE_EXPLAIN": return { name: "CLOSE_EXPLAIN" };
+    case "READ_PAGE": return { name: "READ_PAGE", readMode: "page" };
+    case "READ_EVERYTHING": return { name: "READ_EVERYTHING", readMode: "everything" };
+    case "READ_WARNING": return { name: "READ_WARNING", readMode: "warning" };
+    case "READ_FORM": return { name: "READ_FORM", readMode: "form" };
+    case "READ_OPTIONS": return { name: "READ_OPTIONS", readMode: "options" };
     case "RESEARCH_FURTHER": return { name: onTask ? "RETRY_CURRENT_TASK" : "RESEARCH_FURTHER", uid };
+    case "FIND_CONTACT": return { name: "FIND_CONTACT", uid };
+    case "OPEN_WEBSITE": return { name: "OPEN_WEBSITE", uid };
+    case "CALL_PROSPECT": return { name: "CALL_PROSPECT", uid };
     case "APPROVE_PROSPECT": return { name: "APPROVE_PROSPECT", uid };
     case "SKIP_PROSPECT": return { name: onTask ? "SKIP_CURRENT_TASK" : "SKIP_PROSPECT", uid };
     case "STOP_FOLLOWUPS": return { name: "STOP_FOLLOWUPS", uid };
     case "SEND_EMAIL": return { name: "PREPARE_SEND", uid };
     case "SCHEDULE_CALL": return { name: "PREPARE_SCHEDULE", uid };
+    case "CREATE_OWNER_CALENDAR_EVENT": return null;
     case "MAKE_EMAIL_SHORTER": return { name: "MAKE_EMAIL_SHORTER", uid };
     case "READ_CALL_OPENER": return { name: "READ_CALL_OPENER", uid };
     case "GET_DAILY_TASKS": return { name: "GET_DAILY_TASKS" };
@@ -1149,6 +1232,9 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "find": return { name: "RUN_FIND_CLIENTS", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
     case "fill_find": return { name: "SET_FIND_FORM", findVertical: plan.vertical, findLocation: plan.location, findCount: plan.count };
     case "research": return { name: "RESEARCH_FURTHER", uid: plan.uid };
+    case "open_website": return { name: "OPEN_WEBSITE", uid: plan.uid };
+    case "dial": return { name: "CALL_PROSPECT", uid: plan.uid };
+    case "find_contact": return { name: "FIND_CONTACT", uid: plan.uid };
     case "arm":
       if (plan.intent === "SEND_EMAIL") return { name: "PREPARE_SEND", uid: plan.uid };
       if (plan.intent === "SCHEDULE_CALL") return { name: "PREPARE_SCHEDULE", uid: plan.uid };
@@ -1181,6 +1267,13 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "draft_reply": return { name: "DRAFT_REPLY", uid: plan.uid };
     case "explain": return { name: "EXPLAIN", uid: plan.uid, showPanel: plan.showPanel };
     case "close_explain": return { name: "CLOSE_EXPLAIN" };
+    case "read_screen": {
+      if (plan.mode === "everything") return { name: "READ_EVERYTHING", readMode: "everything" };
+      if (plan.mode === "warning") return { name: "READ_WARNING", readMode: "warning" };
+      if (plan.mode === "form") return { name: "READ_FORM", readMode: "form" };
+      if (plan.mode === "options") return { name: "READ_OPTIONS", readMode: "options" };
+      return { name: "READ_PAGE", readMode: "page" };
+    }
     case "calendar_today": return { name: "CALENDAR_TODAY" };
     case "calendar_next": return { name: "CALENDAR_NEXT" };
     case "calendar_prev": return { name: "CALENDAR_PREV" };
@@ -1188,6 +1281,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
     case "calendar_event": return { name: "OPEN_CALENDAR_EVENT", eventId: plan.eventId, uid: plan.uid, findVertical: plan.open ? "open" : undefined };
     case "availability": return { name: "AVAILABILITY" };
     case "next_call": return { name: "NEXT_CALL" };
+    case "owner_calendar_event": return null;
     default: return null;
   }
 }

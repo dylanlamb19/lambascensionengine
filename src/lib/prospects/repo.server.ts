@@ -4,7 +4,7 @@
  */
 import { getSql } from "@/lib/db";
 import type { Prospect } from "@/lib/review-brief";
-import { importWithoutDuplicates, matchExisting } from "./dedupe";
+import { importWithoutDuplicates } from "./dedupe";
 import { ensureUid, websiteDomain } from "./ids";
 
 type Row = {
@@ -102,21 +102,20 @@ async function writeOne(userId: string, p: Prospect): Promise<void> {
 }
 
 export async function upsertProspects(userId: string, incoming: Prospect[]): Promise<Prospect[]> {
-  const existing = await listProspects(userId);
-  const { next } = importWithoutDuplicates(existing, incoming);
-  for (const p of next) {
-    const hit = matchExisting(existing, p);
-    const toWrite = hit ? { ...p, uid: hit.uid, id: hit.id } : p;
-    await writeOne(userId, toWrite);
+  for (const p of incoming) {
+    await writeOne(userId, p);
   }
   return listProspects(userId);
 }
 
 export async function importProspects(userId: string, incoming: Prospect[]): Promise<{ prospects: Prospect[]; imported: number; merged: number }> {
   const existing = await listProspects(userId);
-  const { imported, merged } = importWithoutDuplicates(existing, incoming);
-  const written = await upsertProspects(userId, incoming);
-  return { prospects: written, imported: imported.length, merged: merged.length };
+  const { next, imported, merged } = importWithoutDuplicates(existing, incoming);
+  for (const p of next) {
+    await writeOne(userId, p);
+  }
+  const prospects = await listProspects(userId);
+  return { prospects, imported: imported.length, merged: merged.length };
 }
 
 export async function logActivity(

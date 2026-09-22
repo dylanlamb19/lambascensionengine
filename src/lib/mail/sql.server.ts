@@ -288,12 +288,24 @@ export async function lastThread(userId: string, prospectUid: string): Promise<s
   return rows[0]?.gmail_thread_id || null;
 }
 
+export async function lastSentIds(userId: string, prospectUid: string): Promise<{ messageId: string; threadId: string } | null> {
+  const sql = await getSql();
+  const rows = await sql<{ gmail_message_id: string | null; gmail_thread_id: string | null }>`
+    select gmail_message_id, gmail_thread_id from email_messages
+    where user_id = ${userId} and prospect_uid = ${prospectUid} and status = 'SENT' and gmail_message_id is not null
+    order by created_at desc limit 1
+  `;
+  const row = rows[0];
+  if (!row?.gmail_message_id) return null;
+  return { messageId: row.gmail_message_id, threadId: row.gmail_thread_id || "" };
+}
+
 export async function salesCounts(userId: string): Promise<{ ready: number; followups: number; replies: number; calls: number }> {
   const sql = await getSql();
-  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false`;
-  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled'`;
-  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId}`;
-  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked'`;
+  const ready = await sql<{ n: number }>`select count(*)::int as n from prospects where user_id = ${userId} and stage = 'Approved for Outreach' and suppressed = false and uid <> ${"test-sales-flow"}`;
+  const followups = await sql<{ n: number }>`select count(*)::int as n from scheduled_followups where user_id = ${userId} and status = 'scheduled' and prospect_uid <> ${"test-sales-flow"}`;
+  const replies = await sql<{ n: number }>`select count(*)::int as n from reply_events r where r.user_id = ${userId} and r.prospect_uid <> ${"test-sales-flow"}`;
+  const calls = await sql<{ n: number }>`select count(*)::int as n from calendar_events where user_id = ${userId} and status = 'booked' and prospect_uid <> ${"test-sales-flow"}`;
   return {
     ready: Number(ready[0]?.n || 0),
     followups: Number(followups[0]?.n || 0),
@@ -456,7 +468,7 @@ export async function loadSettings(userId: string): Promise<{
     test_allowlist: string;
   }>`select * from outreach_settings where user_id = ${userId}`;
   const r = rows[0];
-  const { parseAllowlist } = await import("./test-mode");
+  const { parseAllowlist, readTestModeFlag } = await import("./test-mode");
   return {
     maxFirst: Number(r?.max_first_per_day ?? 2),
     maxFollowups: Number(r?.max_followups_per_day ?? 3),
@@ -465,7 +477,7 @@ export async function loadSettings(userId: string): Promise<{
     workEnd: Number(r?.work_end ?? 17),
     workDays: (r?.work_days || "1,2,3,4,5").split(",").map((n) => Number(n.trim())).filter((n) => Number.isFinite(n)),
     timezone: r?.timezone || "America/Chicago",
-    testMode: r?.test_mode !== false,
+    testMode: readTestModeFlag(r?.test_mode),
     allowlist: parseAllowlist(r?.test_allowlist || ""),
   };
 }
@@ -477,9 +489,12 @@ export async function saveTestSettings(userId: string, patch: { testMode?: boole
   const sql = await getSql();
   const capsFirst = testMode ? 2 : 15;
   const capsFollow = testMode ? 3 : 30;
+  // Persist as 'true'/'false' text then cast — JS boolean false has been
+  // dropped or misread by some drivers, which left Test Mode stuck on.
+  const flag = testMode ? "true" : "false";
   await sql`
     insert into outreach_settings (user_id, max_first_per_day, max_followups_per_day, test_mode, test_allowlist)
-    values (${userId}, ${capsFirst}, ${capsFollow}, ${testMode}, ${allowlist.join(",")})
+    values (${userId}, ${capsFirst}, ${capsFollow}, ${flag}::boolean, ${allowlist.join(",")})
     on conflict (user_id) do update set
       test_mode = excluded.test_mode,
       test_allowlist = excluded.test_allowlist,
@@ -627,9 +642,9 @@ export async function reserveSendCap(userId: string, kind: "first" | "followup",
   });
 }
 
-export async function startWorkerHeartbeat(runId: string, source: string): Promise<void> {
+export async function startWorkerHeartbeat(runId: string, source: string): Promise<boolean> {
   const sql = await getSql();
-  await sql`
+  const rows = await sql<{ id: string }>`
     insert into outreach_worker_heartbeat (id, last_started_at, run_id, source, last_result, last_error, updated_at)
     values ('global', now(), ${runId}, ${source}, ${"running"}, ${""}, now())
     on conflict (id) do update set
@@ -639,7 +654,11 @@ export async function startWorkerHeartbeat(runId: string, source: string): Promi
       last_result = 'running',
       last_error = '',
       updated_at = now()
+    where outreach_worker_heartbeat.last_result is distinct from 'running'
+       or outreach_worker_heartbeat.last_started_at < now() - interval '4 minutes'
+    returning id
   `;
+  return rows.length > 0;
 }
 
 export async function finishWorkerHeartbeat(runId: string, result: string, error = ""): Promise<void> {
@@ -673,6 +692,63 @@ export async function loadWorkerHeartbeat(): Promise<{
     lastResult: r?.last_result || "",
     runId: r?.run_id || null,
     source: r?.source || "",
+  };
+}
+
+export async function loadTestLoop(userId: string): Promise<{
+  recipient: string;
+  allowlisted: boolean;
+  initialSent: boolean;
+  followupScheduled: boolean;
+  followupDueAt: string | null;
+  followupSent: boolean;
+  pendingFollowups: number;
+  replyCount: number;
+  sequenceStopped: boolean;
+  trail: { at: string; action: string; detail: string }[];
+}> {
+  const { isAllowlisted } = await import("./test-mode");
+  const { TEST_WORKFLOW_UID } = await import("./test-loop");
+  const settings = await loadSettings(userId);
+  const state = await loadTestState(userId);
+  const sql = await getSql();
+  const uid = state.prospect_uid || TEST_WORKFLOW_UID;
+  const sentFirst = await sql<{ n: number }>`
+    select count(*)::int as n from email_messages
+    where user_id = ${userId} and prospect_uid = ${uid} and kind = 'email' and status = 'SENT'
+  `;
+  const sentFollow = await sql<{ n: number }>`
+    select count(*)::int as n from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'sent'
+  `;
+  const pending = await sql<{ n: number }>`
+    select count(*)::int as n from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status in ('scheduled','sending')
+  `;
+  const due = await sql<{ due_at: string | Date | null }>`
+    select min(due_at) as due_at from scheduled_followups
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'scheduled'
+  `;
+  const replies = await sql<{ n: number }>`
+    select count(*)::int as n from reply_events
+    where user_id = ${userId} and prospect_uid = ${uid}
+  `;
+  const stopped = await sql<{ n: number }>`
+    select count(*)::int as n from outreach_sequences
+    where user_id = ${userId} and prospect_uid = ${uid} and status = 'stopped'
+  `;
+  const recipient = state.recipient || "";
+  return {
+    recipient,
+    allowlisted: Boolean(recipient) && isAllowlisted(recipient, settings.allowlist),
+    initialSent: Number(sentFirst[0]?.n || 0) > 0 || Boolean(state.message_id),
+    followupScheduled: Number(pending[0]?.n || 0) > 0 || Number(sentFollow[0]?.n || 0) > 0 || Boolean(state.sequence_id),
+    followupDueAt: due[0]?.due_at ? new Date(due[0].due_at).toISOString() : null,
+    followupSent: Number(sentFollow[0]?.n || 0) > 0,
+    pendingFollowups: Number(pending[0]?.n || 0),
+    replyCount: Number(replies[0]?.n || 0),
+    sequenceStopped: Number(stopped[0]?.n || 0) > 0,
+    trail: await timeline(userId, uid),
   };
 }
 

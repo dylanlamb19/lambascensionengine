@@ -99,6 +99,22 @@ describe("Ara operates the same screen Dylan sees", () => {
     assert.equal(/computerStartFn/.test(deskSrc), false);
   });
 
+  it("Stop never mounts a native audio[controls] player", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const speech = readFileSync(join(here, "speech.ts"), "utf8");
+    const bar = readFileSync(join(here, "../../components/voice-bar.tsx"), "utf8");
+    const desk = readFileSync(join(here, "../../components/owner-desk.tsx"), "utf8");
+    const out = readFileSync(join(here, "audio-out.ts"), "utf8");
+    const css = readFileSync(join(here, "../../styles.css"), "utf8");
+    assert.doesNotMatch(speech, /unlockAraOutput/);
+    assert.match(desk, /teardownAraOutput/);
+    assert.match(bar, /teardownAraOutput/);
+    assert.doesNotMatch(bar, /<audio/);
+    assert.doesNotMatch(desk, /<audio/);
+    assert.doesNotMatch(out, /controls\s*=\s*true/);
+    assert.doesNotMatch(css, /\.la-ara-player/);
+  });
+
   it("compact Ara bar has a persistent caption, not a giant default transcript", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const bar = readFileSync(join(here, "../../components/voice-bar.tsx"), "utf8");

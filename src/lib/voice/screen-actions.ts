@@ -40,8 +40,9 @@ export function screenNameOf(state: DeskState): ScreenName {
 }
 
 export function currentTask(state: DeskState, world: DeskWorld) {
-  if (state.taskIx == null) return null;
-  return world.tasks[state.taskIx] || null;
+  if (state.taskIx != null) return world.tasks[state.taskIx] || null;
+  if (state.view === "home" && world.tasks[0]) return world.tasks[0];
+  return null;
 }
 
 export function currentTaskUid(state: DeskState, world: DeskWorld): string | null {
@@ -68,6 +69,7 @@ const NAV: ScreenAction[] = [
   act("START_TASKS", "start_my_tasks", "START_TASKS", "Start My Tasks", ["start my tasks", "start tasks"]),
   act("GO_BACK", "go_back", "GO_BACK", "Back", ["go back", "back"]),
   act("EXPLAIN", "explain_current_screen", "EXPLAIN", "Explain this", ["explain this", "explain this to me", "explain"]),
+  act("READ_PAGE", "read_current_screen", "READ_PAGE", "Read page", ["read this page", "read the page", "what does this say", "read it"]),
 ];
 
 /** Registered buttons on the screen that is actually visible now. */
@@ -76,9 +78,25 @@ export function labeledActionsFor(state: DeskState, world: DeskWorld): ScreenAct
   const task = currentTask(state, world);
   const out: ScreenAction[] = [...NAV];
 
+  if (screen === "HOME") {
+    const first = world.tasks[0];
+    if (first?.uid) {
+      out.unshift(
+        act("LEARN_MORE_HOME", "learn_more", "OPEN_REVIEW", "Learn More", ["learn more", "tell me more", "view what we know", "review", "press review", "open the review"]),
+        act("FIND_CONTACT_HOME", "find_contact", "FIND_CONTACT", "Find Contact", ["find contact", "find the owner", "find their contact", "look up the owner"]),
+        act("OPEN_WEBSITE_HOME", "open_website", "OPEN_WEBSITE", "Open Website", ["open website", "open their website", "open the website", "visit their website"]),
+        act("CALL_HOME", "call_prospect", "CALL_PROSPECT", "Call", ["call", "call them", "call this number", "dial"]),
+        act("SKIP_HOME", "skip_current_task", "SKIP_CURRENT_TASK", "Skip", ["skip", "skip this", "skip this one", "skip them"], "MEDIUM"),
+      );
+    }
+  }
+
   if (screen === "TASKS" && task) {
     out.unshift(
-      act("REVIEW_CURRENT_TASK", "review_current_task", "REVIEW_CURRENT_TASK", "Review", ["review", "press review", "review this", "review it", "review this one", "open the review", "open review"]),
+      act("REVIEW_CURRENT_TASK", "review_current_task", "REVIEW_CURRENT_TASK", "Learn More", ["learn more", "tell me more", "view what we know", "review", "press review", "review this", "review it", "review this one", "open the review", "open review"]),
+      act("FIND_CONTACT", "find_contact", "FIND_CONTACT", "Find Contact", ["find contact", "find the owner", "find their contact", "look up the owner"]),
+      act("OPEN_WEBSITE", "open_website", "OPEN_WEBSITE", "Open Website", ["open website", "open their website", "open the website", "visit their website"]),
+      act("CALL_PROSPECT", "call_prospect", "CALL_PROSPECT", "Call", ["call", "call them", "call this number", "dial"]),
       act("SKIP_CURRENT_TASK", "skip_current_task", "SKIP_CURRENT_TASK", "Skip", ["skip", "skip this", "skip this one", "skip them", "move past this company"], "MEDIUM"),
       act("ACKNOWLEDGE_CURRENT_TASK", "acknowledge_current_task", "ACKNOWLEDGE_TASK", "Got it", ["got it", "okay got it", "ok got it", "i understand", "understood"]),
       act("NEXT_TASK", "next_task", "NEXT_TASK", "Next", ["next", "next task", "what's next", "whats next", "move on"]),
@@ -86,18 +104,22 @@ export function labeledActionsFor(state: DeskState, world: DeskWorld): ScreenAct
     );
     if (task.retry) {
       out.unshift(
-        act("RETRY_CURRENT_TASK", "retry_current_task", "RETRY_CURRENT_TASK", "Try Again", ["try again", "retry", "retry it", "run the research again", "research again"]),
+        act("RETRY_CURRENT_TASK", "retry_current_task", "RETRY_CURRENT_TASK", "Try Research Again", ["try again", "try research again", "retry", "retry it", "run the research again", "research again"]),
       );
     }
   }
 
   if (screen === "REVIEW") {
     out.unshift(
+      act("LEARN_MORE", "learn_more", "OPEN_REVIEW", "Learn More", ["learn more", "tell me more", "view what we know"]),
+      act("FIND_CONTACT_REVIEW", "find_contact", "FIND_CONTACT", "Find Contact", ["find contact", "find the owner", "find their contact"]),
+      act("OPEN_WEBSITE_REVIEW", "open_website", "OPEN_WEBSITE", "Open Website", ["open website", "open their website", "open the website"]),
+      act("CALL_REVIEW", "call_prospect", "CALL_PROSPECT", "Call", ["call", "call them", "dial"]),
       act("APPROVE_PROSPECT", "approve_prospect", "APPROVE_PROSPECT", "Approve", ["approve", "approve them", "approve this"], "MEDIUM"),
       act("SKIP_PROSPECT", "skip_prospect", "SKIP_PROSPECT", "Skip", ["skip", "skip this one", "skip them"], "MEDIUM"),
-      act("RESEARCH_MORE", "research_further", "RESEARCH_FURTHER", "Research More", ["research more", "try again", "retry", "research further"]),
+      act("RESEARCH_MORE", "research_further", "RESEARCH_FURTHER", "Try Research Again", ["research more", "try again", "try research again", "retry", "research further"]),
       act("SHOW_EVIDENCE", "show_evidence", "SHOW_EVIDENCE", "See Evidence", ["show me the evidence", "show evidence", "see evidence", "evidence"]),
-      act("OPEN_OUTREACH", "open_outreach", "OPEN_OUTREACH", "Outreach", ["show outreach", "open outreach"]),
+      act("OPEN_OUTREACH", "open_outreach", "OPEN_OUTREACH", "Outreach", ["show outreach", "open outreach", "draft outreach"]),
       act("NEXT_TASK", "next_task", "NEXT_TASK", "Next", ["next", "next task", "what's next", "move on"]),
     );
   }

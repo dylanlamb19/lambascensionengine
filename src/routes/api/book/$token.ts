@@ -16,7 +16,7 @@ export const Route = createFileRoute("/api/book/$token")({
         const tokens = await accessFor(link.user_id, "calendar");
         if (!tokens) return Response.json({ ok: false, reason: "Calendar is not connected for this owner." });
         const { offeredSlots, CALENDAR_UNREADABLE } = await import("@/lib/google/calendar");
-        const avail = await offeredSlots(tokens.access_token, { count: 3 });
+        const avail = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email });
         if (!avail.ok) return Response.json({ ok: false, reason: CALENDAR_UNREADABLE, slots: [] });
         const slots = avail.slots.map((s) => ({
           start: s.start.toISOString(),
@@ -51,7 +51,7 @@ export const Route = createFileRoute("/api/book/$token")({
         const { offeredSlots, createEvent, CALENDAR_UNREADABLE } = await import("@/lib/google/calendar");
         const { slotIsOffered } = await import("@/lib/mail/booking");
         const from = new Date();
-        const avail = await offeredSlots(tokens.access_token, { from, count: 8 });
+        const avail = await offeredSlots(tokens.access_token, { from, count: 8, calendarId: tokens.email });
         if (!avail.ok) {
           await finishBookingLink(params.token, "open");
           return Response.json({ ok: false, reason: CALENDAR_UNREADABLE });

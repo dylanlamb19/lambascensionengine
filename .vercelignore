@@ -1,0 +1,17 @@
+node_modules
+.tanstack
+.vercel
+*.log
+.grok
+artifacts
+screenshots
+attachments
+recovery-snapshots
+data
+*.zip
+.env
+.env.*
+!.env.example
+AGENTS.md
+MIGRATION_PLAN.md
+startup.sh

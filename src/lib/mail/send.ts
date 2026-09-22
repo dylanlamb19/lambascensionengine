@@ -19,6 +19,7 @@ export type SendDeps = {
   reserveCap?: (kind: "first" | "followup") => Promise<boolean>;
   testMode?: boolean;
   allowlist?: string[];
+  skipHours?: boolean;
 };
 
 export function idempotencyKey(userId: string, prospectUid: string, kind: string, sequenceId?: string): string {
@@ -60,6 +61,7 @@ export async function sendMail(opts: {
     threadId: opts.threadId,
     testMode: opts.deps.testMode,
     allowlist: opts.deps.allowlist,
+    skipHours: opts.deps.skipHours,
   });
   if (!gate.ok) {
     return { ok: false, reason: reasonFor(gate.code), code: gate.code };

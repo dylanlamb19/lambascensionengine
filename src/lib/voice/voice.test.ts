@@ -200,3 +200,38 @@ test("open the strongest prospect is OPEN_PROSPECT", () => {
   assert.equal(parseSpokenCommand("Open the strongest prospect").intent, "OPEN_PROSPECT");
   assert.equal(parseSpokenCommand("Open the strongest prospect").companyQuery, "__strongest__");
 });
+
+test("contact-first phrases map to reach actions", () => {
+  assert.equal(parseSpokenCommand("Tell me more about them.").intent, "OPEN_REVIEW");
+  assert.equal(parseSpokenCommand("Learn more.").intent, "OPEN_REVIEW");
+  assert.equal(parseSpokenCommand("View what we know.").intent, "OPEN_REVIEW");
+  assert.equal(parseSpokenCommand("Find the owner.").intent, "FIND_CONTACT");
+  assert.equal(parseSpokenCommand("Find contact.").intent, "FIND_CONTACT");
+  assert.equal(parseSpokenCommand("Open their website.").intent, "OPEN_WEBSITE");
+  assert.equal(parseSpokenCommand("Call them.").intent, "CALL_PROSPECT");
+  assert.equal(parseSpokenCommand("Call Firefighter Roofing.").intent, "CALL_PROSPECT");
+  assert.equal(parseSpokenCommand("Call Firefighter Roofing.").companyQuery, "firefighter roofing");
+  assert.equal(parseSpokenCommand("What should I do with Firefighter Roofing?").intent, "EXPLAIN_PROSPECT");
+  assert.match(parseSpokenCommand("What should I do with Firefighter Roofing?").companyQuery, /firefighter roofing/i);
+  assert.equal(parseSpokenCommand("What's my call opener?").intent, "READ_CALL_OPENER");
+});
+
+test("read this page and read everything are screen-reader intents", () => {
+  assert.equal(parseSpokenCommand("Read this page.").intent, "READ_PAGE");
+  assert.equal(parseSpokenCommand("Ara, read everything on this page.").intent, "READ_EVERYTHING");
+  assert.equal(parseSpokenCommand("What does this say?").intent, "READ_PAGE");
+  assert.equal(parseSpokenCommand("Read the warning.").intent, "READ_WARNING");
+  assert.equal(parseSpokenCommand("What are my options?").intent, "READ_OPTIONS");
+  assert.equal(parseSpokenCommand("Read the form.").intent, "READ_FORM");
+});
+
+test("personal calendar reminders are not sales bookings or calendar view", () => {
+  const bank = parseSpokenCommand("Ara, set a reminder on my calendar for 4 PM tomorrow that I need to go to SouthState Bank and withdraw cash.");
+  assert.equal(bank.intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Add a dentist appointment tomorrow.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Put lunch with Mom on my calendar Friday at noon.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Schedule gym tomorrow at 6 PM.").intent, "CREATE_OWNER_CALENDAR_EVENT");
+  assert.equal(parseSpokenCommand("Schedule the call").intent, "SCHEDULE_CALL");
+  assert.equal(parseSpokenCommand("Pull up my calendar").intent, "NAVIGATE_CALENDAR");
+  assert.equal(parseSpokenCommand("What's on my calendar").intent, "NAVIGATE_CALENDAR");
+});

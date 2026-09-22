@@ -22,7 +22,7 @@ export const findClientsFn = createServerFn({ method: "POST" })
     const { env } = await import("@/lib/env.server");
     const { searchText, cacheKey, cacheSatisfiesSearch } = await import("./places");
     const { tryReserveDiscovery, cacheGet, cacheSet, EST_SEARCH_CENTS, EST_GEOCODE_CENTS } = await import("./usage.server");
-    const { listProspects, upsertProspects, logActivity } = await import("@/lib/prospects/repo.server");
+    const { listProspects, importProspects, logActivity } = await import("@/lib/prospects/repo.server");
     const { nextClientId } = await import("@/lib/prospects/ids");
 
     const key = env("GOOGLE_PLACES_API_KEY");
@@ -74,7 +74,23 @@ export const findClientsFn = createServerFn({ method: "POST" })
       incoming.push(hitToProspect(hit, nextId));
       nextId += 1;
     }
-    const prospects = await upsertProspects(context.userId, incoming);
+    const imported = await importProspects(context.userId, incoming);
+    const prospects = imported.prospects;
     await logActivity(context.userId, "find_clients", `${incoming.length} from Places (${vertical} / ${location})`);
     return { ok: true as const, reason: `Saved ${incoming.length} real companies.`, prospects };
   });
+
+export const discoveryStatusFn = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async () => {
+    const { env } = await import("@/lib/env.server");
+    const { placesKeyConfigured, discoverySpoken } = await import("./status");
+    const configured = placesKeyConfigured((k) => env(k));
+    return {
+      ok: true as const,
+      configured,
+      code: configured ? "READY" : "NOT_CONFIGURED",
+      spoken: discoverySpoken(configured),
+    };
+  });
+

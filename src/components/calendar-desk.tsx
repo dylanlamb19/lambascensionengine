@@ -3,13 +3,14 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { AgendaEvent } from "@/lib/mail/actions";
 import { formatLong, formatShort, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
+import type { ConnectionHealth } from "@/lib/mail/integration-status";
 
 export function CalendarDesk({
   calView,
   calAnchor,
   events,
   selectedId,
-  connected,
+  health,
   reason,
   loading,
   onToday,
@@ -25,7 +26,7 @@ export function CalendarDesk({
   calAnchor: string;
   events: AgendaEvent[];
   selectedId: string | null;
-  connected: boolean;
+  health: ConnectionHealth;
   reason: string;
   loading: boolean;
   onToday: () => void;
@@ -39,9 +40,17 @@ export function CalendarDesk({
 }) {
   const range = rangeFor(calView, calAnchor);
   const selected = events.find((e) => e.id === selectedId) || null;
+  const todayKey = ymdInTz();
+  const now = Date.now();
+  const todayCalls = events.filter((e) => e.kind === "sales_call" && ymdInTz(new Date(e.start)) === todayKey);
+  const upcoming = events
+    .filter((e) => e.kind === "sales_call" && new Date(e.start).getTime() >= now)
+    .slice(0, 5);
+  const connected = health === "connected";
+  const unknown = health === "unknown";
 
   return (
-    <section className="space-y-4" data-owner-calendar="1" data-cal-view={calView} data-cal-range={range.label}>
+    <section className="space-y-4" data-owner-calendar="1" data-cal-view={calView} data-cal-range={range.label} data-cal-health={health}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="la-kicker">Schedule</p>
@@ -67,10 +76,15 @@ export function CalendarDesk({
         ))}
       </div>
 
-      {!connected ? (
+      {unknown ? (
+        <div className="la-card">
+          <p>Checking Calendar…</p>
+          <p className="mt-2 text-sm text-muted">I’m not treating Calendar as disconnected until the server status loads.</p>
+        </div>
+      ) : !connected ? (
         <div className="la-card la-card-accent">
           <p>Calendar isn’t connected yet.</p>
-          <p className="mt-2 text-sm text-muted">I will not guess what’s on your calendar.</p>
+          <p className="mt-2 text-sm text-muted">I will not guess what’s on your calendar. Gmail can stay connected on its own.</p>
           <button className="la-btn la-btn-primary mt-4" onClick={onSettings}>
             Connect in Settings
           </button>
@@ -85,6 +99,26 @@ export function CalendarDesk({
         <p className="text-sm text-muted">Reading your Google Calendar…</p>
       ) : (
         <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="la-card">
+              <p className="la-kicker">Today’s calls</p>
+              {todayCalls.length ? todayCalls.map((e) => (
+                <button key={e.id} className="mt-2 block w-full text-left" onClick={() => onSelect(e.id)}>
+                  <span className="font-semibold">{formatTime(e.start)}</span>
+                  <span className="mt-0.5 block text-sm">{e.companyName || e.title}</span>
+                </button>
+              )) : <p className="mt-2 text-sm text-muted">No sales calls today.</p>}
+            </div>
+            <div className="la-card">
+              <p className="la-kicker">Upcoming sales calls</p>
+              {upcoming.length ? upcoming.map((e) => (
+                <button key={e.id} className="mt-2 block w-full text-left" onClick={() => onSelect(e.id)}>
+                  <span className="font-semibold">{formatTime(e.start)}</span>
+                  <span className="mt-0.5 block text-sm">{e.companyName || e.title}</span>
+                </button>
+              )) : <p className="mt-2 text-sm text-muted">None coming up in this range.</p>}
+            </div>
+          </div>
           {calView === "week" ? (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-7">
               {range.days.map((day) => {
