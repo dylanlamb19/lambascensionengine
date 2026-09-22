@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { HealthLight, SentinelSnapshot } from "@/lib/sentinel/types";
 import { featureLabel } from "@/lib/sentinel/health";
+import { canonicalHealth } from "@/lib/sentinel/system-health";
 
 function lightClass(light: HealthLight): string {
   if (light === "green") return "la-dot-good";
@@ -75,6 +76,7 @@ export function SystemHealthPage({
 }) {
   const [advanced, setAdvanced] = useState(false);
   const snap = snapshot;
+  const health = canonicalHealth({ snapshot: snap });
   return (
     <section className="la-card">
       <p className="la-kicker">Lascengine Sentinel</p>
@@ -87,8 +89,8 @@ export function SystemHealthPage({
         {snap?.overallLabel || "Sentinel has not observed production yet."}
       </p>
       <p className="mt-1 text-sm text-muted">
-        Latest Sentinel run: {formatWhen(snap?.lastRunAt || null)}
-        {snap?.lastRunMode ? ` · ${snap.lastRunMode}` : ""} · Open issues: {snap?.openIssues ?? 0}
+        Latest Sentinel run: {formatWhen(health.latestRun)}
+        {snap?.lastRunMode ? ` · ${snap.lastRunMode}` : ""} · Open issues: {health.openIssues}
       </p>
       <div className="mt-5 grid gap-2">
         {(snap?.subsystems || []).map((row) => (

@@ -4,8 +4,7 @@ import { evaluateChecks } from "./checks.ts";
 import { EMPTY_INVARIANTS } from "./invariants.ts";
 import { runCalendarParserFixture, MALFORMED_CALENDAR_FIXTURE } from "./parser.ts";
 import { overallFromSubsystems, overallLabel, rollupSubsystems } from "./health.ts";
-import { sentinelSpeech } from "./speech.ts";
-import { parseSentinelAsk } from "./speech.ts";
+import { everythingWorkingSpeech, sentinelSpeech, parseSentinelAsk } from "./speech.ts";
 import { mayAutoFix, SENTINEL_AUTO_FIX } from "./fix-prep.ts";
 import type { LiveProbeInput } from "./types.ts";
 
@@ -34,6 +33,7 @@ function healthy(over: Partial<LiveProbeInput> = {}): LiveProbeInput {
     testMode: true,
     parser: { kept: 3, skipped: 2, threw: false },
     invariants: EMPTY_INVARIANTS,
+    voice: { observed: true, ok: true, code: "SENTINEL_OK" },
     ...over,
   };
 }
@@ -52,6 +52,7 @@ describe("Sentinel checks", () => {
       booking: "2026-09-21T20:15:00.000Z",
       outreach: "2026-09-21T20:15:00.000Z",
       ara: "2026-09-21T20:15:00.000Z",
+      ara_voice: "2026-09-21T20:15:00.000Z",
     }, now);
     assert.equal(overallFromSubsystems(subsystems), "green");
     assert.ok(subsystems.every((s) => s.light === "green"));
@@ -176,10 +177,76 @@ describe("Sentinel checks", () => {
     assert.equal(mayAutoFix("calendar_parser").allowed, false);
   });
 
+  it("booking mismatch lights Booking red; repaired snapshot is green", () => {
+    const broken = evaluateChecks(healthy({
+      invariants: {
+        ...EMPTY_INVARIANTS,
+        bookedMissingPipeline: [{ googleEventId: "gcal-abc", prospectUid: "uid-fire" }],
+      },
+    }));
+    assert.equal(broken.find((c) => c.id === "invariants")?.code, "PIPELINE_STATE_MISMATCH");
+    const now = Date.parse("2026-09-21T20:15:00.000Z");
+    const observed = {
+      booking: "2026-09-21T20:15:00.000Z",
+      ara_voice: "2026-09-21T20:15:00.000Z",
+      gmail: "2026-09-21T20:15:00.000Z",
+      calendar: "2026-09-21T20:15:00.000Z",
+      places: "2026-09-21T20:15:00.000Z",
+      database: "2026-09-21T20:15:00.000Z",
+      worker: "2026-09-21T20:14:00.000Z",
+      outreach: "2026-09-21T20:15:00.000Z",
+      ara: "2026-09-21T20:15:00.000Z",
+    };
+    assert.equal(rollupSubsystems(broken, [], observed, now).find((s) => s.feature === "booking")?.light, "red");
+    assert.equal(rollupSubsystems(evaluateChecks(healthy()), [], observed, now).find((s) => s.feature === "booking")?.light, "green");
+  });
+
   it("parses owner health questions without treating them as mutations", () => {
     assert.equal(parseSentinelAsk("Is lascengine healthy?").kind, "status");
+    assert.equal(parseSentinelAsk("Is everything working?").kind, "status");
     assert.equal(parseSentinelAsk("Are there any bugs?").kind, "status");
     assert.equal(parseSentinelAsk("Open System Health").kind, "open");
     assert.equal(parseSentinelAsk("delete everything from my calendar").kind, "none");
+  });
+
+  it("Ara will not claim full health while a red Sentinel issue exists", () => {
+    const now = Date.parse("2026-09-21T20:15:00.000Z");
+    const broken = evaluateChecks(healthy({
+      invariants: {
+        ...EMPTY_INVARIANTS,
+        bookedMissingPipeline: [{ googleEventId: "gcal-abc", prospectUid: "uid-fire" }],
+      },
+    }));
+    const subsystems = rollupSubsystems(broken, [], {
+      booking: "2026-09-21T20:15:00.000Z",
+      ara_voice: "2026-09-21T20:15:00.000Z",
+      gmail: "2026-09-21T20:15:00.000Z",
+      calendar: "2026-09-21T20:15:00.000Z",
+      places: "2026-09-21T20:15:00.000Z",
+      database: "2026-09-21T20:15:00.000Z",
+      worker: "2026-09-21T20:14:00.000Z",
+      outreach: "2026-09-21T20:15:00.000Z",
+      ara: "2026-09-21T20:15:00.000Z",
+    }, now);
+    const speech = everythingWorkingSpeech({
+      overall: "red",
+      overallLabel: "1 regression detected",
+      lastRunAt: "2026-09-21T20:15:00.000Z",
+      lastRunMode: "owner",
+      productionSha: "abc1234",
+      previousSha: "",
+      openIssues: 1,
+      criticalOpen: 0,
+      highOpen: 1,
+      subsystems,
+      alerts: [],
+      bugs: [],
+      lastDeploy: null,
+      rollback: null,
+      watching: [],
+      autoFix: false,
+    });
+    assert.match(speech, /No/);
+    assert.doesNotMatch(speech, /are all healthy/);
   });
 });

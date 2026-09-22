@@ -14,7 +14,8 @@ import {
   type AraDeskContext,
 } from "./tools.ts";
 import { ARA_UNAVAILABLE, ARA_VOICE, buildAraInstructions, ownerTextItem, sessionUpdatePayload } from "./ara-context.ts";
-import { publicAraSessionPayload, araClientSecretsMintBodies } from "./ara-token.ts";
+import { publicAraSessionPayload } from "./ara-token.ts";
+import { araClientSecretsMintBodies } from "./mint.ts";
 import { executeIfUntrustedSource, toolsInvokedByUntrustedText } from "./untrusted-tools.ts";
 import { makeVoiceAudit, auditHasAudio } from "./audit.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
@@ -506,10 +507,11 @@ describe("Ara session payload / outage / key leakage", () => {
     if (secret.ok) assert.equal(secret.token, "xai-realtime-client-secret-alt");
   });
 
-  it("first client_secrets mint body omits unsupported session field", () => {
+  it("first client_secrets mint body binds grok-voice-latest and retries a bare body", () => {
     const bodies = araClientSecretsMintBodies();
-    assert.equal("session" in bodies[0]!, false);
-    assert.deepEqual(bodies[0], { expires_after: { seconds: 300 } });
+    assert.equal((bodies[0] as { session?: { model?: string } }).session?.model, "grok-voice-latest");
+    assert.equal("session" in bodies[1]!, false);
+    assert.deepEqual(bodies[1], { expires_after: { seconds: 300 } });
   });
 
   it("xAI API key never appears in browser voice/client files", () => {

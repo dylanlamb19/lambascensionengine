@@ -18,6 +18,10 @@ export const SENTINEL_CODES = [
   "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE",
   "ARA_ACTION_DUPLICATE",
   "ARA_ACTION_ROUTING_FAILED",
+  "ARA_VOICE_PROVIDER_AUTH_FAILED",
+  "ARA_VOICE_SESSION_CREATE_FAILED",
+  "ARA_VOICE_PROVIDER_UNAVAILABLE",
+  "ARA_VOICE_NETWORK_FAILED",
   "PIPELINE_STATE_MISMATCH",
   "TEST_MODE_INVARIANT_FAILED",
   "PROSPECT_DUPLICATE_IDENTITY",
@@ -43,6 +47,7 @@ export const FEATURES = [
   "outreach",
   "pipeline",
   "ara",
+  "ara_voice",
   "auth",
   "test_mode",
   "sentinel",
@@ -77,6 +82,10 @@ export function defaultSeverity(code: SentinelCode): SentinelSeverity {
     case "FOLLOWUP_NOT_CANCELLED_AFTER_REPLY":
     case "PROSPECT_DUPLICATE_IDENTITY":
     case "PIPELINE_STATE_MISMATCH":
+    case "ARA_VOICE_PROVIDER_AUTH_FAILED":
+    case "ARA_VOICE_SESSION_CREATE_FAILED":
+    case "ARA_VOICE_PROVIDER_UNAVAILABLE":
+    case "ARA_VOICE_NETWORK_FAILED":
     case "HTTP_UNHEALTHY":
       return "high";
     case "CALENDAR_NOT_AUTHORIZED":
@@ -95,6 +104,7 @@ export function featureForCode(code: SentinelCode): SentinelFeature {
   if (code.startsWith("PLACES")) return "places";
   if (code.startsWith("GMAIL") || code === "UNKNOWN_DELIVERY") return "gmail";
   if (code.startsWith("WORKER")) return "worker";
+  if (code.startsWith("ARA_VOICE")) return "ara_voice";
   if (code.startsWith("ARA")) return "ara";
   if (code === "DATABASE_UNAVAILABLE") return "database";
   if (code === "HTTP_UNHEALTHY") return "sentinel";
@@ -129,6 +139,10 @@ export function ownerLabel(code: SentinelCode): string {
     case "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE": return "A booking did not save after Calendar create";
     case "ARA_ACTION_DUPLICATE": return "Ara repeated a destructive action";
     case "ARA_ACTION_ROUTING_FAILED": return "Ara routed an action incorrectly";
+    case "ARA_VOICE_PROVIDER_AUTH_FAILED":
+    case "ARA_VOICE_SESSION_CREATE_FAILED":
+    case "ARA_VOICE_PROVIDER_UNAVAILABLE":
+    case "ARA_VOICE_NETWORK_FAILED": return "Ara voice is unavailable";
     case "PIPELINE_STATE_MISMATCH": return "Pipeline and Calendar disagree";
     case "TEST_MODE_INVARIANT_FAILED": return "Test Mode safety was violated";
     case "PROSPECT_DUPLICATE_IDENTITY": return "The same Google Place appears twice";

@@ -146,4 +146,5 @@ export type LiveProbeInput = {
   testMode: boolean;
   parser: { kept: number; skipped: number; threw: boolean };
   invariants: InvariantSnapshot;
+  voice?: { observed: boolean; ok: boolean; code?: string; detail?: string };
 };

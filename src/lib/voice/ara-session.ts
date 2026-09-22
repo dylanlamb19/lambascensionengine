@@ -4,51 +4,44 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { araClientSecretsMintBodies, publicAraSessionPayload } from "./ara-token";
-import { classifyMintHttp, voiceFailure } from "./voice-failure";
+import { mintEphemeralClientSecret, publicPayloadOrFail } from "./mint";
+import { voiceFailure, type VoiceFailureCode } from "./voice-failure";
 
-const CLIENT_SECRETS_URL = "https://api.x.ai/v1/realtime/client_secrets";
-
-async function postClientSecrets(apiKey: string, body: Record<string, unknown>): Promise<Response> {
-  return fetch(CLIENT_SECRETS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+async function recordVoiceHeartbeat(ok: boolean, code: string, detail: string): Promise<void> {
+  try {
+    const { touchHeartbeat } = await import("@/lib/sentinel/sql.server");
+    await touchHeartbeat("ara_voice", ok, code, detail);
+  } catch {
+    /* health write must not block talking to Ara */
+  }
 }
 
 export const createAraSessionFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {
     const apiKey = process.env.XAI_API_KEY?.trim();
-    if (!apiKey) return voiceFailure("XAI_KEY_MISSING");
-    try {
-      const bodies = araClientSecretsMintBodies();
-      let res = await postClientSecrets(apiKey, bodies[0]!);
-      // xAI docs disagree on whether `session` is allowed. Retry the other shape only on 400.
-      if (res.status === 400 && bodies[1]) {
-        res = await postClientSecrets(apiKey, bodies[1]);
-      }
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        return voiceFailure(classifyMintHttp(res.status, text));
-      }
-      const body = await res.json();
-      const pub = publicAraSessionPayload(body, apiKey);
-      if (!pub.ok) return voiceFailure("SESSION_CREATE_FAILED");
-      try {
-        const { logActivity } = await import("@/lib/prospects/repo.server");
-        await logActivity(context.userId, "ara_session", "Ara voice session started", undefined, "VOICE");
-      } catch {
-        /* audit must not block talking to Ara */
-      }
-      return pub;
-    } catch {
-      return voiceFailure("SESSION_CREATE_FAILED");
+    if (!apiKey) {
+      await recordVoiceHeartbeat(false, "XAI_KEY_MISSING", "key absent");
+      return voiceFailure("XAI_KEY_MISSING");
     }
+    const minted = await mintEphemeralClientSecret(apiKey);
+    if (!minted.ok) {
+      await recordVoiceHeartbeat(false, minted.code, minted.status ? `http ${minted.status}` : "transport");
+      return voiceFailure(minted.code);
+    }
+    const pub = publicPayloadOrFail(minted.raw, apiKey);
+    if (!pub.ok) {
+      await recordVoiceHeartbeat(false, pub.code, "bad token shape");
+      return voiceFailure(pub.code);
+    }
+    await recordVoiceHeartbeat(true, "SENTINEL_OK", "ephemeral token minted");
+    try {
+      const { logActivity } = await import("@/lib/prospects/repo.server");
+      await logActivity(context.userId, "ara_session", "Ara voice session started", undefined, "VOICE");
+    } catch {
+      /* audit must not block talking to Ara */
+    }
+    return pub;
   });
 
 export const logVoiceAuditFn = createServerFn({ method: "POST" })
@@ -70,3 +63,5 @@ export const logVoiceAuditFn = createServerFn({ method: "POST" })
     }
     return { ok: true as const, audioStored: false as const };
   });
+
+export type { VoiceFailureCode };

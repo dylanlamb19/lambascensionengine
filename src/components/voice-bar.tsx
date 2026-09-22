@@ -127,6 +127,12 @@ export function VoiceBar({
     recRef.current?.stop();
   }
 
+  const splitHealth = voiceUnavailable
+    ? "Ara text: ready · Ara voice: unavailable"
+    : voiceSessionReady
+      ? "Ara text: ready · Ara voice: ready"
+      : null;
+
   const micBlocked = micPermission === "DENIED" || micPermission === "BLOCKED" || araStatus === "mic_needed";
   const statusLabel =
     voiceUnavailable
@@ -180,6 +186,7 @@ export function VoiceBar({
           <div>
             <p className="la-ara-name">Ara</p>
             <p className="la-ara-status">{statusLabel}</p>
+            {splitHealth ? <p className="text-xs text-muted" data-ara-health="1">{splitHealth}</p> : null}
           </div>
         </button>
         <p className="la-ara-tag">{tag}</p>

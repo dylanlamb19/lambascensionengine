@@ -86,7 +86,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "go home / take me home → navigate_home",
     "open Pipeline → navigate_pipeline",
     "open Settings → navigate_settings",
-    "open System Health / is lascengine healthy / are there any bugs / what broke today / did the last deployment pass / is the worker running / what is Sentinel watching → get_system_health. Answers MUST come from the tool result (Sentinel’s persisted evidence). Never invent system-health. If already_spoken, remain silent. Open the page with navigate_health only when Dylan asks to open System Health.",
+    "open System Health / is lascengine healthy / is everything working / are there any bugs / what broke today / did the last deployment pass / is the worker running / what is Sentinel watching → get_system_health. Answers MUST come from the tool result (Sentinel’s persisted evidence). Never invent system-health. If already_spoken, remain silent. Open the page with navigate_health only when Dylan asks to open System Health.",
     "pull up my calendar / open my calendar / go to my calendar → navigate_calendar. ONLY those explicit navigation phrases. Mentioning calendar while scheduling is NOT navigation.",
     "today / next week / go back to today → calendar_today / calendar_next / calendar_today",
     "show tomorrow → calendar_set_view view=day day=tomorrow",

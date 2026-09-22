@@ -224,7 +224,8 @@ export const scheduleCallFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { getProspectByUid } = await import("@/lib/prospects/repo.server");
     const { accessFor } = await import("./live.server");
-    const { saveCalendarEvent, audit } = await import("./sql.server");
+    const { persistConfirmedBooking } = await import("./booking-confirm.server");
+    const { audit } = await import("./sql.server");
     const { createEvent, offeredSlots, CALENDAR_UNREADABLE } = await import("../google/calendar");
     const { slotIsOffered } = await import("./booking");
     const prospect = await getProspectByUid(context.userId, data.uid);
@@ -245,7 +246,19 @@ export const scheduleCallFn = createServerFn({ method: "POST" })
       description: "Sales call. Do not claim revenue, ad spend, or $10K ability.",
     });
     if (!created.ok) return { ok: false as const, reason: created.error };
-    await saveCalendarEvent(context.userId, data.uid, created.id, `Call with ${prospect.name}`, start, end);
+    const persisted = await persistConfirmedBooking({
+      userId: context.userId,
+      prospectUid: data.uid,
+      googleEventId: created.id,
+      title: `Call with ${prospect.name}`,
+      start,
+      end,
+      method: data.method === "AUTOMATION" ? "AUTOMATION" : "MANUAL",
+    });
+    if (!persisted.ok) {
+      await audit(context.userId, "schedule_call", `persist_failed:${created.id}`, { prospectUid: data.uid, method: data.method || "MANUAL", providerIds: created.id });
+      return { ok: false as const, reason: persisted.reason, eventId: created.id };
+    }
     await audit(context.userId, "schedule_call", `Booked ${start.toISOString()}`, { prospectUid: data.uid, method: data.method || "MANUAL", providerIds: created.id });
     return { ok: true as const, eventId: created.id };
   });

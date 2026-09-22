@@ -1,13 +1,5 @@
 import { ARA_MODEL, ARA_UNAVAILABLE, ARA_VOICE, ARA_WS_URL } from "./ara-context.ts";
 
-/** xAI ephemeral-token docs: client_secrets does not support a `session` field. */
-export function araClientSecretsMintBodies(): ReadonlyArray<Record<string, unknown>> {
-  return [
-    { expires_after: { seconds: 300 } },
-    { expires_after: { seconds: 300 }, session: { model: ARA_MODEL } },
-  ];
-}
-
 export function extractClientSecret(raw: unknown): { value: string; expires_at?: number } {
   const rec = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
   if (!rec) return { value: "" };

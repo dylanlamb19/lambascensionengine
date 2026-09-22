@@ -13,7 +13,11 @@ export type VoiceFailureCode =
   | "VOICE_TIMEOUT"
   | "VOICE_BAD_RESPONSE"
   | "VOICE_AUDIO_DECODE_FAILED"
-  | "VOICE_PLAYBACK_FAILED";
+  | "VOICE_PLAYBACK_FAILED"
+  | "ARA_VOICE_PROVIDER_AUTH_FAILED"
+  | "ARA_VOICE_SESSION_CREATE_FAILED"
+  | "ARA_VOICE_PROVIDER_UNAVAILABLE"
+  | "ARA_VOICE_NETWORK_FAILED";
 
 const LABEL: Record<VoiceFailureCode, string> = {
   XAI_KEY_MISSING: "Ara's voice isn't available (XAI_KEY_MISSING).",
@@ -31,6 +35,10 @@ const LABEL: Record<VoiceFailureCode, string> = {
   VOICE_BAD_RESPONSE: "Ara's voice isn't available (VOICE_BAD_RESPONSE).",
   VOICE_AUDIO_DECODE_FAILED: "Ara's voice isn't available (VOICE_AUDIO_DECODE_FAILED).",
   VOICE_PLAYBACK_FAILED: "Ara's voice isn't available (VOICE_PLAYBACK_FAILED).",
+  ARA_VOICE_PROVIDER_AUTH_FAILED: "Ara's voice isn't available (ARA_VOICE_PROVIDER_AUTH_FAILED).",
+  ARA_VOICE_SESSION_CREATE_FAILED: "Ara's voice isn't available (ARA_VOICE_SESSION_CREATE_FAILED).",
+  ARA_VOICE_PROVIDER_UNAVAILABLE: "Ara's voice isn't available (ARA_VOICE_PROVIDER_UNAVAILABLE).",
+  ARA_VOICE_NETWORK_FAILED: "Ara's voice isn't available (ARA_VOICE_NETWORK_FAILED).",
 };
 
 export function voiceFailure(code: VoiceFailureCode): { ok: false; code: VoiceFailureCode; reason: string } {
@@ -56,12 +64,12 @@ export function classifyMintHttp(status: number, bodyText = ""): VoiceFailureCod
   const credits = /spending-limit|out of credits|run out of credits|need a grok subscription/.test(snippet);
   if (status === 401 || status === 403) {
     if (credits) return "VOICE_CREDITS_EXHAUSTED";
-    return "VOICE_AUTH_FAILED";
+    return "ARA_VOICE_PROVIDER_AUTH_FAILED";
   }
   if (status === 429) return "VOICE_RATE_LIMITED";
-  if (status >= 500) return "VOICE_UPSTREAM_5XX";
-  if (status >= 400) return "VOICE_UPSTREAM_4XX";
-  return "SESSION_CREATE_FAILED";
+  if (status >= 500) return "ARA_VOICE_PROVIDER_UNAVAILABLE";
+  if (status >= 400) return "ARA_VOICE_SESSION_CREATE_FAILED";
+  return "ARA_VOICE_SESSION_CREATE_FAILED";
 }
 
 export function classifyTtsTransportError(err: unknown): VoiceFailureCode {

@@ -1,6 +1,7 @@
 import { makeFinding } from "./ledger.ts";
 import { evaluateInvariants } from "./invariants.ts";
 import { workerStale } from "./health.ts";
+import type { SentinelCode } from "./codes.ts";
 import type { LiveProbeInput, SentinelCheckResult, SentinelFinding } from "./types.ts";
 
 export function evaluateChecks(input: LiveProbeInput): SentinelCheckResult[] {
@@ -15,6 +16,7 @@ export function evaluateChecks(input: LiveProbeInput): SentinelCheckResult[] {
   checks.push(checkPlaces(input));
   checks.push(checkInvariants(input));
   checks.push(checkTestMode(input));
+  checks.push(checkVoice(input));
 
   return checks;
 }
@@ -182,6 +184,29 @@ function checkTestMode(input: LiveProbeInput): SentinelCheckResult {
     true,
     "none",
   );
+}
+
+export function checkVoice(input: Pick<LiveProbeInput, "voice">): SentinelCheckResult {
+  const voice = input.voice;
+  if (!voice || !voice.observed) {
+    return ok("ara-voice", "ara_voice", "Ara voice has not been observed recently.", false, "none");
+  }
+  if (!voice.ok) {
+    const raw = voice.code || "ARA_VOICE_SESSION_CREATE_FAILED";
+    const code: SentinelCode =
+      raw === "ARA_VOICE_PROVIDER_AUTH_FAILED"
+      || raw === "ARA_VOICE_SESSION_CREATE_FAILED"
+      || raw === "ARA_VOICE_PROVIDER_UNAVAILABLE"
+      || raw === "ARA_VOICE_NETWORK_FAILED"
+        ? raw
+        : "ARA_VOICE_SESSION_CREATE_FAILED";
+    return fail("ara-voice", "ara_voice", makeFinding(
+      code,
+      "Ara voice could not establish a realtime session.",
+      { code: voice.code || "", detail: voice.detail || "" },
+    ), true, "cheap");
+  }
+  return ok("ara-voice", "ara_voice", "Ara voice session mint was observed working.", true, "cheap");
 }
 
 function ok(

@@ -4,8 +4,8 @@
  * writes OAuth, never disables Test Mode, never merges or deploys.
  */
 import { env } from "@/lib/env.server";
-import { evaluateChecks } from "./checks.ts";
-import { overallFromSubsystems, overallGrade, overallLabel, rollupSubsystems } from "./health.ts";
+import { evaluateChecks, checkVoice } from "./checks.ts";
+import { overallFromSubsystems, overallGrade, overallLabel, rollupSubsystems, recentlyObserved } from "./health.ts";
 import { runCalendarParserFixture } from "./parser.ts";
 import { SENTINEL_WATCHING } from "./speech.ts";
 import { SENTINEL_AUTO_FIX } from "./fix-prep.ts";
@@ -114,6 +114,10 @@ export async function runSentinel(opts: {
     }
   }
 
+  const priorBeats = db.ok ? await loadHeartbeats().catch(() => ({} as Awaited<ReturnType<typeof loadHeartbeats>>)) : {};
+  const voiceBeat = priorBeats.ara_voice;
+  const voiceObserved = Boolean(voiceBeat && recentlyObserved(voiceBeat.lastCheckAt || voiceBeat.lastOkAt || null, now));
+
   const input: LiveProbeInput = {
     now,
     mode,
@@ -133,6 +137,12 @@ export async function runSentinel(opts: {
     testMode,
     parser,
     invariants,
+    voice: {
+      observed: voiceObserved,
+      ok: Boolean(voiceBeat?.observedOk),
+      code: voiceBeat?.lastCode || "",
+      detail: voiceBeat?.observedOk ? "mint ok" : (voiceBeat?.lastCode || ""),
+    },
   };
 
   const checks = evaluateChecks(input);
@@ -163,6 +173,7 @@ export async function runSentinel(opts: {
     booking: beats.booking?.lastOkAt || beats.db?.lastOkAt || null,
     outreach: beats.outreach?.lastOkAt || beats.worker?.lastOkAt || null,
     ara: beats.ara?.lastOkAt || beats.sentinel?.lastOkAt || null,
+    ara_voice: beats.ara_voice?.lastOkAt || beats.ara_voice?.lastCheckAt || null,
   };
   const subsystems = rollupSubsystems(checks, openBugs, observedAt);
   const overall = overallFromSubsystems(subsystems);
@@ -268,8 +279,18 @@ export async function loadSentinelSnapshot(): Promise<SentinelSnapshot> {
     booking: beats.booking?.lastOkAt || beats.db?.lastOkAt || null,
     outreach: beats.outreach?.lastOkAt || beats.worker?.lastOkAt || null,
     ara: beats.ara?.lastOkAt || beats.sentinel?.lastOkAt || null,
+    ara_voice: beats.ara_voice?.lastOkAt || beats.ara_voice?.lastCheckAt || null,
   };
-  const subsystems = rollupSubsystems([], openBugs, observedAt);
+  const voiceObserved = Boolean(beats.ara_voice && recentlyObserved(beats.ara_voice.lastCheckAt || beats.ara_voice.lastOkAt || null));
+  const voiceCheck = checkVoice({
+    voice: {
+      observed: voiceObserved,
+      ok: Boolean(beats.ara_voice?.observedOk),
+      code: beats.ara_voice?.lastCode || "",
+      detail: beats.ara_voice?.observedOk ? "mint ok" : (beats.ara_voice?.lastCode || ""),
+    },
+  });
+  const subsystems = rollupSubsystems([voiceCheck], openBugs, observedAt);
   const overall = run
     ? (run.overall === "healthy" ? "green" : run.overall === "critical" ? "red" : run.overall === "degraded" ? "yellow" : "unknown")
     : overallFromSubsystems(subsystems);

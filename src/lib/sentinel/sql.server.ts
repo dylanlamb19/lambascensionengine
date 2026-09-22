@@ -257,17 +257,30 @@ async function loadBug(signature: string): Promise<SentinelBug | null> {
 
 export async function resolveMissing(openSignatures: string[], productionSha: string): Promise<string[]> {
   const sql = await getSql();
-  const open = await sql<{ signature: string; error_code: string }>`
-    select signature, error_code from sentinel_bugs where status = 'open'
+  const open = await sql<{ signature: string; error_code: string; evidence: unknown }>`
+    select signature, error_code, evidence from sentinel_bugs where status = 'open'
   `;
   const keep = new Set(openSignatures);
   const resolved: string[] = [];
   const now = new Date().toISOString();
   for (const row of open) {
     if (keep.has(row.signature)) continue;
+    const prev = asRecord(row.evidence) || {};
+    const evidence = {
+      ...prev,
+      resolved: true,
+      resolved_at: now,
+      fix_commit: productionSha,
+      verification_status: "observed_clear",
+    };
     await sql`
       update sentinel_bugs
-      set status = ${"resolved"}, verification_status = ${"observed_clear"}, resolved_at = ${now}, production_sha = ${productionSha}
+      set status = ${"resolved"},
+          verification_status = ${"observed_clear"},
+          resolved_at = ${now},
+          production_sha = ${productionSha},
+          fix_commit = ${productionSha},
+          evidence = ${JSON.stringify(evidence)}::jsonb
       where signature = ${row.signature} and status = 'open'
     `;
     resolved.push(row.error_code);
@@ -333,14 +346,19 @@ export async function touchHeartbeat(name: string, ok: boolean, code: string, de
   `;
 }
 
-export async function loadHeartbeats(): Promise<Record<string, { lastOkAt: string | null; observedOk: boolean }>> {
+export async function loadHeartbeats(): Promise<Record<string, { lastOkAt: string | null; observedOk: boolean; lastCheckAt: string | null; lastCode: string }>> {
   const sql = await getSql();
-  const rows = await sql<{ name: string; last_ok_at: unknown; observed_ok: boolean }>`
-    select name, last_ok_at, observed_ok from sentinel_heartbeats
+  const rows = await sql<{ name: string; last_ok_at: unknown; observed_ok: boolean; last_check_at: unknown; last_code: string }>`
+    select name, last_ok_at, observed_ok, last_check_at, last_code from sentinel_heartbeats
   `;
-  const out: Record<string, { lastOkAt: string | null; observedOk: boolean }> = {};
+  const out: Record<string, { lastOkAt: string | null; observedOk: boolean; lastCheckAt: string | null; lastCode: string }> = {};
   for (const r of rows) {
-    out[r.name] = { lastOkAt: iso(r.last_ok_at) || null, observedOk: Boolean(r.observed_ok) };
+    out[r.name] = {
+      lastOkAt: iso(r.last_ok_at) || null,
+      observedOk: Boolean(r.observed_ok),
+      lastCheckAt: iso(r.last_check_at) || null,
+      lastCode: r.last_code || "",
+    };
   }
   return out;
 }

@@ -50,7 +50,9 @@ import { CalendarDesk } from "@/components/calendar-desk";
 import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
 import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
 import { parseSentinelAsk, sentinelSpeech } from "@/lib/sentinel/speech";
+import { canonicalHealth, homeIssueLine } from "@/lib/sentinel/system-health";
 import type { SentinelSnapshot } from "@/lib/sentinel/types";
+import { repairBookingInvariantFn } from "@/lib/mail/booking-reconcile-actions";
 import { ActionGate, makeActionId } from "@/lib/voice/idempotency";
 import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
 import { stopSpeaking } from "@/lib/voice/speech";
@@ -468,6 +470,12 @@ export function OwnerDesk() {
           try {
             const sen = await sentinelStatusFn();
             if (!cancelled && sen.ok) setSentinel(sen.snapshot);
+            const mismatch = Boolean(sen.ok && sen.snapshot.alerts.some((a) => a.error_code === "PIPELINE_STATE_MISMATCH"));
+            if (mismatch) {
+              await repairBookingInvariantFn();
+              const rerun = await sentinelRunFn({ data: { mode: "owner" } });
+              if (!cancelled && rerun.ok) setSentinel(rerun.snapshot);
+            }
           } catch { /* Sentinel ledger may not exist yet */ }
           try {
             const vis = await loadVisualThemeFn();
@@ -2433,7 +2441,7 @@ export function OwnerDesk() {
       const ses = await createAraSessionFn();
       if (araGen.current !== gen) return;
       if (!ses.ok) {
-        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
+        setAraErr(ses.reason || voiceFailureReason("ARA_VOICE_SESSION_CREATE_FAILED"));
         setVoiceUnavailable(true);
         setAraStatus("unavailable");
         return;
@@ -2523,7 +2531,7 @@ export function OwnerDesk() {
       client.setMuted(voiceMuted);
     } catch {
       if (araGen.current !== gen) return;
-      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
+      setAraErr(voiceFailureReason("ARA_VOICE_NETWORK_FAILED"));
       setVoiceUnavailable(true);
       setAraStatus("unavailable");
     }
@@ -2535,26 +2543,11 @@ export function OwnerDesk() {
     setAraStatus("connecting");
     unlockAraOutput();
     araSpeech().unlock();
-    if (voiceMode === "conversation") {
-      void startAra();
+    if (voiceMode !== "conversation") {
+      setVoiceMode("conversation");
       return;
     }
-    try {
-      const ses = await createAraSessionFn();
-      if (!ses.ok) {
-        setVoiceUnavailable(true);
-        setAraErr(ses.reason || voiceFailureReason("SESSION_CREATE_FAILED"));
-        setAraStatus("unavailable");
-        return;
-      }
-      setVoiceUnavailable(false);
-      setAraErr("");
-      setAraStatus("ready");
-    } catch {
-      setVoiceUnavailable(true);
-      setAraErr(voiceFailureReason("SESSION_CREATE_FAILED"));
-      setAraStatus("unavailable");
-    }
+    void startAra();
   }
 
   function handleAraOwnerTranscript(text: string, isFinal = true) {
@@ -3105,6 +3098,7 @@ export function OwnerDesk() {
 
   const upNext = tasks[taskIx ?? 0] || tasks[0] || null;
   const attentionN = tasks.filter((t) => t.severity === "red").length;
+  const health = canonicalHealth({ snapshot: sentinel, prospectIssueCount: attentionN });
   const greeting = timeGreeting();
   const wide = view === "pipe" || view === "calendar";
 
@@ -3143,7 +3137,8 @@ export function OwnerDesk() {
       return (
         <div key={id} data-home-widget="status" className="la-stats mb-6">
           <div className="la-stat"><b>{readyN}</b><span>prospect{readyN === 1 ? "" : "s"} ready</span></div>
-          <div className="la-stat"><b>{attentionN}</b><span>issue{attentionN === 1 ? "" : "s"} need attention</span></div>
+          <div className="la-stat"><b>{health.prospectIssues}</b><span>prospect issue{health.prospectIssues === 1 ? "" : "s"}</span></div>
+          <div className="la-stat"><b>{health.systemIssues}</b><span>system issue{health.systemIssues === 1 ? "" : "s"}</span></div>
           <div className="la-stat"><b>{sales.replies}</b><span>{sales.replies === 1 ? "reply" : "replies"} waiting</span></div>
           <div className="la-stat"><b>{sales.calls}</b><span>{sales.calls === 1 ? "call" : "calls"} today</span></div>
         </div>
@@ -3466,15 +3461,13 @@ export function OwnerDesk() {
             ) : null}
             <button
               type="button"
-              className={`la-quiet-status mb-5 ${light === "red" ? "is-bad" : light === "yellow" ? "is-warn" : "is-good"}`}
+              className={`la-quiet-status mb-5 ${health.systemIssues > 0 || light === "red" ? "is-bad" : light === "yellow" ? "is-warn" : "is-good"}`}
               onClick={() => setStatusOpen((v) => !v)}
             >
-              <span className={`la-dot ${light === "red" ? "la-dot-bad" : light === "yellow" ? "la-dot-warn" : "la-dot-good"}`} />
-              {light === "green"
-                ? "Everything is good"
-                : `${attentionN} issue${attentionN === 1 ? "" : "s"} need attention`}
+              <span className={`la-dot ${health.systemIssues > 0 || light === "red" ? "la-dot-bad" : light === "yellow" ? "la-dot-warn" : "la-dot-good"}`} />
+              {homeIssueLine(health)}
             </button>
-            {statusOpen && light !== "green" ? (
+            {statusOpen && (health.systemIssues > 0 || light !== "green") ? (
               <div className={`la-attention mb-5 ${light === "red" ? "la-attention-red" : "la-attention-yellow"}`}>
                 <div>
                   <b>{headline}</b>

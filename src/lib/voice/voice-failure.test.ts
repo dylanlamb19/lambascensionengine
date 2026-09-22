@@ -28,6 +28,10 @@ test("every reconnect failure category is named", () => {
     "VOICE_BAD_RESPONSE",
     "VOICE_AUDIO_DECODE_FAILED",
     "VOICE_PLAYBACK_FAILED",
+    "ARA_VOICE_PROVIDER_AUTH_FAILED",
+    "ARA_VOICE_SESSION_CREATE_FAILED",
+    "ARA_VOICE_PROVIDER_UNAVAILABLE",
+    "ARA_VOICE_NETWORK_FAILED",
   ] as const) {
     assert.match(voiceFailureReason(code), new RegExp(code));
   }
@@ -36,20 +40,18 @@ test("every reconnect failure category is named", () => {
 test("session mint returns XAI_KEY_MISSING when the key is absent", () => {
   const src = readFileSync(new URL("./ara-session.ts", import.meta.url), "utf8");
   assert.match(src, /XAI_KEY_MISSING/);
-  assert.match(src, /SESSION_CREATE_FAILED/);
+  assert.match(src, /mintEphemeralClientSecret/);
   assert.match(src, /process\.env\.XAI_API_KEY/);
-  assert.match(src, /classifyMintHttp/);
-  assert.match(src, /araClientSecretsMintBodies/);
 });
 
 test("mint HTTP classification does not dump provider bodies", () => {
   const credits = classifyMintHttp(403, "You have run out of credits [WKE=personal-team-blocked:spending-limit]");
   assert.equal(credits, "VOICE_CREDITS_EXHAUSTED");
-  assert.equal(classifyMintHttp(403, "forbidden"), "VOICE_AUTH_FAILED");
-  assert.equal(classifyMintHttp(401, "invalid api key"), "VOICE_AUTH_FAILED");
+  assert.equal(classifyMintHttp(403, "forbidden"), "ARA_VOICE_PROVIDER_AUTH_FAILED");
+  assert.equal(classifyMintHttp(401, "invalid api key"), "ARA_VOICE_PROVIDER_AUTH_FAILED");
   assert.equal(classifyMintHttp(429, "slow down"), "VOICE_RATE_LIMITED");
-  assert.equal(classifyMintHttp(500, "boom"), "VOICE_UPSTREAM_5XX");
-  assert.equal(classifyMintHttp(400, "unknown field session"), "VOICE_UPSTREAM_4XX");
+  assert.equal(classifyMintHttp(500, "boom"), "ARA_VOICE_PROVIDER_UNAVAILABLE");
+  assert.equal(classifyMintHttp(400, "unknown field session"), "ARA_VOICE_SESSION_CREATE_FAILED");
   const fail = voiceFailure(credits);
   assert.doesNotMatch(fail.reason, /WKE=|personal-team-blocked|api-key/i);
 });
@@ -58,6 +60,9 @@ test("Reconnect Ara Voice always mints a real session", () => {
   const desk = readFileSync(new URL("../../components/owner-desk.tsx", import.meta.url), "utf8");
   assert.match(desk, /reconnectAraVoice/);
   assert.match(desk, /createAraSessionFn/);
+  const reconnectFn = desk.slice(desk.indexOf("async function reconnectAraVoice"), desk.indexOf("function handleAraOwnerTranscript"));
+  assert.match(reconnectFn, /startAra/);
+  assert.doesNotMatch(reconnectFn, /createAraSessionFn/);
   const bar = readFileSync(new URL("../../components/voice-bar.tsx", import.meta.url), "utf8");
   assert.match(bar, /Reconnect Ara Voice/);
   assert.match(bar, /data-voice-provider="xAI"/);

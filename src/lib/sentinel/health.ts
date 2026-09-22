@@ -13,6 +13,7 @@ const DASHBOARD: SentinelFeature[] = [
   "booking",
   "outreach",
   "ara",
+  "ara_voice",
 ];
 
 export function lightFromFindings(findings: SentinelFinding[], observed: boolean): HealthLight {
@@ -135,6 +136,7 @@ export function featureLabel(feature: SentinelFeature): string {
     case "outreach": return "Outreach safety";
     case "pipeline": return "Pipeline";
     case "ara": return "Ara actions";
+    case "ara_voice": return "Ara voice";
     case "auth": return "Auth";
     case "test_mode": return "Test Mode";
     case "sentinel": return "Sentinel";
