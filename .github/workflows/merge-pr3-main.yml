@@ -28,6 +28,12 @@ jobs:
           set -e
           echo "merge exit=$merge_rc"
           python3 mcp-push/pr3-resolve/run-resolve.py
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            echo "force-theirs $f"
+            git checkout --theirs -- "$f"
+            git add -- "$f"
+          done < <(git diff --name-only --diff-filter=U || true)
           if git grep -n '<<<<<<<' -- . ':!mcp-push' ':!acq-micro' ':!acq-bundle-parts' ':!acq-payload-parts' ':!acq-src-chunks' ':!.github/workflows' 2>/dev/null; then
             echo "Unresolved conflict markers remain" >&2
             exit 1
