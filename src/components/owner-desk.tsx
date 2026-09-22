@@ -1688,7 +1688,7 @@ export function OwnerDesk() {
             });
             if (!created.ok) {
               say("Could not create campaign.");
-              return;
+              return { ok: false, spoken: "Could not create campaign.", changed: false, emailSent: false };
             }
             id = created.campaign.id;
           }
@@ -1700,7 +1700,7 @@ export function OwnerDesk() {
       } catch {
         say("Campaign action failed. Nothing was sent.");
       }
-      return;
+      return { ok: true, changed: false, emailSent: false, already_spoken: true };
     }
     if (result.plan.type === "linkedin_agent_order") {
       const plan = result.plan;
@@ -1710,7 +1710,7 @@ export function OwnerDesk() {
         const spoken = "Outreach is HIGH risk. Say Confirm LinkedIn order to queue draft connects under soft caps. Nothing was sent.";
         setVoiceReply(spoken);
         utter(spoken, "CONFIRM");
-        return { ...result.output, ok: true, spoken, staysOnScreen: true, changed: false };
+        return { ...result.output, ok: true, spoken, already_spoken: true, staysOnScreen: true, changed: false, emailSent: false };
       }
       void (async () => {
         try {
@@ -1728,7 +1728,7 @@ export function OwnerDesk() {
           utter(spoken, "LINKEDIN_ORDER");
         }
       })();
-      return { ...result.output, ok: true, staysOnScreen: true, changed: false };
+      return { ...result.output, ok: true, staysOnScreen: true, changed: false, already_spoken: true, emailSent: false };
     }
     if (result.plan.type === "sentinel_status") {
       try {
@@ -3776,7 +3776,18 @@ export function OwnerDesk() {
               prospects={rows.map(fromProspect)}
               onFilter={(filter) => dispatchAction({ name: "FILTER_PROSPECTS", filter })}
               onFindHighTicket={() => setView("find")}
-              onOrderLinkedInEnrich={() => void createLinkedInAgentOrderFn({ data: { kind: "enrich", payload: { focus: "NEEDS_CONTACT_INFO" }, note: "Enrich contacts for Needs Contact Info" } })}
+              onOrderLinkedInEnrich={() => void createLinkedInAgentOrderFn({
+                data: {
+                  kind: "enrich",
+                  payload: {
+                    focus: "NEEDS_CONTACT_INFORMATION",
+                    contactability: "email_only",
+                    do_not_invent_email: true,
+                    gmail_auto_send: false,
+                  },
+                  note: "Find a usable email. Phone is not contactable. Do not invent addresses.",
+                },
+              })}
             />
             <p className="mb-3 text-sm text-muted">{filterSummary(visibleRows.length, prospectFilter, lastDiscovery)}</p>
             {!isFilterEmpty(prospectFilter) ? (

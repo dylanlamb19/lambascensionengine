@@ -5,7 +5,7 @@
 import type { Prospect } from "../review-brief.ts";
 import { evaluateContactability, type ContactabilityResult } from "../prospects/contactability.ts";
 import { fitHeadline } from "../prospects/qualify.ts";
-import type { CampaignMemberStatus } from "./types.ts";
+import type { CampaignMemberStatus, CampaignSnapshot } from "./types.ts";
 
 export type MembershipInput = {
   prospects: Prospect[];
@@ -27,7 +27,7 @@ export type MembershipRow = {
   status: CampaignMemberStatus;
   skipReason: string;
   recipient: string;
-  eligibilitySnapshot: Record<string, unknown>;
+  eligibilitySnapshot: CampaignSnapshot;
   contactability: ContactabilityResult;
 };
 

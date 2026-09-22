@@ -191,31 +191,29 @@ export async function runHighTicketFill(opts: {
   };
 }
 
-/** Drain up to N queued LinkedIn agent orders (claim only — external agent acts). */
+/** Engine only runs Places fills. Enrich / outreach / chat stay queued for the Grok Bot. */
 export async function drainLinkedInAgentOrders(opts: { limit?: number } = {}): Promise<{
   claimed: number;
   orderIds: string[];
+  completed: number;
 }> {
-  const { claimNextOrder } = await import("./repo.server");
+  const { claimNextOrder, completeOrder, postMessage, releaseStaleClaims } = await import("./repo.server");
   const limit = Math.min(20, Math.max(1, Math.floor(opts.limit ?? 5)));
   const orderIds: string[] = [];
+  let completed = 0;
+  await releaseStaleClaims({ kind: "fill_leads" });
   for (let i = 0; i < limit; i += 1) {
-    const order = await claimNextOrder();
+    const order = await claimNextOrder({ kind: "fill_leads" });
     if (!order) break;
     orderIds.push(order.id);
-    if (order.kind === "fill_leads") {
+    try {
       const fill = await runHighTicketFill({
         userId: order.user_id,
         maxSearches: Number(order.payload.maxSearches) || 3,
         perSearchLimit: Number(order.payload.perSearchLimit) || 5,
-        verticals: Array.isArray(order.payload.verticals)
-          ? (order.payload.verticals as string[])
-          : undefined,
-        cities: Array.isArray(order.payload.cities)
-          ? (order.payload.cities as string[])
-          : undefined,
+        verticals: stringList(order.payload.verticals),
+        cities: stringList(order.payload.cities),
       });
-      const { completeOrder, postMessage } = await import("./repo.server");
       await completeOrder(order.user_id, order.id, {
         status: fill.ok ? "done" : "failed",
         result: {
@@ -226,13 +224,50 @@ export async function drainLinkedInAgentOrders(opts: { limit?: number } = {}): P
           skipped: fill.skipped,
         },
       });
+      await postMessage(order.user_id, "system", fill.reason, { order_id: order.id, kind: "fill_leads" });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Places fill failed.";
+      await completeOrder(order.user_id, order.id, {
+        status: "failed",
+        result: { reason: reason.slice(0, 500), kind: "fill_leads" },
+      });
       await postMessage(
         order.user_id,
         "system",
-        fill.reason,
+        `Places fill failed for order ${order.id.slice(0, 8)}. Nothing was sent.`,
         { order_id: order.id, kind: "fill_leads" },
       );
     }
+    completed += 1;
   }
-  return { claimed: orderIds.length, orderIds };
+  return { claimed: orderIds.length, orderIds, completed };
+}
+
+/** Claim enrich / outreach / chat / custom orders for the external LinkedIn Grok Bot. */
+export async function claimGrokBotOrders(opts: { limit?: number } = {}): Promise<{
+  claimed: number;
+  released_stale: number;
+  orders: Array<{ id: string; user_id: string; kind: string; payload: { [key: string]: import("./types").JsonValue } }>;
+}> {
+  const { claimNextOrder, releaseStaleClaims } = await import("./repo.server");
+  const limit = Math.min(10, Math.max(1, Math.floor(opts.limit ?? 5)));
+  const released_stale = await releaseStaleClaims({ exceptKind: "fill_leads" });
+  const orders: Array<{ id: string; user_id: string; kind: string; payload: { [key: string]: import("./types").JsonValue } }> = [];
+  for (let i = 0; i < limit; i += 1) {
+    const order = await claimNextOrder({ exceptKind: "fill_leads" });
+    if (!order) break;
+    orders.push({
+      id: order.id,
+      user_id: order.user_id,
+      kind: order.kind,
+      payload: order.payload,
+    });
+  }
+  return { claimed: orders.length, released_stale, orders };
+}
+
+function stringList(value: import("./types").JsonValue | undefined): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter((item): item is string => typeof item === "string");
+  return out.length ? out : undefined;
 }

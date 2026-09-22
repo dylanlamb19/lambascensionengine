@@ -111,14 +111,20 @@ export function LinkedInAgentChat() {
       await createLinkedInAgentOrderFn({
         data: {
           kind: "enrich",
-          payload: { focus: "NEEDS_CONTACT_INFO", soft_cap: true },
-          note: "Enrich contacts for Needs Contact Info",
+          payload: {
+            focus: "NEEDS_CONTACT_INFORMATION",
+            contactability: "email_only",
+            soft_cap: true,
+            do_not_invent_email: true,
+            gmail_auto_send: false,
+          },
+          note: "Find a usable email for Needs Contact Information. Do not invent emails.",
         },
       });
       await postLinkedInAgentMessageFn({
         data: {
           role: "system",
-          body: "Queued enrich for Needs Contact Info. Soft-capped — no invented emails.",
+          body: "Queued email search for Needs Contact Information. The Grok Bot must not invent emails or send mail.",
         },
       });
       await refresh();
@@ -173,8 +179,8 @@ export function LinkedInAgentChat() {
       {expanded ? (
         <div className="la-li-chat-panel">
           <p className="la-li-chat-hint">
-            In-app thread for the LinkedIn Grok Bot agent. Messages and orders are stored here —
-            the agent polls orders externally. No LinkedIn scraping in Lamb Ascension.
+            In-app thread for the LinkedIn Grok Bot. Orders stay queued until the bot claims them.
+            Lamb Ascension does not scrape LinkedIn and does not send those emails.
           </p>
 
           <div className="la-li-thread" role="log" aria-live="polite">
@@ -212,7 +218,7 @@ export function LinkedInAgentChat() {
               Fill high-ticket leads
             </button>
             <button type="button" className="la-btn la-btn-ghost" disabled={busy} onClick={() => void queueEnrichNeedsContact()}>
-              Enrich Needs Contact Info
+              Enrich missing emails
             </button>
             <button type="button" className="la-btn la-btn-ghost" disabled={busy} onClick={() => void queueOutreachDraft()}>
               Queue LinkedIn drafts

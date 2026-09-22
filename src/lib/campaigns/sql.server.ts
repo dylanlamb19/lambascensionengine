@@ -1,5 +1,5 @@
 import { getSql } from "@/lib/db";
-import type { CampaignMember, CampaignMemberStatus, CampaignReport, CampaignStatus, EmailCampaign } from "./types";
+import type { CampaignMember, CampaignMemberStatus, CampaignReport, CampaignSnapshot, CampaignStatus, EmailCampaign } from "./types";
 
 function asIso(v: string | Date | null | undefined): string {
   if (!v) return "";
@@ -133,7 +133,7 @@ export async function replaceMembers(
     messageSubject: string;
     messageBody: string;
     messageHash: string;
-    eligibilitySnapshot: Record<string, unknown>;
+    eligibilitySnapshot: CampaignSnapshot;
     authorizedAt: string | null;
     sendKey: string;
   }>,
@@ -176,10 +176,6 @@ type MemberRow = {
 };
 
 function mapMember(r: MemberRow): CampaignMember {
-  let snap: Record<string, unknown> = {};
-  if (r.eligibility_snapshot && typeof r.eligibility_snapshot === "object") {
-    snap = r.eligibility_snapshot as Record<string, unknown>;
-  }
   return {
     campaignId: r.campaign_id,
     prospectUid: r.prospect_uid,
@@ -188,13 +184,26 @@ function mapMember(r: MemberRow): CampaignMember {
     messageSubject: r.message_subject || "",
     messageBody: r.message_body || "",
     messageHash: r.message_hash || "",
-    eligibilitySnapshot: snap,
+    eligibilitySnapshot: snapshotBag(r.eligibility_snapshot),
     authorizedAt: r.authorized_at ? asIso(r.authorized_at) : null,
     sendKey: r.send_key || "",
     recipient: r.recipient || "",
     sentAt: r.sent_at ? asIso(r.sent_at) : null,
     lastError: r.last_error || "",
   };
+}
+
+function snapshotBag(value: unknown): CampaignSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: CampaignSnapshot = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean" || item === null) {
+      out[key] = item;
+    } else if (Array.isArray(item) && item.every((entry) => typeof entry === "string")) {
+      out[key] = item;
+    }
+  }
+  return out;
 }
 
 export async function listMembers(campaignId: string): Promise<CampaignMember[]> {

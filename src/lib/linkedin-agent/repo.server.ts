@@ -162,23 +162,26 @@ export async function createOrder(
   return rowToOrder(rows[0]!);
 }
 
-/** Claim the next queued order for any owner (job/drain) or a specific user. */
-export async function claimNextOrder(opts: { userId?: string } = {}): Promise<LinkedInAgentOrder | null> {
+/** Claim the next queued order. kind / exceptKind keep Places fills and Grok Bot work apart. */
+export async function claimNextOrder(opts: {
+  userId?: string;
+  kind?: LinkedInAgentOrderKind;
+  exceptKind?: LinkedInAgentOrderKind;
+} = {}): Promise<LinkedInAgentOrder | null> {
   const sql = await getSql();
   const now = new Date().toISOString();
-  const queued = opts.userId
-    ? await sql<{ id: string }>`
-        select id from linkedin_agent_orders
-        where user_id = ${opts.userId} and status = ${"queued"}
-        order by created_at asc
-        limit 1
-      `
-    : await sql<{ id: string }>`
-        select id from linkedin_agent_orders
-        where status = ${"queued"}
-        order by created_at asc
-        limit 1
-      `;
+  const userId = opts.userId || "";
+  const kind = opts.kind || "";
+  const exceptKind = opts.exceptKind || "";
+  const queued = await sql<{ id: string }>`
+    select id from linkedin_agent_orders
+    where status = ${"queued"}
+      and (${userId} = '' or user_id = ${userId})
+      and (${kind} = '' or kind = ${kind})
+      and (${exceptKind} = '' or kind <> ${exceptKind})
+    order by created_at asc
+    limit 1
+  `;
   const id = queued[0]?.id;
   if (!id) return null;
   const rows = await sql<OrderRow>`
@@ -188,6 +191,29 @@ export async function claimNextOrder(opts: { userId?: string } = {}): Promise<Li
     returning id, user_id, status, kind, payload, result, created_at, updated_at, claimed_at
   `;
   return rows[0] ? rowToOrder(rows[0]) : null;
+}
+
+/** Orders left claimed by a crashed worker, or by the old drain that claimed bot work and never finished it. */
+export async function releaseStaleClaims(opts: {
+  kind?: LinkedInAgentOrderKind;
+  exceptKind?: LinkedInAgentOrderKind;
+  olderThanMs?: number;
+} = {}): Promise<number> {
+  const sql = await getSql();
+  const now = new Date().toISOString();
+  const cutoff = new Date(Date.now() - (opts.olderThanMs ?? 20 * 60 * 1000)).toISOString();
+  const kind = opts.kind || "";
+  const exceptKind = opts.exceptKind || "";
+  const rows = await sql<{ id: string }>`
+    update linkedin_agent_orders
+    set status = ${"queued"}, claimed_at = null, updated_at = ${now}
+    where status = ${"claimed"}
+      and (claimed_at is null or claimed_at < ${cutoff})
+      and (${kind} = '' or kind = ${kind})
+      and (${exceptKind} = '' or kind <> ${exceptKind})
+    returning id
+  `;
+  return rows.length;
 }
 
 export async function completeOrder(

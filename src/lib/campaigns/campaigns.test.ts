@@ -1,7 +1,27 @@
-import { describe, expect, it } from "vitest";
-import { buildMembership } from "./membership";
-import { mergeFieldsFromProspect, mergeTemplate } from "./merge";
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { buildMembership } from "./membership.ts";
+import { mergeFieldsFromProspect, mergeTemplate } from "./merge.ts";
 import type { Prospect } from "../review-brief.ts";
+
+function expect(actual: unknown) {
+  return {
+    toBe(expected: unknown) {
+      assert.equal(actual, expected);
+    },
+    toContain(part: string) {
+      assert.equal(String(actual).includes(part), true);
+    },
+    toMatch(re: RegExp) {
+      assert.match(String(actual), re);
+    },
+    not: {
+      toContain(part: string) {
+        assert.equal(String(actual).includes(part), false);
+      },
+    },
+  };
+}
 
 function baseProspect(over: Partial<Prospect> & { uid: string; name: string }): Prospect {
   return {

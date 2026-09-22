@@ -46,6 +46,10 @@ export type EmailCampaign = {
   updatedAt: string;
 };
 
+export type CampaignSnapshot = {
+  [key: string]: string | number | boolean | null | string[];
+};
+
 export type CampaignMember = {
   campaignId: string;
   prospectUid: string;
@@ -54,7 +58,7 @@ export type CampaignMember = {
   messageSubject: string;
   messageBody: string;
   messageHash: string;
-  eligibilitySnapshot: Record<string, unknown>;
+  eligibilitySnapshot: CampaignSnapshot;
   authorizedAt: string | null;
   sendKey: string;
   recipient: string;

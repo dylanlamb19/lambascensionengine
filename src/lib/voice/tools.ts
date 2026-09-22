@@ -1421,7 +1421,7 @@ export function executeAllowlistedTool(
           reason: "Say Confirm campaign or call run_email_campaign with confirm=true to arm. Nothing was sent.",
           phrase: "Confirm campaign",
         },
-        plan: { type: "arm", intent: "RUN_EMAIL_CAMPAIGN", confirmPhrase: "Confirm campaign" },
+        plan: { type: "arm", intent: "RUN_EMAIL_CAMPAIGN", uid: "", confirmPhrase: "Confirm campaign" },
       };
     }
     return {
@@ -1773,6 +1773,12 @@ export function executeAllowlistedTool(
       payload.safety_note = "draft/request LinkedIn connects under soft caps";
       payload.auto_send = false;
       payload.gmail_auto_send = false;
+    }
+    if (normalized === "enrich") {
+      payload.contactability = "email_only";
+      payload.do_not_invent_email = true;
+      payload.gmail_auto_send = false;
+      if (!payload.focus) payload.focus = "NEEDS_CONTACT_INFORMATION";
     }
     const confirm = args.confirm === true;
     if (normalized === "outreach" && !confirm) {

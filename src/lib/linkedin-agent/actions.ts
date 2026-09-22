@@ -59,6 +59,12 @@ export const createLinkedInAgentOrderFn = createServerFn({ method: "POST" })
       payload.auto_send = false;
       payload.gmail_auto_send = false;
     }
+    if (kindRaw === "enrich") {
+      payload.contactability = "email_only";
+      payload.do_not_invent_email = true;
+      payload.gmail_auto_send = false;
+      if (!payload.focus) payload.focus = "NEEDS_CONTACT_INFORMATION";
+    }
     if (kindRaw === "fill_leads" && !payload.verticals) {
       payload.verticals = [...HIGH_TICKET_VERTICALS];
       payload.cities = [...HIGH_TICKET_CITIES];
@@ -69,7 +75,7 @@ export const createLinkedInAgentOrderFn = createServerFn({ method: "POST" })
     await postMessage(
       context.userId,
       "system",
-      `Order queued: ${kindRaw} (${order.id.slice(0, 8)}…). LinkedIn agent will pick it up under soft caps.`,
+      `Order queued: ${kindRaw} (${order.id.slice(0, 8)}…). LinkedIn Grok Bot will pick it up under soft caps. Nothing is sent.`,
       { order_id: order.id, kind: kindRaw },
     );
     return { ok: true as const, order };
