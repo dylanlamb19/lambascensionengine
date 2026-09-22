@@ -3,7 +3,6 @@ on:
   push:
     branches: [email-campaigns-os]
     paths:
-      - "build-assets/email-campaigns-patches/tools.ts.diff"
       - "build-assets/email-campaigns-patches/APPLY"
   workflow_dispatch:
 jobs:
@@ -15,9 +14,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: email-campaigns-os
-      - name: Apply patches
+      - name: Decode + apply patches
         run: |
           set -euo pipefail
+          python3 <<'PY'
+          import base64, pathlib
+          root = pathlib.Path("build-assets/email-campaigns-patches")
+          for name in ["desk-actions.ts.diff", "owner-desk.tsx.diff", "tools.ts.diff"]:
+              raw = base64.b64decode((root / (name + ".b64")).read_text().strip())
+              (root / name).write_bytes(raw)
+              print("decoded", name, len(raw))
+          PY
           patch -p1 < build-assets/email-campaigns-patches/desk-actions.ts.diff
           patch -p1 < build-assets/email-campaigns-patches/owner-desk.tsx.diff
           patch -p1 < build-assets/email-campaigns-patches/tools.ts.diff
