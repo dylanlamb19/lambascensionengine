@@ -44,7 +44,7 @@ export async function runHighTicketFill(opts: {
     dropClosedPlaces,
     rankPlaceHits,
     radiusMeters,
-    useLocationBias,
+    useLocationBias: locationBiasEnabled,
   } = await import("@/lib/discovery/query");
   const { tryReserveDiscovery, cacheGet, cacheSet, EST_SEARCH_CENTS, EST_GEOCODE_CENTS } = await import("@/lib/discovery/usage.server");
   const { listProspects, importProspects, logActivity } = await import("@/lib/prospects/repo.server");
@@ -101,7 +101,7 @@ export async function runHighTicketFill(opts: {
       : parsed.textQuery;
     const limit = perSearchLimit;
     const radiusM = radiusMeters(location);
-    const skipGeocode = !useLocationBias(location);
+    const skipGeocode = !locationBiasEnabled(location);
     const ck = discoveryCacheKey({
       vertical,
       location,
