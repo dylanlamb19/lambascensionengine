@@ -1,0 +1,55 @@
+name: Restore owner-desk native Find select
+on:
+  workflow_dispatch:
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: linkedin-agent-in-app
+          fetch-depth: 0
+      - name: Restore full owner-desk from 4e3de1ef and wire FindVerticalField
+        run: |
+          set -euo pipefail
+          git show 4e3de1ef2504854169513d7aa0d1284bc724bc88:src/components/owner-desk.tsx > src/components/owner-desk.tsx
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("src/components/owner-desk.tsx")
+          src = p.read_text()
+          old_imp = 'import { VoiceBar } from "@/components/voice-bar";\n'
+          new_imp = old_imp + 'import { FindVerticalField } from "@/components/find-vertical-field";\n'
+          if "find-vertical-field" not in src:
+              if old_imp not in src:
+                  raise SystemExit("VoiceBar import not found")
+              src = src.replace(old_imp, new_imp, 1)
+          pat = re.compile(
+              r'            <label className="la-label">What kind of company\?</label>\n'
+              r'            <input\n'
+              r'              className="la-field mb-3"\n'
+              r'              list="la-verticals"\n'
+              r'              value=\{vert\}\n'
+              r'              onChange=\{\(e\) => setVert\(e\.target\.value\)\}\n'
+              r'              placeholder="Roofing companies, cosmetic dentists, …"\n'
+              r'            />\n'
+              r'            <datalist id="la-verticals">\n'
+              r'              \{\["Roofing", "HVAC", "Plumbing / sewer", "Foundation repair", "Solar", "Med spa / cosmetic", "Dental", "Law / personal injury", "B2B consulting", "SaaS / software"\]\.map\(\(x\) => <option key=\{x\} value=\{x\} />\)\}\n'
+              r'            </datalist>\n',
+          )
+          src2, n = pat.subn('            <FindVerticalField value={vert} onChange={setVert} />\n', src, count=1)
+          if n != 1:
+              raise SystemExit(f"datalist block replace failed n={n}")
+          if "la-verticals" in src2:
+              raise SystemExit("la-verticals still present")
+          p.write_text(src2)
+          print("ok", len(src2.encode()))
+          PY
+          test -f src/components/find-vertical-field.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/owner-desk.tsx
+          git commit -m "fix(ux): Find Clients vertical uses native select on mobile"
+          git push origin HEAD:linkedin-agent-in-app
