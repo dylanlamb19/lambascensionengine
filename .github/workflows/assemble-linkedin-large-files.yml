@@ -1,5 +1,14 @@
 name: Assemble large LinkedIn agent files
 on:
+  push:
+    branches: [linkedin-agent-in-app]
+    paths:
+      - 'build-assets/linkedin-agent/tools-linkedin.patch'
+      - 'build-assets/linkedin-agent/owner-linkedin.patch'
+      - 'build-assets/linkedin-agent/tools-linkedin.patch.b64.part0'
+      - 'build-assets/linkedin-agent/owner-linkedin.patch.b64.part0'
+      - 'build-assets/linkedin-agent/ASSEMBLE_TRIGGER'
+      - '.github/workflows/assemble-linkedin-large-files.yml'
   workflow_dispatch:
     inputs:
       target:
@@ -16,24 +25,24 @@ jobs:
         with:
           ref: linkedin-agent-in-app
           fetch-depth: 0
-      - name: Restore tools.ts from main + linkedin patch
-        if: ${{ inputs.target == 'tools' || inputs.target == 'both' }}
+      - name: Decode patch parts if needed
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent")
-          meta = json.loads((root / "tools-patch-meta.json").read_text())
-          parts = [(root / f"tools-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
-          raw = base64.b64decode("".join(parts))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          (root / "tools-linkedin.patch").write_bytes(raw)
-          print("decoded tools patch", len(raw), digest)
-          PY
+          cd build-assets/linkedin-agent
+          if [[ ! -f tools-linkedin.patch ]]; then
+            cat tools-linkedin.patch.b64.part0 tools-linkedin.patch.b64.part1 tools-linkedin.patch.b64.part2 tools-linkedin.patch.b64.part3 | base64 -d > tools-linkedin.patch
+          fi
+          if [[ ! -f owner-linkedin.patch ]]; then
+            cat owner-linkedin.patch.b64.part0 owner-linkedin.patch.b64.part1 owner-linkedin.patch.b64.part2 owner-linkedin.patch.b64.part3 | base64 -d > owner-linkedin.patch
+          fi
+          wc -c tools-linkedin.patch owner-linkedin.patch
+      - name: Restore tools.ts from main + linkedin patch
+        run: |
+          set -euo pipefail
+          git fetch origin main
           git show origin/main:src/lib/voice/tools.ts > src/lib/voice/tools.ts
           patch -p1 < build-assets/linkedin-agent/tools-linkedin.patch
-          python3 <<'PY'
+          python3 - <<'PY'
           import hashlib, pathlib
           raw = pathlib.Path("src/lib/voice/tools.ts").read_bytes()
           digest = hashlib.sha256(raw).hexdigest()
@@ -41,23 +50,11 @@ jobs:
           print("tools.ts ok", len(raw), digest)
           PY
       - name: Restore owner-desk.tsx from main + linkedin patch
-        if: ${{ inputs.target == 'owner-desk' || inputs.target == 'both' }}
         run: |
           set -euo pipefail
-          python3 <<'PY'
-          import base64, hashlib, json, pathlib
-          root = pathlib.Path("build-assets/linkedin-agent")
-          meta = json.loads((root / "owner-patch-meta.json").read_text())
-          parts = [(root / f"owner-linkedin.patch.b64.part{i}").read_text().strip() for i in range(meta["parts"])]
-          raw = base64.b64decode("".join(parts))
-          digest = hashlib.sha256(raw).hexdigest()
-          assert digest == meta["sha256"], (digest, meta["sha256"])
-          (root / "owner-linkedin.patch").write_bytes(raw)
-          print("decoded owner patch", len(raw), digest)
-          PY
           git show origin/main:src/components/owner-desk.tsx > src/components/owner-desk.tsx
           patch -p1 < build-assets/linkedin-agent/owner-linkedin.patch
-          python3 <<'PY'
+          python3 - <<'PY'
           import hashlib, pathlib
           raw = pathlib.Path("src/components/owner-desk.tsx").read_bytes()
           digest = hashlib.sha256(raw).hexdigest()
@@ -69,7 +66,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/lib/voice/tools.ts src/components/owner-desk.tsx || true
+          git add src/lib/voice/tools.ts src/components/owner-desk.tsx
+          git rm -f --ignore-unmatch \
+            src/lib/linkedin-agent/_auth_probe.txt \
+            src/lib/linkedin-agent/_path_probe2.txt || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
