@@ -1,8 +1,0 @@
-{
-  "parts": 3,
-  "sha256": "9933037ef947affc3cbe9061f4a253135f4c51ec66921abebf25cea5a7297d05",
-  "files": [
-    "src/lib/mail/live.server.ts",
-    "src/components/email-campaigns-panel.tsx"
-  ]
-}
