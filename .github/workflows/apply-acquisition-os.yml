@@ -4,7 +4,7 @@ on:
   push:
     branches: [acquisition-os-milestone]
     paths:
-      - "acq-payload-parts/**"
+      - "acq-micro/**"
       - "scripts/install-acq-os-from-payload.mjs"
       - ".github/workflows/apply-acquisition-os.yml"
 
@@ -19,7 +19,7 @@ jobs:
         with:
           ref: acquisition-os-milestone
           fetch-depth: 0
-      - name: Install sources from payload parts + patch
+      - name: Install sources from micro payload + patch
         run: node scripts/install-acq-os-from-payload.mjs
       - name: Commit assembled sources
         run: |
@@ -29,6 +29,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "feat(acq): assemble Acquisition OS Parts 1-2 (+ stretch) from payload"
+            git commit -m "feat(acq): assemble Acquisition OS Parts 1-2 (+ stretch) from micro payload"
             git push
           fi

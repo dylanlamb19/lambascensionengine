@@ -5,9 +5,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const dir = join(root, "acq-payload-parts");
-const parts = readFileSync(join(dir, "PARTS.txt"), "utf8").trim().split(/\n/);
-const blob = parts.map((p) => readFileSync(join(dir, p), "utf8")).join("");
+const micro = join(root, "acq-micro");
+const list = readFileSync(join(micro, "LIST.txt"), "utf8").trim().split(/\n/).filter(Boolean);
+const blob = list.map((p) => readFileSync(join(micro, p), "utf8")).join("");
 const map = JSON.parse(blob);
 for (const [rel, b64] of Object.entries(map)) {
   const abs = join(root, rel);
