@@ -256,6 +256,12 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
       seen.add(m.id);
       n += 1;
       await stopSequencesForProspect(userId, t.prospect_uid);
+      try {
+        const { markMemberReplied } = await import("@/lib/campaigns/sql.server");
+        await markMemberReplied(userId, t.prospect_uid);
+      } catch {
+        /* campaigns table may be absent */
+      }
       const left = await countScheduledFollowups(userId, t.prospect_uid);
       if (left > 0) {
         await audit(userId, "FOLLOWUP_CANCEL_FAILED", `${left} follow-up(s) still pending after reply`, { prospectUid: t.prospect_uid, method: "AUTOMATION", providerIds: m.id });
@@ -282,6 +288,7 @@ export async function tickOutreachWorker(source = "in-process"): Promise<{
   sent: number;
   followupsSkipped: number;
   rescheduled: number;
+  campaignSent?: number;
   skippedReason?: string;
 }> {
   const { newUid } = await import("../prospects/ids");
@@ -292,14 +299,23 @@ export async function tickOutreachWorker(source = "in-process"): Promise<{
   }
   try {
     const users = await listGmailUsers();
+    // Reply sync ALWAYS outranks discovery / campaign first contacts.
     for (const userId of users) {
       await syncRepliesForUser(userId);
     }
     const due = await runDueFollowups();
+    let campaignSent = 0;
+    try {
+      const { processArmedCampaigns } = await import("@/lib/campaigns/worker.server");
+      const camp = await processArmedCampaigns();
+      campaignSent = camp.sent;
+    } catch {
+      /* migration absent or transient — do not fail the whole tick */
+    }
     const sawTest = await markTestWorkflowSeen(runId);
-    const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled}`;
+    const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled} campaignSent=${campaignSent}`;
     await finishWorkerHeartbeat(runId, sawTest ? `${summary} test-seen` : summary);
-    return { runId, sawTest, sent: due.sent, followupsSkipped: due.skipped, rescheduled: due.rescheduled };
+    return { runId, sawTest, sent: due.sent, followupsSkipped: due.skipped, rescheduled: due.rescheduled, campaignSent };
   } catch (err) {
     await finishWorkerHeartbeat(runId, "error", err instanceof Error ? err.message : "worker failed");
     throw err;

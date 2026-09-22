@@ -55,6 +55,13 @@ import { TestDesk } from "@/components/test-desk";
 import { ProspectReachCard } from "@/components/prospect-reach";
 import { VoiceBar } from "@/components/voice-bar";
 import { FindVerticalField } from "@/components/find-vertical-field";
+import { EmailCampaignsPanel } from "@/components/email-campaigns-panel";
+import {
+  armEmailCampaignFn,
+  createEmailCampaignFn,
+  emailCampaignStatusFn,
+  pauseEmailCampaignFn,
+} from "@/lib/campaigns/actions";
 import { LinkedInAgentChat } from "@/components/linkedin-agent-chat";
 import { NextMoves } from "@/components/next-moves";
 import { FindPresets } from "@/components/find-presets";
@@ -1655,6 +1662,45 @@ export function OwnerDesk() {
       } catch {
         return { ok: false, reason: "I couldn’t look that up.", staysOnScreen: true, changed: false };
       }
+    }
+    if (result.plan.type === "campaign") {
+      try {
+        if (result.plan.action === "pause") {
+          const id = result.plan.campaignId || "";
+          const r = await pauseEmailCampaignFn({ data: { id } });
+          say(r.ok ? "Campaign paused. Reply sync continues." : (r.reason || "Could not pause."));
+        } else if (result.plan.action === "status") {
+          const r = await emailCampaignStatusFn({ data: { id: result.plan.campaignId || undefined } });
+          if (!r.ok) say(r.reason || "No campaign status.");
+          else if ("report" in r && r.report) {
+            const c = r.report.counts;
+            say(`${r.report.name}: ${r.report.status}. Sent ${c.sent}, authorized ${c.authorized}, skipped ${c.skipped}, replied ${c.replied}.`);
+          } else if ("reports" in r) {
+            say(`${r.reports.length} campaign${r.reports.length === 1 ? "" : "s"} on file.`);
+          }
+        } else if (result.plan.action === "arm") {
+          let id = result.plan.campaignId || "";
+          if (!id) {
+            const created = await createEmailCampaignFn({
+              data: {
+                name: result.plan.name || "Ara campaign",
+              },
+            });
+            if (!created.ok) {
+              say("Could not create campaign.");
+              return;
+            }
+            id = created.campaign.id;
+          }
+          const r = await armEmailCampaignFn({ data: { id } });
+          if (!r.ok) say(r.reason);
+          else say(`Campaign armed: ${r.authorized} authorized, ${r.skipped} skipped. Worker sends under caps and Test Mode. Nothing was sent by this command alone.`);
+          dispatchAction({ name: "NAVIGATE_CAMPAIGNS" });
+        }
+      } catch {
+        say("Campaign action failed. Nothing was sent.");
+      }
+      return;
     }
     if (result.plan.type === "linkedin_agent_order") {
       const plan = result.plan;
@@ -3424,6 +3470,7 @@ export function OwnerDesk() {
             <button className="la-nav-btn la-nav-quiet" data-on={view === "home" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_HOME" })}>Home</button>
             <button className="la-nav-btn la-nav-quiet" data-on={view === "add" ? "1" : "0"} onClick={() => dispatchAction({ name: "OPEN_ADD_CLIENT" })}>Add Client</button>
             <button className="la-nav-btn la-nav-quiet" data-on={view === "pipe" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_PIPELINE" })}>Pipeline</button>
+            <button className="la-nav-btn la-nav-quiet" data-on={view === "campaigns" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_CAMPAIGNS" })}>Campaigns</button>
             <button className="la-nav-btn la-nav-quiet" data-on={view === "calendar" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_CALENDAR" })}>Calendar</button>
             <button className="la-nav-btn la-nav-quiet" data-on={view === "settings" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_SETTINGS" })}>Settings</button>
             <button
@@ -3576,6 +3623,12 @@ export function OwnerDesk() {
           onRepair={() => void repairBookingMismatch()}
           repairing={repairBusy}
         />
+        ) : null}
+        {view === "campaigns" ? (
+          <EmailCampaignsPanel
+            onBack={() => dispatchAction({ name: "NAVIGATE_HOME" })}
+            globalTestMode={testModeOn}
+          />
         ) : null}
         {view === "home" ? (
           <>
