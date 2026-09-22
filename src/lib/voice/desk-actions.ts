@@ -51,6 +51,7 @@ export const APP_ACTIONS = [
   "NAVIGATE_SETTINGS",
   "NAVIGATE_CALENDAR",
   "NAVIGATE_HEALTH",
+  "NAVIGATE_CAMPAIGNS",
   "CALENDAR_TODAY",
   "CALENDAR_NEXT",
   "CALENDAR_PREV",
@@ -89,6 +90,9 @@ export const APP_ACTIONS = [
   "SET_FIND_FORM",
   "FILTER_PROSPECTS",
   "CONTACT_ELIGIBLE_PROSPECTS",
+  "RUN_EMAIL_CAMPAIGN",
+  "PAUSE_EMAIL_CAMPAIGN",
+  "CAMPAIGN_STATUS",
   "RESEARCH_FURTHER",
   "READ_CALL_OPENER",
   "MAKE_EMAIL_SHORTER",
@@ -139,6 +143,7 @@ export const ACTION_TO_TOOL: Record<AppActionName, string> = {
   NAVIGATE_SETTINGS: "navigate_settings",
   NAVIGATE_CALENDAR: "navigate_calendar",
   NAVIGATE_HEALTH: "navigate_health",
+  NAVIGATE_CAMPAIGNS: "navigate_campaigns",
   CALENDAR_TODAY: "calendar_today",
   CALENDAR_NEXT: "calendar_next",
   CALENDAR_PREV: "calendar_prev",
@@ -417,6 +422,12 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
         view: "health",
         stack: push(state, "health"),
         lastSpoken: spoken("Opening System Health."),
+      });
+    case "NAVIGATE_CAMPAIGNS":
+      return withAction({
+        view: "campaigns",
+        stack: push(state, "campaigns"),
+        lastSpoken: spoken("Opening Campaigns."),
       });
     case "CALENDAR_TODAY":
       return withAction({
@@ -1146,7 +1157,7 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
 }
 
 const NO_TARGET: AppActionName[] = [
-  "NAVIGATE_HOME", "NAVIGATE_PIPELINE", "NAVIGATE_SETTINGS", "NAVIGATE_CALENDAR", "NAVIGATE_HEALTH",
+  "NAVIGATE_HOME", "NAVIGATE_PIPELINE", "NAVIGATE_SETTINGS", "NAVIGATE_CALENDAR", "NAVIGATE_HEALTH", "NAVIGATE_CAMPAIGNS",
   "CALENDAR_TODAY", "CALENDAR_NEXT", "CALENDAR_PREV", "CALENDAR_SET_VIEW",
   "OPEN_FIND_CLIENTS", "OPEN_ADD_CLIENT",
   "START_TASKS", "NEXT_TASK", "PREVIOUS_TASK", "GO_BACK", "GET_DAILY_TASKS", "AVAILABILITY", "NEXT_CALL",
@@ -1167,6 +1178,7 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
     case "NAVIGATE_SETTINGS": return { name: "NAVIGATE_SETTINGS" };
     case "NAVIGATE_CALENDAR": return { name: "NAVIGATE_CALENDAR" };
     case "NAVIGATE_HEALTH": return { name: "NAVIGATE_HEALTH" };
+    case "NAVIGATE_CAMPAIGNS": return { name: "NAVIGATE_CAMPAIGNS" };
     case "GET_SYSTEM_HEALTH": return null;
     case "CALENDAR_TODAY": return { name: "CALENDAR_TODAY" };
     case "CALENDAR_NEXT": return { name: "CALENDAR_NEXT" };
@@ -1312,6 +1324,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
       if (plan.view === "settings") return { name: "NAVIGATE_SETTINGS" };
       if (plan.view === "calendar") return { name: "NAVIGATE_CALENDAR" };
       if (plan.view === "health") return { name: "NAVIGATE_HEALTH" };
+      if (plan.view === "campaigns") return { name: "NAVIGATE_CAMPAIGNS" };
       if (plan.view === "find") return { name: "OPEN_FIND_CLIENTS" };
       if (plan.view === "add") return { name: "OPEN_ADD_CLIENT" };
       return null;
