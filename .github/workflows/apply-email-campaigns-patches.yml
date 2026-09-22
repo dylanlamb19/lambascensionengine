@@ -1,0 +1,27 @@
+name: Apply email-campaigns UI patches
+on:
+  push:
+    branches: [email-campaigns-os]
+    paths:
+      - "build-assets/email-campaigns-patches/tools.ts.diff"
+      - "build-assets/email-campaigns-patches/APPLY"
+  workflow_dispatch:
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: email-campaigns-os
+      - name: Apply patches
+        run: |
+          set -euo pipefail
+          patch -p1 < build-assets/email-campaigns-patches/desk-actions.ts.diff
+          patch -p1 < build-assets/email-campaigns-patches/owner-desk.tsx.diff
+          patch -p1 < build-assets/email-campaigns-patches/tools.ts.diff
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/voice/desk-actions.ts src/lib/voice/tools.ts src/components/owner-desk.tsx
+          if git diff --cached --quiet; then echo none; else git commit -m "feat(campaigns): Ara tools + Owner Desk Campaigns UI" && git push; fi
