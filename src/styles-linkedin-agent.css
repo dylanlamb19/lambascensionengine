@@ -1,0 +1,168 @@
+/* LinkedIn agent chat — LinkedIn-blue accent, Ara-adjacent dock */
+
+.la-li-chat {
+  margin-top: 0.45rem;
+  border: 1px solid color-mix(in oklab, #0a66c2 28%, var(--color-line));
+  background:
+    linear-gradient(180deg, color-mix(in oklab, #0a66c2 8%, var(--color-surface)) 0%, var(--color-surface) 100%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.la-li-chat-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  min-height: 2.75rem;
+}
+.la-li-chat-toggle:hover {
+  background: color-mix(in oklab, #0a66c2 6%, transparent);
+}
+.la-li-orb {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, #0a66c2 55%, var(--color-muted));
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #0a66c2 18%, transparent);
+}
+.la-li-orb.is-ready {
+  background: #0a66c2;
+}
+.la-li-orb.is-busy {
+  background: #378fe9;
+  box-shadow: 0 0 0 4px color-mix(in oklab, #0a66c2 28%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .la-li-orb.is-busy {
+    animation: la-li-pulse 1.6s var(--ease-out) infinite;
+  }
+}
+@keyframes la-li-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #0a66c2 40%, transparent); }
+  50% { box-shadow: 0 0 0 8px color-mix(in oklab, #0a66c2 0%, transparent); }
+}
+.la-li-chat-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+  flex: 1;
+}
+.la-li-chat-title b {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: color-mix(in oklab, #70b5f9 70%, var(--color-gold2));
+  font-weight: 600;
+  line-height: 1.15;
+}
+.la-li-chat-sub {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+}
+.la-li-chat-chev {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+.la-li-chat-panel {
+  padding: 0 0.8rem 0.75rem;
+  border-top: 1px solid color-mix(in oklab, #0a66c2 16%, var(--color-line));
+}
+.la-li-chat-hint {
+  margin: 0.55rem 0 0.45rem;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  line-height: 1.4;
+}
+.la-li-thread {
+  max-height: 14rem;
+  overflow: auto;
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.35rem 0;
+}
+.la-li-msg {
+  border-radius: var(--radius-md);
+  padding: 0.45rem 0.6rem;
+  border: 1px solid color-mix(in oklab, var(--color-fg) 8%, transparent);
+  background: color-mix(in oklab, var(--color-surface2) 80%, transparent);
+}
+.la-li-msg-user {
+  border-color: color-mix(in oklab, #0a66c2 28%, var(--color-line));
+  background: color-mix(in oklab, #0a66c2 10%, transparent);
+}
+.la-li-msg-linkedin {
+  border-color: color-mix(in oklab, #0a66c2 40%, var(--color-line));
+}
+.la-li-msg-ara,
+.la-li-msg-system {
+  opacity: 0.95;
+}
+.la-li-msg-role {
+  display: block;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, #70b5f9 60%, var(--color-muted));
+}
+.la-li-msg-body {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.la-li-orders {
+  margin-top: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-md);
+  border: 1px dashed color-mix(in oklab, #0a66c2 30%, var(--color-line));
+  font-size: 0.78rem;
+  color: var(--color-muted);
+}
+.la-li-orders-label {
+  margin: 0 0 0.25rem;
+  color: color-mix(in oklab, #70b5f9 70%, var(--color-fg));
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.la-li-orders ul {
+  margin: 0;
+  padding-left: 1rem;
+}
+.la-li-err {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--color-bad);
+}
+.la-li-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+.la-li-compose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+  align-items: stretch;
+}
+.la-li-compose .la-field {
+  flex: 1 1 10rem;
+  min-height: 2.75rem;
+}
+.la-li-compose .la-btn {
+  flex: 0 0 auto;
+}
+@media (max-width: 719px) {
+  .la-li-thread { max-height: 11rem; }
+}
