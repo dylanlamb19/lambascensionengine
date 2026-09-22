@@ -23,15 +23,25 @@ function shortSha(sha: string): string {
   return (sha || "").slice(0, 7) || "unknown";
 }
 
+function isBookingMismatch(errorCode: string | undefined): boolean {
+  const code = (errorCode || "").toUpperCase();
+  return code.includes("PIPELINE_STATE_MISMATCH") || (code.includes("BOOKING") && code.includes("MISMATCH"));
+}
+
 export function SystemHealthAlert({
   snapshot,
   onOpen,
+  onRepair,
+  repairing,
 }: {
   snapshot: SentinelSnapshot | null;
   onOpen: () => void;
+  onRepair?: () => void;
+  repairing?: boolean;
 }) {
   const alert = snapshot?.alerts[0];
   if (!snapshot || !alert) return null;
+  const showRepair = Boolean(onRepair) && isBookingMismatch(alert.error_code);
   return (
     <div className="la-ribbon la-ribbon-bad mb-3">
       <span>
@@ -41,7 +51,14 @@ export function SystemHealthAlert({
           Production SHA {shortSha(alert.production_sha)}. Sentinel did not change production.
         </span>
       </span>
-      <button type="button" className="la-btn la-btn-quiet" onClick={onOpen}>Open System Health</button>
+      <span className="flex flex-wrap gap-2">
+        {showRepair ? (
+          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing)} onClick={onRepair}>
+            {repairing ? "Fixing\u2026" : "Fix booking mismatch"}
+          </button>
+        ) : null}
+        <button type="button" className="la-btn la-btn-quiet" onClick={onOpen}>Open System Health</button>
+      </span>
     </div>
   );
 }
@@ -57,8 +74,8 @@ export function SystemHealthStrip({
   return (
     <button type="button" className="la-quiet-status mb-3" onClick={onOpen}>
       <span className={`la-dot la-dot-inline ${lightClass(light)}`} />
-      System Health · {snapshot?.overallLabel || "Checking…"}
-      {snapshot?.lastRunAt ? ` · ${formatWhen(snapshot.lastRunAt)}` : ""}
+      System Health \u00b7 {snapshot?.overallLabel || "Checking\u2026"}
+      {snapshot?.lastRunAt ? ` \u00b7 ${formatWhen(snapshot.lastRunAt)}` : ""}
     </button>
   );
 }
@@ -68,15 +85,22 @@ export function SystemHealthPage({
   running,
   onBack,
   onRun,
+  onRepair,
+  repairing,
 }: {
   snapshot: SentinelSnapshot | null;
   running: boolean;
   onBack: () => void;
   onRun: () => void;
+  onRepair?: () => void;
+  repairing?: boolean;
 }) {
   const [advanced, setAdvanced] = useState(false);
   const snap = snapshot;
   const health = canonicalHealth({ snapshot: snap });
+  const mismatchOpen = Boolean(
+    onRepair && (snap?.alerts || []).some((a) => isBookingMismatch(a.error_code)),
+  );
   return (
     <section className="la-card">
       <p className="la-kicker">Lascengine Sentinel</p>
@@ -90,7 +114,7 @@ export function SystemHealthPage({
       </p>
       <p className="mt-1 text-sm text-muted">
         Latest Sentinel run: {formatWhen(health.latestRun)}
-        {snap?.lastRunMode ? ` · ${snap.lastRunMode}` : ""} · Open issues: {health.openIssues}
+        {snap?.lastRunMode ? ` \u00b7 ${snap.lastRunMode}` : ""} \u00b7 Open issues: {health.openIssues}
       </p>
       <div className="mt-5 grid gap-2">
         {(snap?.subsystems || []).map((row) => (
@@ -107,7 +131,7 @@ export function SystemHealthPage({
         <div className="la-ribbon la-ribbon-bad mt-5">
           {snap.alerts.map((a) => (
             <span key={a.bug_id} className="block">
-              <b>{a.summary}</b> · {a.error_code} · SHA {shortSha(a.production_sha)} · seen {a.occurrence_count}×
+              <b>{a.summary}</b> \u00b7 {a.error_code} \u00b7 SHA {shortSha(a.production_sha)} \u00b7 seen {a.occurrence_count}\u00d7
             </span>
           ))}
         </div>
@@ -119,8 +143,13 @@ export function SystemHealthPage({
       ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" className="la-btn la-btn-primary" disabled={running} onClick={onRun}>
-          {running ? "Checking…" : "Check now"}
+          {running ? "Checking\u2026" : "Check now"}
         </button>
+        {mismatchOpen ? (
+          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing) || running} onClick={onRepair}>
+            {repairing ? "Fixing\u2026" : "Fix booking mismatch"}
+          </button>
+        ) : null}
         <button type="button" className="la-btn la-btn-ghost" onClick={onBack}>Back</button>
         <button type="button" className="la-btn la-btn-quiet" onClick={() => setAdvanced((v) => !v)}>
           {advanced ? "Hide details" : "Advanced details"}
@@ -128,7 +157,7 @@ export function SystemHealthPage({
       </div>
       {advanced && snap ? (
         <div className="mt-5 text-sm text-muted">
-          <p>Production SHA {shortSha(snap.productionSha) || "unknown"}{snap.previousSha ? ` · previous ${shortSha(snap.previousSha)}` : ""}</p>
+          <p>Production SHA {shortSha(snap.productionSha) || "unknown"}{snap.previousSha ? ` \u00b7 previous ${shortSha(snap.previousSha)}` : ""}</p>
           <p className="mt-1">Auto-Fix is OFF. Sentinel will not merge or deploy.</p>
           {snap.lastDeploy ? (
             <p className="mt-1">Last deployment smoke: {snap.lastDeploy.smoke_result || "n/a"}.</p>
@@ -137,7 +166,7 @@ export function SystemHealthPage({
             <ul className="mt-3 list-disc pl-5">
               {snap.bugs.map((b) => (
                 <li key={b.bug_id}>
-                  {b.error_code} · {featureLabel(b.feature)} · {b.severity} · {b.status}
+                  {b.error_code} \u00b7 {featureLabel(b.feature)} \u00b7 {b.severity} \u00b7 {b.status}
                 </li>
               ))}
             </ul>
