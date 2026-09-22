@@ -1,1 +1,1 @@
-@/workspace/mcp-push/owner-desk-find-select.tsx
+__FILE__:/workspace/mcp-push/owner-desk-find-select.tsx
