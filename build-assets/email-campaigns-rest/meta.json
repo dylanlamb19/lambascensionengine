@@ -1,0 +1,1 @@
+{"parts": 34, "sha256": "6738e95dc8d291b87bda266226306b1ab607bf8a410f357b13803e062bc8f2a0", "files": ["src/lib/campaigns/worker.server.ts", "src/lib/campaigns/sql.server.ts", "src/lib/campaigns/service.server.ts", "src/lib/mail/live.server.ts", "src/components/email-campaigns-panel.tsx", "src/lib/voice/desk-actions.ts", "src/lib/voice/tools.ts", "src/components/owner-desk.tsx"]}
