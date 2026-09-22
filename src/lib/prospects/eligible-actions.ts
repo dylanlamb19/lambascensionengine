@@ -4,7 +4,6 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
-import { getSql } from "@/lib/db";
 import { newUid } from "./ids";
 import { evaluateContactability } from "./contactability";
 import { readTestModeFlag } from "@/lib/mail/test-mode";
@@ -23,6 +22,7 @@ export type EligibleSnapshotSummary = {
 
 async function loadCooldowns(userId: string): Promise<Map<string, string>> {
   try {
+    const { getSql } = await import("@/lib/db");
     const sql = await getSql();
     const rows = await sql<{ prospect_uid: string; cooldown_until: string | Date }>`
       select prospect_uid, cooldown_until
@@ -95,6 +95,7 @@ export async function buildEligibilitySnapshot(userId: string): Promise<Eligible
   };
 
   try {
+    const { getSql } = await import("@/lib/db");
     const sql = await getSql();
     await sql`
       insert into contact_eligibility_snapshots (

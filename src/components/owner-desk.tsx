@@ -42,7 +42,7 @@ import {
   QUEUE_LABEL,
   type PipelineQueue,
 } from "@/lib/prospects/pipeline-queues";
-import { contactEligibleProspectsFn } from "@/lib/prospects/eligible.server";
+import { contactEligibleProspectsFn } from "@/lib/prospects/eligible-actions";
 import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/prospects/last-discovery";
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";

@@ -14,6 +14,7 @@ import { Route as BookTokenRouteImport } from './routes/book/$token'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBookTokenRouteImport } from './routes/api/book/$token'
 import { Route as ApiGoogleCallbackRouteImport } from './routes/api/google/callback'
+import { Route as ApiJobsLinkedinAgentRouteImport } from './routes/api/jobs/linkedin-agent'
 import { Route as ApiJobsOutreachRouteImport } from './routes/api/jobs/outreach'
 import { Route as ApiJobsSentinelRouteImport } from './routes/api/jobs/sentinel'
 import { Route as ApiVisualAssetsIdRouteImport } from './routes/api/visual-assets/$id'
@@ -43,6 +44,11 @@ const ApiGoogleCallbackRoute = ApiGoogleCallbackRouteImport.update({
   path: '/api/google/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiJobsLinkedinAgentRoute = ApiJobsLinkedinAgentRouteImport.update({
+  id: '/api/jobs/linkedin-agent',
+  path: '/api/jobs/linkedin-agent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiJobsOutreachRoute = ApiJobsOutreachRouteImport.update({
   id: '/api/jobs/outreach',
   path: '/api/jobs/outreach',
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/jobs/linkedin-agent': typeof ApiJobsLinkedinAgentRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
   '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/jobs/linkedin-agent': typeof ApiJobsLinkedinAgentRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
   '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/jobs/linkedin-agent': typeof ApiJobsLinkedinAgentRoute
   '/api/jobs/outreach': typeof ApiJobsOutreachRoute
   '/api/jobs/sentinel': typeof ApiJobsSentinelRoute
   '/api/visual-assets/$id': typeof ApiVisualAssetsIdRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
+    | '/api/jobs/linkedin-agent'
     | '/api/jobs/outreach'
     | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
+    | '/api/jobs/linkedin-agent'
     | '/api/jobs/outreach'
     | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
+    | '/api/jobs/linkedin-agent'
     | '/api/jobs/outreach'
     | '/api/jobs/sentinel'
     | '/api/visual-assets/$id'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBookTokenRoute: typeof ApiBookTokenRoute
   ApiGoogleCallbackRoute: typeof ApiGoogleCallbackRoute
+  ApiJobsLinkedinAgentRoute: typeof ApiJobsLinkedinAgentRoute
   ApiJobsOutreachRoute: typeof ApiJobsOutreachRoute
   ApiJobsSentinelRoute: typeof ApiJobsSentinelRoute
   ApiVisualAssetsIdRoute: typeof ApiVisualAssetsIdRoute
@@ -171,6 +184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGoogleCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/jobs/linkedin-agent': {
+      id: '/api/jobs/linkedin-agent'
+      path: '/api/jobs/linkedin-agent'
+      fullPath: '/api/jobs/linkedin-agent'
+      preLoaderRoute: typeof ApiJobsLinkedinAgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/jobs/outreach': {
       id: '/api/jobs/outreach'
       path: '/api/jobs/outreach'
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBookTokenRoute: ApiBookTokenRoute,
   ApiGoogleCallbackRoute: ApiGoogleCallbackRoute,
+  ApiJobsLinkedinAgentRoute: ApiJobsLinkedinAgentRoute,
   ApiJobsOutreachRoute: ApiJobsOutreachRoute,
   ApiJobsSentinelRoute: ApiJobsSentinelRoute,
   ApiVisualAssetsIdRoute: ApiVisualAssetsIdRoute,
