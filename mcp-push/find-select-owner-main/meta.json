@@ -1,0 +1,6 @@
+{
+  "parts": 10,
+  "raw": 169888,
+  "sha256": "840909c65413853da861110192fabf943e150113d405e369005094ba5ba0e0eb",
+  "target": "src/components/owner-desk.tsx"
+}
