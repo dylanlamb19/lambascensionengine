@@ -1,0 +1,35 @@
+name: Apply owner-desk typefix
+on:
+  push:
+    branches: [acquisition-os-milestone]
+    paths: ["mcp-push/owner-fix-parts/TRIGGER"]
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: acquisition-os-milestone
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assemble and commit owner-desk
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 - <<'PY'
+          import base64, zlib
+          from pathlib import Path
+          d = Path("mcp-push/owner-fix-parts")
+          n = int((d / "COUNT").read_text().strip())
+          b64 = "".join((d / f"p{i:02d}.b64").read_text().strip() for i in range(n))
+          Path("src/components/owner-desk.tsx").write_bytes(zlib.decompress(base64.b64decode(b64)))
+          print("wrote owner-desk", Path("src/components/owner-desk.tsx").stat().st_size)
+          PY
+          git add src/components/owner-desk.tsx
+          git diff --cached --quiet || git commit -m "fix(acq): LinkedIn hydrateAraOutput returns Record + payload JsonValue casts"
+          rm -f .github/workflows/apply-owner-fix.yml
+          git add -A
+          git diff --cached --quiet || git commit -m "chore(acq): remove temporary apply-owner-fix workflow"
+          git push origin HEAD:acquisition-os-milestone
