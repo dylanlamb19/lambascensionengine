@@ -32,6 +32,15 @@ test("what did you just say uses the saved Ara message, not the page", () => {
   assert.equal(page.includes("Davis"), true);
 });
 
+test("Ara, what's the last thing you said to me uses an older thread too", () => {
+  let older = appendAraTurn(emptyAraLog(), "ara", "The latest deployment is healthy.", 1_000);
+  older = { ...older, activeId: "new", threads: [...older.threads, { id: "new", title: "Ara", updatedAt: 5_000, turns: [] }] };
+  older = appendAraTurn(older, "you", "Ara, what's the last thing you said to me?", 5_100);
+  const ask = classifyMemoryAsk("Ara, what's the last thing you said to me?");
+  assert.equal(ask?.kind, "last_ara");
+  assert.equal(answerMemory(older, ask!, "Ara, what's the last thing you said to me?").text, "The latest deployment is healthy.");
+});
+
 test("what did I just say and the message before that come from the thread", () => {
   let log = appendAraTurn(emptyAraLog(), "you", "Find me five roofers in Fort Worth.", 1_000);
   log = appendAraTurn(log, "ara", "I found five.", 1_100);

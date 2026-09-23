@@ -2659,6 +2659,13 @@ export function OwnerDesk() {
           handleAraOwnerTranscript(text, true, itemId || "");
         },
         onAraTranscript: (text, isFinal) => {
+          const asked = classifyMemoryAsk(youSaidRef.current);
+          if (asked && /don'?t have a record|start of (our|this) current session|no record of a previous/i.test(text || "")) {
+            araRef.current?.cancelResponse();
+            const found = answerMemory(araLogRef.current, asked, youSaidRef.current);
+            utter(found.text, "TOOL_RESULT", `memory:${asked.kind}`);
+            return;
+          }
           if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
             araRef.current?.cancelResponse();
             return;
@@ -3024,7 +3031,7 @@ export function OwnerDesk() {
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal, pendingProspectEdit, araStatus, outputSpeaking]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal, pendingProspectEdit, araStatus, outputSpeaking, araLog]);
 
   useEffect(() => {
     if (taskIx == null || view !== "home") return;

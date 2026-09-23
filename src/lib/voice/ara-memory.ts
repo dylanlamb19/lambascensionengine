@@ -18,16 +18,30 @@ export function shouldPersistTranscript(isFinal: boolean): boolean {
 }
 
 export function classifyMemoryAsk(text: string): MemoryAsk | null {
-  const q = (text || "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[?.!]+$/g, "");
+  const q = (text || "")
+    .replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[?.!]+$/g, "");
   if (!q) return null;
   if (/what did you just add|what am i looking at|what is on (this )?screen|explain this screen/.test(q)) return null;
   const recent = q.match(/repeat your last (\d+) messages?/);
   if (recent) return { kind: "recent_ara", n: Math.min(5, Math.max(1, Number(recent[1]))) };
-  if (/what did you say before that|go back to what you said/.test(q)) return { kind: "ara_before" };
-  if (/what did you just (say|tell me)|repeat what you (just )?said|show me (what you just said|your last message)|your last message/.test(q)) return { kind: "last_ara" };
-  if (/what did i just (say|tell you|ask)|what did i just ask you/.test(q)) return { kind: "last_user" };
-  if (/what were we just talking about|what were we talking about/.test(q)) return { kind: "topic" };
-  if (/read (our |the )?ara conversation|conversations box|saved ara conversation|can you not read the conversation/.test(q)) return { kind: "can_read" };
+  if (/what did you say before that|go back to what you said|before that/.test(q) && /say|said|tell|told/.test(q)) return { kind: "ara_before" };
+  if (
+    /what did you just (say|tell me)|repeat what you (just )?said|show me (what you just said|your last message)|your last message/.test(q)
+    || /last thing you (said|told)/.test(q)
+    || /what('s|s| is| was) the last thing you (said|told)/.test(q)
+    || /what did you last (say|tell)/.test(q)
+    || /previous (message|thing) you (said|told)/.test(q)
+  ) return { kind: "last_ara" };
+  if (
+    /what did i just (say|tell you|ask)|what did i just ask you/.test(q)
+    || /last thing i (said|told|asked)/.test(q)
+  ) return { kind: "last_user" };
+  if (/what were we just talking about|what were we talking about|previous conversation|what did we just talk about/.test(q)) return { kind: "topic" };
+  if (/read (our |the )?ara conversation|conversations box|saved ara conversation|can you not read the conversation|do you have a record/.test(q)) return { kind: "can_read" };
   return null;
 }
 
@@ -36,8 +50,10 @@ export function memoryAskClearsPending(_ask: MemoryAsk | null): boolean {
 }
 
 function turns(log: AraLog): AraTurn[] {
-  const thread = log.threads.find((t) => t.id === log.activeId) || log.threads[0];
-  return thread?.turns || [];
+  return log.threads
+    .flatMap((thread) => thread.turns)
+    .filter((turn) => turn.text)
+    .sort((a, b) => a.at - b.at);
 }
 
 function prior(log: AraLog, currentText: string): AraTurn[] {
