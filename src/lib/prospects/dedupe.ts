@@ -1,4 +1,5 @@
 import type { Prospect } from "../review-brief.ts";
+import { routeOffEarlyPipeline } from "./contactability.ts";
 import { ensureUid, nameKey, normalizeName, websiteDomain } from "./ids.ts";
 
 const STAGE_RANK: Record<string, number> = {
@@ -152,12 +153,15 @@ export function importWithoutDuplicates(existing: Prospect[], incoming: Prospect
       // UID is the only row locator. Numeric id is display/legacy and must
       // never pick a different company that happens to share client_id 7.
       const idx = hit.uid ? next.findIndex((e) => e.uid === hit.uid) : -1;
-      const combined = mergeProspect(hit, p);
+      const combined = routeOffEarlyPipeline(mergeProspect(hit, p)).prospect;
       if (idx >= 0) next[idx] = combined;
       else next.push(combined);
       merged.push(combined);
     } else {
-      const withId = { ...p, id: p.id && !next.some((e) => e.id === p.id) ? p.id : Math.max(0, ...next.map((e) => e.id)) + 1 };
+      const withId = routeOffEarlyPipeline({
+        ...p,
+        id: p.id && !next.some((e) => e.id === p.id) ? p.id : Math.max(0, ...next.map((e) => e.id)) + 1,
+      }).prospect;
       next.push(withId);
       imported.push(withId);
     }

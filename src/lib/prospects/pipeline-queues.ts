@@ -5,8 +5,8 @@
 import type { Prospect } from "../review-brief.ts";
 import {
   evaluateContactability,
-  isActivePipelineStage,
   isArchiveStage,
+  isPreservedDealStage,
   type ContactabilityOpts,
 } from "./contactability.ts";
 import { isTestWorkflowUid } from "../mail/test-loop.ts";
@@ -50,7 +50,9 @@ export function assignQueue(p: Prospect, opts?: ContactabilityOpts): PipelineQue
   if (p.is_demo || isTestWorkflowUid(p.uid)) return "ARCHIVE_NOT_PURSUING";
   if (isArchiveStage(p.stage || "") || c.status === "BLOCKED") return "ARCHIVE_NOT_PURSUING";
   if (needsDylan(p)) return "NEEDS_DYLAN";
-  if (c.contactable || c.status === "CONTACTABLE" || isActivePipelineStage(p.stage || "")) {
+  // READY TO CONTACT, or a deal that already has real progress.
+  // "Approved for Outreach" alone is not enough — phone/LinkedIn/forms do not count.
+  if (isPreservedDealStage(p.stage) || c.status === "CONTACTABLE") {
     return "ACTIVE_PIPELINE";
   }
   if (c.status === "NEEDS_CONTACT_INFORMATION") return "NEEDS_CONTACT_INFORMATION";
@@ -106,14 +108,15 @@ export function matchesQueue(
     if (row.isDemo || row.isTest || row.reach === "SUPPRESSED" || row.reach === "BLOCKED") return false;
     return needsDylan(full || row);
   }
-  // ACTIVE_PIPELINE — contactable + in-motion stages (includes replies/calls/proposals).
+  // ACTIVE_PIPELINE — READY TO CONTACT, plus in-progress deals (replies, calls, proposals).
+  // Early "Approved for Outreach" without a usable email is not a pipeline card.
   if (row.isDemo || row.isTest) return false;
   if (row.reach === "SUPPRESSED" || row.reach === "BLOCKED") return false;
+  if (needsDylan(row) || isPreservedDealStage(row.stage)) return true;
   if (row.reach === "READY_TO_CONTACT") return true;
-  if (isActivePipelineStage(row.stage) || needsDylan(row)) return true;
   if (full) {
     const c = evaluateContactability(full, opts);
-    return c.status === "CONTACTABLE" || isActivePipelineStage(full.stage || "");
+    return c.status === "CONTACTABLE" || isPreservedDealStage(full.stage);
   }
   return false;
 }
@@ -144,7 +147,7 @@ export function queueFromFilterable(row: FilterableProspect): PipelineQueue {
     return "ARCHIVE_NOT_PURSUING";
   }
   if (needsDylan(row)) return "NEEDS_DYLAN";
-  if (row.reach === "READY_TO_CONTACT" || isActivePipelineStage(row.stage)) return "ACTIVE_PIPELINE";
+  if (isPreservedDealStage(row.stage) || row.reach === "READY_TO_CONTACT") return "ACTIVE_PIPELINE";
   if (row.reach === "NEEDS_CONTACT_INFO") return "NEEDS_CONTACT_INFORMATION";
   if (row.reach === "NEEDS_RESEARCH") return "NEEDS_RESEARCH";
   return "NEEDS_RESEARCH";

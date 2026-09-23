@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prospect } from "../review-brief.ts";
-import { evaluateContactability, reachKindFromContactability, routeQualifiedWithoutEmail } from "./contactability.ts";
+import {
+  admitToActivePipeline,
+  evaluateContactability,
+  reachKindFromContactability,
+  routeOffEarlyPipeline,
+  routeQualifiedWithoutEmail,
+} from "./contactability.ts";
 import { reachKind } from "./reach.ts";
 import { evaluateContactabilityInvariants } from "../sentinel/contactability-check.ts";
 import { TEST_RECORD_NAME, TEST_WORKFLOW_UID, testRunUid } from "../mail/test-loop.ts";
@@ -147,6 +153,107 @@ test("Part 3 routeQualifiedWithoutEmail", () => {
   const p = base({ contacts: [] });
   const r = routeQualifiedWithoutEmail(p);
   assert.equal(r.queue, "NEEDS_CONTACT_INFORMATION");
+});
+
+const emailContact = {
+  name: "Pat Owner",
+  title: "Owner",
+  email: "pat@acme.example",
+  email_status: "verified" as const,
+  profile_url: "",
+  source: "contact page",
+  last_verified: "2026-09-22",
+};
+
+test("admit to Approved for Outreach requires READY TO CONTACT", () => {
+  const phoneOnly = base({ stage: "Qualified", contacts: [] });
+  const refused = admitToActivePipeline(phoneOnly, "Approved for Outreach");
+  assert.equal(refused.allowed, false);
+  assert.match(refused.reason, /email/i);
+
+  const ready = base({ stage: "Qualified", contacts: [emailContact] });
+  const allowed = admitToActivePipeline(ready, "Approved for Outreach");
+  assert.equal(allowed.allowed, true);
+  assert.equal(evaluateContactability(ready).status, "CONTACTABLE");
+  assert.equal(evaluateContactability(ready).ownerLabel, "READY TO CONTACT");
+});
+
+test("admit refuses a new Contacted row without email and allows one with email", () => {
+  const refused = admitToActivePipeline(base({ stage: "New", contacts: [] }), "Contacted");
+  assert.equal(refused.allowed, false);
+  const allowed = admitToActivePipeline(base({ stage: "New", contacts: [emailContact] }), "Contacted");
+  assert.equal(allowed.allowed, true);
+});
+
+test("Test Mode workflow records keep pipeline admission", () => {
+  const testRow = base({
+    uid: TEST_WORKFLOW_UID,
+    name: TEST_RECORD_NAME,
+    stage: "New",
+    contacts: [],
+  });
+  const gate = admitToActivePipeline(testRow, "Approved for Outreach");
+  assert.equal(gate.allowed, true);
+  const stayed = routeOffEarlyPipeline({ ...testRow, stage: "Approved for Outreach" });
+  assert.equal(stayed.changed, false);
+  assert.equal(stayed.prospect.stage, "Approved for Outreach");
+});
+
+test("booking repair and mid-deal moves stay admitted without a new email", () => {
+  const thin = base({ stage: "New", contacts: [], phone: "UNKNOWN", website: "UNKNOWN", research_status: "none" });
+  const repair = admitToActivePipeline(thin, "Call Booked", { fromStage: "New", bookingRepair: true });
+  assert.equal(repair.allowed, true);
+  const progress = admitToActivePipeline(
+    { ...thin, stage: "Contacted" },
+    "Negotiation",
+    { fromStage: "Contacted" },
+  );
+  assert.equal(progress.allowed, true);
+});
+
+test("routeOffEarlyPipeline moves Approved for Outreach without email off the pipeline", () => {
+  const needsContact = base({ stage: "Approved for Outreach", stage_plain: "Ready for you to send a note", contacts: [] });
+  const routed = routeOffEarlyPipeline(needsContact);
+  assert.equal(routed.changed, true);
+  assert.equal(routed.queue, "NEEDS_CONTACT_INFORMATION");
+  assert.equal(routed.prospect.stage, "Qualified");
+  assert.equal(routed.prospect.phone, needsContact.phone);
+  assert.equal(routed.prospect.contacts, needsContact.contacts);
+
+  const needsResearch = base({
+    stage: "Approved for Outreach",
+    contacts: [],
+    phone: "UNKNOWN",
+    website: "UNKNOWN",
+    research_status: "none",
+    findings: [],
+  });
+  const researched = routeOffEarlyPipeline(needsResearch);
+  assert.equal(researched.queue, "NEEDS_RESEARCH");
+  assert.equal(researched.prospect.stage, "Researching");
+});
+
+test("routeOffEarlyPipeline preserves booked and later deals and ready approvals", () => {
+  for (const stage of ["Contacted", "Replied", "Call Booked", "Proposal Sent", "Negotiation"] as const) {
+    const deal = routeOffEarlyPipeline(base({ stage, contacts: [] }));
+    assert.equal(deal.changed, false);
+    assert.equal(deal.prospect.stage, stage);
+  }
+  const ready = routeOffEarlyPipeline(base({ stage: "Approved for Outreach", contacts: [emailContact] }));
+  assert.equal(ready.changed, false);
+  assert.equal(ready.prospect.stage, "Approved for Outreach");
+  const demo = routeOffEarlyPipeline(base({ stage: "Approved for Outreach", is_demo: true, contacts: [] }));
+  assert.equal(demo.changed, false);
+  assert.equal(demo.prospect.stage, "Approved for Outreach");
+});
+
+test("routeOffEarlyPipeline leaves blank and Booked stages for booking repair", () => {
+  const blank = routeOffEarlyPipeline(base({ stage: "", contacts: [] }));
+  assert.equal(blank.changed, false);
+  assert.equal(blank.prospect.stage, "");
+  const alias = routeOffEarlyPipeline(base({ stage: "Booked", contacts: [] }));
+  assert.equal(alias.changed, false);
+  assert.equal(alias.prospect.stage, "Booked");
 });
 
 test("label sync: queued research with listing phone or website matches contactability", () => {

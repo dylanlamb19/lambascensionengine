@@ -7,6 +7,7 @@ import {
   filterForQueue,
   matchesQueue,
   needsDylan,
+  queueFromFilterable,
 } from "./pipeline-queues.ts";
 import { fromProspect } from "./view-filter.ts";
 
@@ -75,4 +76,40 @@ test("filterForQueue replace semantics", () => {
   const f = filterForQueue("NEEDS_RESEARCH");
   assert.equal(f.queue, "NEEDS_RESEARCH");
   assert.equal(f.replace, true);
+});
+
+test("Approved for Outreach without email is not an active pipeline card", () => {
+  const p = base({ stage: "Approved for Outreach", stage_plain: "Ready for you to send a note", contacts: [] });
+  assert.equal(assignQueue(p), "NEEDS_CONTACT_INFORMATION");
+  const row = fromProspect(p);
+  assert.equal(row.reach, "NEEDS_CONTACT_INFO");
+  assert.equal(matchesQueue(row, "ACTIVE_PIPELINE", p), false);
+  assert.equal(matchesQueue(row, "NEEDS_CONTACT_INFORMATION", p), true);
+  assert.equal(queueFromFilterable(row), "NEEDS_CONTACT_INFORMATION");
+});
+
+test("Approved for Outreach with a usable email stays on the active pipeline", () => {
+  const p = base({
+    stage: "Approved for Outreach",
+    contacts: [{ name: "Pat", title: "Owner", email: "pat@acme.example", email_status: "verified", profile_url: "", source: "x", last_verified: "" }],
+  });
+  assert.equal(assignQueue(p), "ACTIVE_PIPELINE");
+  const row = fromProspect(p);
+  assert.equal(matchesQueue(row, "ACTIVE_PIPELINE", p), true);
+  assert.equal(queueFromFilterable(row), "ACTIVE_PIPELINE");
+});
+
+test("Contacted and Call Booked stay on the pipeline without a fresh email", () => {
+  const contacted = base({ stage: "Contacted", contacts: [] });
+  assert.equal(assignQueue(contacted), "ACTIVE_PIPELINE");
+  const contactedRow = fromProspect(contacted);
+  assert.equal(matchesQueue(contactedRow, "ACTIVE_PIPELINE", contacted), true);
+  assert.equal(queueFromFilterable(contactedRow), "ACTIVE_PIPELINE");
+
+  const booked = base({ stage: "Call Booked", contacts: [] });
+  assert.equal(assignQueue(booked), "NEEDS_DYLAN");
+  const bookedRow = fromProspect(booked);
+  assert.equal(matchesQueue(bookedRow, "NEEDS_DYLAN", booked), true);
+  assert.equal(matchesQueue(bookedRow, "ACTIVE_PIPELINE", booked), true);
+  assert.equal(needsDylan(booked), true);
 });

@@ -37,7 +37,7 @@ import {
   toolArgsToFilter,
 } from "../prospects/view-filter.ts";
 import { hasChanges, pickKnownChanges, whatToAddSpeech, whichProspectSpeech } from "../prospects/owner-edit.ts";
-import { evaluateContactability } from "../prospects/contactability.ts";
+import { evaluateContactability, isPreservedDealStage } from "../prospects/contactability.ts";
 import { spokenEligibleReport } from "../prospects/pipeline-queues.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
@@ -1724,6 +1724,19 @@ export function executeAllowlistedTool(
     return { ok: true, tool, rejected: false, output: { prospect_uid: target.uid, stopped: true }, plan: { type: "stop_followups", uid: target.uid } };
   }
   if (tool === "approve_prospect") {
+    const ready = target.reach === "READY_TO_CONTACT" || Boolean(target.is_test) || isPreservedDealStage(target.stage);
+    if (target.reach && !ready) {
+      return {
+        ok: true, tool, rejected: true,
+        output: {
+          prospect_uid: target.uid,
+          sent: false,
+          changed: false,
+          reason: "Not ready to contact. A usable email is required before the pipeline. Nothing was approved.",
+        },
+        plan: { type: "none" },
+      };
+    }
     return {
       ok: true, tool, rejected: false,
       output: { prospect_uid: target.uid, sent: false, sameAsButton: true, changed: true },

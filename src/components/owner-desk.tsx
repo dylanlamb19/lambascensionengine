@@ -31,6 +31,7 @@ import {
   type PendingProspectEdit,
   type ProspectInfoChanges,
 } from "@/lib/prospects/owner-edit";
+import { admitToActivePipeline, isPreservedDealStage, routeOffEarlyPipeline } from "@/lib/prospects/contactability";
 import { matchExisting } from "@/lib/prospects/dedupe";
 import { applyByUid, findByUid, patchByUid, withUids } from "@/lib/prospects/identity";
 import { ensureUid, newUid, nextClientId } from "@/lib/prospects/ids";
@@ -197,15 +198,19 @@ type Task = {
 const STORE = "la_companies_v5";
 const USAGE = "la_enrich_usage_v1";
 
+function settleRoster(rows: Prospect[]): Prospect[] {
+  return rows.map((row) => routeOffEarlyPipeline(row).prospect);
+}
+
 function loadCompanies(): Prospect[] {
-  if (typeof window === "undefined") return SEED;
+  if (typeof window === "undefined") return settleRoster(SEED);
   try {
     const raw = localStorage.getItem(STORE);
-    if (raw) return withUids(JSON.parse(raw) as Prospect[]);
+    if (raw) return settleRoster(withUids(JSON.parse(raw) as Prospect[]));
   } catch {
     /* ignore */
   }
-  return withUids(SEED);
+  return settleRoster(withUids(SEED));
 }
 function saveCompanies(rows: Prospect[]) {
   if (typeof window === "undefined") return;
@@ -471,14 +476,16 @@ export function OwnerDesk() {
           if (extra.length) await importProspectsFn({ data: { prospects: extra } });
           const latest = extra.length ? await listProspectsFn() : remote;
           if (!cancelled && latest.ok) {
-            setRows(latest.prospects);
-            saveCompanies(latest.prospects);
+            const settled = settleRoster(latest.prospects);
+            setRows(settled);
+            saveCompanies(settled);
           }
         } else if (local.length) {
           const imported = await importProspectsFn({ data: { prospects: local } });
           if (!cancelled && imported.ok && imported.prospects.length) {
-            setRows(imported.prospects);
-            saveCompanies(imported.prospects);
+            const settled = settleRoster(imported.prospects);
+            setRows(settled);
+            saveCompanies(settled);
           }
         }
         if (!cancelled) setSyncErr("");
@@ -3087,6 +3094,24 @@ export function OwnerDesk() {
   }
 
   function approveProspect(open: Prospect, method: "MANUAL" | "VOICE") {
+    const gate = admitToActivePipeline(open, "Approved for Outreach");
+    if (!gate.allowed) {
+      if (isPreservedDealStage(open.stage)) {
+        const msg = `${open.name} stays in ${open.stage}. In-progress deals stay on the pipeline.`;
+        setSyncErr(msg);
+        if (method === "VOICE") say(msg);
+        return;
+      }
+      if ((open.stage || "").trim() === "Approved for Outreach") {
+        const routed = routeOffEarlyPipeline(open);
+        if (routed.changed) patchCompany(routed.prospect);
+      }
+      const msg = `${open.name} is not ready to contact. ${gate.reason} Nothing was approved for outreach.`;
+      setSyncErr(msg);
+      if (method === "VOICE") say(msg);
+      return;
+    }
+    setSyncErr("");
     const pack = generateOutreach(open);
     patchCompany({
       ...open,
@@ -3226,8 +3251,9 @@ export function OwnerDesk() {
         return;
       }
       if (result.prospects) {
-        setRows(result.prospects);
-        saveCompanies(result.prospects);
+        const settled = settleRoster(result.prospects);
+        setRows(settled);
+        saveCompanies(settled);
       }
       setFindMsg(result.reason);
       setView("pipe");
@@ -3263,8 +3289,9 @@ export function OwnerDesk() {
         say(result.reason);
         return;
       }
-      setRows(result.prospects);
-      saveCompanies(result.prospects);
+      const settled = settleRoster(result.prospects);
+      setRows(settled);
+      saveCompanies(settled);
       if (result.lastDiscovery) {
         setLastDiscovery(result.lastDiscovery);
         saveLastDiscovery(result.lastDiscovery);

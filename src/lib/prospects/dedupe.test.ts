@@ -93,8 +93,38 @@ test("colliding numeric id 7 does not merge the wrong company — UID wins", () 
   assert.equal(afterA?.stage, "New");
   assert.equal(afterA?.id, 7);
   assert.equal(afterB?.name, "Fort Worth HVAC");
-  assert.equal(afterB?.stage, "Approved for Outreach");
   assert.equal(afterB?.uid, "company-b");
+  assert.notEqual(afterB?.stage, "Approved for Outreach");
+  assert.equal(afterB?.stage, "Researching");
+});
+
+test("import keeps Approved for Outreach when the company is READY TO CONTACT", () => {
+  const ready = p({
+    uid: "company-ready",
+    id: 3,
+    name: "Ready Dental",
+    city: "Austin",
+    stage: "New",
+    fit: "strong",
+    readiness: "STRONG CANDIDATE FOR FURTHER QUALIFICATION",
+    research_status: "complete",
+    contacts: [{
+      name: "Pat Owner",
+      title: "Owner",
+      email: "pat@ready.example",
+      email_status: "verified",
+      profile_url: "",
+      source: "contact page",
+      last_verified: "2026-09-22",
+    }],
+  });
+  const approved = p({
+    ...ready,
+    stage: "Approved for Outreach",
+    stage_plain: "Ready for you to send a note",
+  });
+  const { next } = importWithoutDuplicates([ready], [approved]);
+  assert.equal(next.find((x) => x.uid === "company-ready")?.stage, "Approved for Outreach");
 });
 
 test("dedupe never locates a merge row by numeric id", () => {

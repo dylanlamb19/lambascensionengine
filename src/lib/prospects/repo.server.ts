@@ -6,6 +6,7 @@ import { getSql } from "@/lib/db";
 import type { Prospect } from "@/lib/review-brief";
 import { promotedStageForBooking } from "@/lib/mail/booking-stage";
 import { isTestWorkflowUid } from "@/lib/mail/test-loop";
+import { routeOffEarlyPipeline } from "./contactability";
 import { importWithoutDuplicates } from "./dedupe";
 import { ensureUid, websiteDomain } from "./ids";
 
@@ -85,12 +86,16 @@ async function writeOne(userId: string, p: Prospect): Promise<void> {
   const promoted = promotedStageForBooking(ready.stage);
   const uid = ready.uid ?? "";
   if (promoted && uid && await hasBookedGoogleEvent(userId, uid)) {
+    // Booking repair runs before the contactability gate so a real Google
+    // event still lands on Call Booked, including a blank or "Booked" stage.
+    // routeOffEarlyPipeline leaves Call Booked and later deals in place.
     ready = {
       ...ready,
       stage: promoted,
       stage_plain: isTestWorkflowUid(uid) ? "Test call booked" : "Call is on the calendar",
     };
   }
+  ready = routeOffEarlyPipeline(ready).prospect;
   const sql = await getSql();
   const payload = JSON.stringify({ ...ready, uid: ready.uid });
   await sql`
