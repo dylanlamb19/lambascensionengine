@@ -13,17 +13,20 @@ export const Route = createFileRoute("/api/book/$token")({
         if (link.expires_at && new Date(link.expires_at).getTime() < Date.now()) {
           return Response.json({ ok: false, reason: "This booking link has expired." });
         }
+        const { loadSettings } = await import("@/lib/mail/sql.server");
+        const settings = await loadSettings(link.user_id);
+        const timezone = settings.timezone || "America/Chicago";
         const tokens = await accessFor(link.user_id, "calendar");
         if (!tokens) return Response.json({ ok: false, reason: "Calendar is not connected for this owner." });
         const { offeredSlots, CALENDAR_UNREADABLE } = await import("@/lib/google/calendar");
-        const avail = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email });
+        const avail = await offeredSlots(tokens.access_token, { count: 3, calendarId: tokens.email, timezone });
         if (!avail.ok) return Response.json({ ok: false, reason: CALENDAR_UNREADABLE, slots: [] });
         const slots = avail.slots.map((s) => ({
           start: s.start.toISOString(),
           end: s.end.toISOString(),
           label: s.label,
         }));
-        return Response.json({ ok: true, slots });
+        return Response.json({ ok: true, slots, timezoneLabel: "Central Time" });
       },
       POST: async ({ params, request }) => {
         const { getBookingLink, claimBookingLink, finishBookingLink } = await import("@/lib/mail/sql.server");
@@ -39,6 +42,9 @@ export const Route = createFileRoute("/api/book/$token")({
         const existing = await getBookingLink(params.token);
         if (!existing) {
           return Response.json({ ok: false, reason: "This booking link is not valid." });
+        }
+        if (existing.expires_at && new Date(existing.expires_at).getTime() < Date.now() && existing.status === "open") {
+          return Response.json({ ok: false, reason: "This booking link has expired." });
         }
         const already = await provenBookingEventId(existing.user_id, existing.prospect_uid, params.token);
         const decision = publicBookingDecision({
@@ -98,8 +104,11 @@ export const Route = createFileRoute("/api/book/$token")({
         }
         const { offeredSlots, createEvent, CALENDAR_UNREADABLE } = await import("@/lib/google/calendar");
         const { slotIsOffered } = await import("@/lib/mail/booking");
+        const { loadSettings } = await import("@/lib/mail/sql.server");
+        const settings = await loadSettings(claimed.user_id);
+        const timezone = settings.timezone || "America/Chicago";
         const from = new Date();
-        const avail = await offeredSlots(tokens.access_token, { from, count: 8, calendarId: tokens.email });
+        const avail = await offeredSlots(tokens.access_token, { from, count: 8, calendarId: tokens.email, timezone });
         if (!avail.ok) {
           await finishBookingLink(params.token, "open");
           return Response.json({ ok: false, reason: CALENDAR_UNREADABLE });
@@ -113,6 +122,7 @@ export const Route = createFileRoute("/api/book/$token")({
           title: `Lamb Ascension / ${prospect.name}`,
           start,
           end,
+          timeZone: timezone,
           eventId: googleEventIdForBookingToken(params.token),
         });
         if (!created.ok) {

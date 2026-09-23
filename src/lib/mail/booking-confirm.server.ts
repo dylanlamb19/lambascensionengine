@@ -7,6 +7,7 @@ import {
   loadTestState,
   saveCalendarEvent,
   saveTestState,
+  stopSequencesForProspect,
   type SalesTestState,
 } from "./sql.server";
 import { isTestWorkflowUid } from "./test-loop";
@@ -63,14 +64,35 @@ export async function persistConfirmedBooking(opts: {
       opts.end,
       opts.token,
     );
+    await stopSequencesForProspect(opts.userId, opts.prospectUid);
     const prospect = await getProspectByUid(opts.userId, opts.prospectUid);
     if (prospect) {
-      const promoted = promotedStageForBooking(prospect.stage);
-      if (promoted) {
-        prospect.stage = promoted;
-        prospect.stage_plain = isTestWorkflowUid(opts.prospectUid) ? "Test call booked" : "Call is on the calendar";
-        await upsertProspects(opts.userId, [prospect]);
-      }
+      const { applyImmediateBooking } = await import("../autonomy/booking-link");
+      const { salesBrief } = await import("../autonomy/sales");
+      const { opportunities, recommendOffer } = await import("../review-brief");
+      const offer = recommendOffer(prospect);
+      const brief = salesBrief({
+        company: prospect.name,
+        contact: prospect.contacts?.[0]?.name || "",
+        website: prospect.website,
+        vertical: prospect.vertical,
+        city: prospect.city,
+        gaps: opportunities(prospect).map((o) => o.code),
+        angle: prospect.outreach?.brief.angle || "",
+        replySummary: (prospect.history || []).filter((h) => h.action === "reply" || h.action === "autonomy_replied").map((h) => h.detail || "").join(" "),
+        emailsSent: (prospect.history || []).some((h) => h.action === "autonomy_sent" || h.action === "email_sent") ? 1 : 0,
+        researchDone: prospect.research_status === "complete" || prospect.research_status === "partial",
+        offerName: offer.name,
+        offerWhy: offer.why,
+      });
+      const booked = applyImmediateBooking(prospect, {
+        at: new Date().toISOString(),
+        startIso: opts.start.toISOString(),
+        eventId: opts.googleEventId,
+        brief,
+      });
+      if (isTestWorkflowUid(opts.prospectUid)) booked.stage_plain = "Test call booked";
+      await upsertProspects(opts.userId, [booked]);
     }
     if (isTestWorkflowUid(opts.prospectUid)) {
       await saveTestState(opts.userId, {

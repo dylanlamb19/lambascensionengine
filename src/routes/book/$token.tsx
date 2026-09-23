@@ -14,13 +14,13 @@ function BookPage() {
     void (async () => {
       try {
         const res = await fetch(`/api/book/${token}`);
-        const data = (await res.json()) as { ok: boolean; reason?: string; slots?: { label: string; start: string; end: string }[] };
+        const data = (await res.json()) as { ok: boolean; reason?: string; timezoneLabel?: string; slots?: { label: string; start: string; end: string }[] };
         if (!data.ok) {
           setMsg(data.reason || "This booking link is not valid.");
           return;
         }
         setSlots(data.slots || []);
-        setMsg(data.slots?.length ? "Pick a time." : "No open times this week.");
+        setMsg(data.slots?.length ? `Pick a time. Times are shown in ${data.timezoneLabel || "Central Time"}.` : "No open times this week.");
       } catch {
         setMsg("Could not load times. Try again later.");
       }

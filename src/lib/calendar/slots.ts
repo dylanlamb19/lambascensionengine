@@ -6,15 +6,30 @@ function overlaps(a: Busy, b: Busy): boolean {
 
 export function labelSlot(start: Date, timezone = "America/Chicago"): string {
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    const when = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       weekday: "long",
       hour: "numeric",
       minute: "2-digit",
     }).format(start);
+    const zone = timezone === "America/Chicago" ? "CT" : timezone;
+    return `${when} ${zone}`;
   } catch {
     return start.toUTCString();
   }
+}
+
+function zonedClock(date: Date, timeZone: string): { hour: number; weekday: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value || "0");
+  const name = parts.find((p) => p.type === "weekday")?.value || "Sun";
+  const weekday = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[name] ?? date.getUTCDay();
+  return { hour, weekday };
 }
 
 export function openSlots(opts: {
@@ -32,10 +47,11 @@ export function openSlots(opts: {
   cursor.setMinutes(0, 0, 0);
   if (cursor.getMinutes() !== 0) cursor.setHours(cursor.getHours() + 1);
   for (let i = 0; i < 14 * 24 && out.length < (opts.count || 3); i += 1) {
-    const hour = cursor.getHours();
-    const day = cursor.getDay();
     const start = new Date(cursor);
     const end = new Date(cursor.getTime() + duration);
+    const zoned = opts.timezone ? zonedClock(start, opts.timezone) : null;
+    const hour = zoned ? zoned.hour : cursor.getHours();
+    const day = zoned ? zoned.weekday : cursor.getDay();
     const workStart = opts.workStart ?? 8;
     const workEnd = opts.workEnd ?? 17;
     const weekday = day >= 1 && day <= 5;

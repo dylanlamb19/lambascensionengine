@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { bookingSettingsFn, recordOutcomeFn, saveBookingLinkFn } from "@/lib/autonomy/actions";
+import { useState } from "react";
+import { recordOutcomeFn } from "@/lib/autonomy/actions";
 import { dailySummary } from "@/lib/autonomy/daily";
 import { knownRevenue, lifecycle, type OutcomeProspect } from "@/lib/autonomy/outcomes";
 
@@ -12,26 +12,10 @@ type Row = OutcomeProspect & {
 };
 
 export function BookingLinkField() {
-  const [url, setUrl] = useState("");
-  const [msg, setMsg] = useState("");
-  useEffect(() => {
-    void bookingSettingsFn().then((r) => { if (r.ok) setUrl(r.bookingUrl || ""); }).catch(() => setMsg("Booking link could not be loaded."));
-  }, []);
   return (
     <section className="la-card mb-4" data-booking-link="1">
-      <p className="la-kicker">Booking link</p>
-      <p className="mt-1 mb-3 text-sm text-muted">Used only when someone is interested or asks to talk. Leave blank and the engine will not invent one.</p>
-      <input className="la-field mb-3" value={url} placeholder="https://..." onChange={(e) => setUrl(e.target.value)} />
-      <button
-        type="button"
-        className="la-btn la-btn-primary"
-        onClick={() => {
-          void saveBookingLinkFn({ data: { url } }).then((r) => setMsg(r.ok ? "Saved." : r.reason)).catch(() => setMsg("Could not save."));
-        }}
-      >
-        Save booking link
-      </button>
-      {msg ? <p className="mt-2 text-sm">{msg}</p> : null}
+      <p className="la-kicker">Booking</p>
+      <p className="mt-1 text-sm text-muted">Each interested company gets its own private booking link. There is nothing to paste here.</p>
     </section>
   );
 }
@@ -45,20 +29,16 @@ export function AutonomyHome({
   testMode: boolean;
   onUpdated?: (row: Row) => void;
 }) {
-  const [bookingUrl, setBookingUrl] = useState("");
   const [busy, setBusy] = useState("");
   const [value, setValue] = useState("");
   const [billing, setBilling] = useState<"" | "one-time" | "monthly">("");
-  useEffect(() => {
-    void bookingSettingsFn().then((r) => { if (r.ok) setBookingUrl(r.bookingUrl || ""); }).catch(() => undefined);
-  }, []);
+  const calendarDown = rows.some((r) => (r.history || []).some((h) => h.action === "calendar_unavailable"));
   const day = new Date().toISOString().slice(0, 10);
   const today = dailySummary(rows, day);
   const now = new Date();
   const upcoming = rows.filter((r) => lifecycle(r) === "BOOKED");
   const needOutcome = upcoming.filter((r) => !r.meeting_at || new Date(r.meeting_at).getTime() <= now.getTime());
   const needDecision = rows.filter((r) => lifecycle(r) === "FOLLOW_UP_NEEDED" || lifecycle(r) === "SHOWED");
-  const interested = rows.filter((r) => lifecycle(r) === "INTERESTED");
   const showed = rows.filter((r) => lifecycle(r) === "SHOWED").length;
   const won = rows.filter((r) => lifecycle(r) === "WON").length;
   const lost = rows.filter((r) => lifecycle(r) === "LOST").length;
@@ -84,7 +64,7 @@ export function AutonomyHome({
     <section className="la-card mb-5" data-autonomy="1">
       <p className="la-kicker">Today</p>
       <p className="mt-1 text-sm">{testMode ? "Acquisition is running in Test Mode. Nothing is emailed to real companies." : "Acquisition is running. New email stays inside the daily limit."}</p>
-      {!bookingUrl && interested.length ? <p className="mt-2 text-sm">Someone is interested, and no booking link is saved. Add it in Settings.</p> : null}
+      {calendarDown ? <p className="mt-2 text-sm">Google Calendar is not connected. Interested replies will not include a booking link until it is.</p> : null}
       <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <p><b>{today.found}</b> found</p>
         <p><b>{today.researched}</b> researched</p>

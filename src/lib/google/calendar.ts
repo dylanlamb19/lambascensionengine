@@ -643,13 +643,13 @@ export async function probeFreeBusy(
 
 export async function offeredSlots(
   accessToken: string,
-  opts: { from?: Date; count?: number; calendarId?: string } = {},
+  opts: { from?: Date; count?: number; calendarId?: string; timezone?: string } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: true; busy: Busy[]; slots: { start: Date; end: Date; label: string }[] } | { ok: false; reason: string; slots: []; code: CalendarFailureCode }> {
   const from = opts.from || new Date();
   const result = await listBusy(accessToken, from, new Date(from.getTime() + 14 * 86400000), fetchImpl, opts.calendarId);
   if (!result.ok) return { ok: false, reason: CALENDAR_UNREADABLE, slots: [], code: result.code };
-  return { ok: true, busy: result.busy, slots: openSlots({ from, busy: result.busy, count: opts.count ?? 3 }) };
+  return { ok: true, busy: result.busy, slots: openSlots({ from, busy: result.busy, count: opts.count ?? 3, timezone: opts.timezone || "America/Chicago" }) };
 }
 
 export { openSlots, calendarScopeFlags, calendarListUserReason, classifyCalendarListHttp };

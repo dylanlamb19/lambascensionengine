@@ -519,12 +519,34 @@ export async function findBookingAuditEventId(userId: string, prospectUid: strin
   return id || null;
 }
 
-export async function createBookingLink(userId: string, prospectUid: string): Promise<string> {
+export async function createBookingLink(userId: string, prospectUid: string, meta?: { contact?: string; threadId?: string }): Promise<string> {
   const sql = await getSql();
   const token = newUid();
   const expires = new Date(Date.now() + 14 * 86400000).toISOString();
-  await sql`insert into booking_links (token, user_id, prospect_uid, status, expires_at) values (${token}, ${userId}, ${prospectUid}, ${"open"}, ${expires})`;
+  const contact = (meta?.contact || "").slice(0, 200);
+  const threadId = (meta?.threadId || "").slice(0, 200);
+  try {
+    await sql`
+      insert into booking_links (token, user_id, prospect_uid, status, expires_at, contact_email, thread_id)
+      values (${token}, ${userId}, ${prospectUid}, ${"open"}, ${expires}, ${contact}, ${threadId})
+    `;
+  } catch {
+    await sql`insert into booking_links (token, user_id, prospect_uid, status, expires_at) values (${token}, ${userId}, ${prospectUid}, ${"open"}, ${expires})`;
+  }
   return token;
+}
+
+export async function ensureBookingToken(userId: string, prospectUid: string, meta?: { contact?: string; threadId?: string }): Promise<string> {
+  const sql = await getSql();
+  const open = await sql<{ token: string }>`
+    select token from booking_links
+    where user_id = ${userId} and prospect_uid = ${prospectUid} and status = 'open'
+      and (expires_at is null or expires_at > now())
+    order by created_at desc
+    limit 1
+  `;
+  if (open[0]?.token) return open[0].token;
+  return createBookingLink(userId, prospectUid, meta);
 }
 
 export async function getBookingLink(token: string): Promise<{ user_id: string; prospect_uid: string; status: string; expires_at?: string } | null> {

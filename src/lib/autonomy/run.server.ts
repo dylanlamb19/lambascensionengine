@@ -263,15 +263,6 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
     if (decision.action === "generate") {
       const { generateOutreach } = await import("../outreach/generate.ts");
       const pack = generateOutreach(prospect);
-      if (settings.bookingUrl) {
-        for (const message of pack.messages) {
-          if (message.kind === "followup2" || message.kind === "followup3") {
-            if (!message.body.includes(settings.bookingUrl)) {
-              message.body += `\n\nIf you'd rather just talk, grab a time here:\n${settings.bookingUrl}`;
-            }
-          }
-        }
-      }
       dirty.push(stamp({
         ...prospect,
         stage: "Approved for Outreach",
@@ -364,11 +355,29 @@ export async function autoReplyTo(opts: {
   threadId?: string | null;
 }): Promise<"sent" | "held" | "escalated" | "stopped" | "skipped"> {
   const settings = await loadAutonomy(opts.userId);
+  const { classifyInbound, planReply } = await import("./replies.ts");
+  const { replyWantsBooking, publicBookingOrigin, trackedBookingUrl } = await import("./booking-link.ts");
+  const classified = classifyInbound(opts.text);
+  const closed = opts.prospect.stage === "Call Booked" || opts.prospect.stage === "Won" || opts.prospect.stage === "Lost" || opts.prospect.stage === "Do Not Contact";
+  let bookingUrl = "";
+  if (!closed && classified.confidence === "high" && replyWantsBooking(classified.cls)) {
+    const { accessFor } = await import("../mail/live.server.ts");
+    const calendar = await accessFor(opts.userId, "calendar");
+    if (!calendar) {
+      const { upsertProspects } = await import("../prospects/repo.server.ts");
+      await upsertProspects(opts.userId, [stamp(opts.prospect, "calendar_unavailable", "Google Calendar is not connected. No booking link was sent.")]);
+      return "escalated";
+    }
+    const { ensureBookingToken } = await import("../mail/sql.server.ts");
+    const email = opts.prospect.contacts?.find((c) => c.email && c.email !== "UNKNOWN")?.email || "";
+    const token = await ensureBookingToken(opts.userId, opts.prospect.uid || "", { contact: email, threadId: opts.threadId || "" });
+    bookingUrl = trackedBookingUrl(publicBookingOrigin(), token);
+  }
   const plan = planReply({
     text: opts.text,
     name: opts.prospect.contacts?.[0]?.name || "there",
     company: opts.prospect.name,
-    bookingUrl: settings.bookingUrl,
+    bookingUrl,
     finding: opts.prospect.outreach?.brief.angle || "",
   });
   const { upsertProspects } = await import("../prospects/repo.server.ts");
@@ -390,11 +399,12 @@ export async function autoReplyTo(opts: {
     }, "meeting_booked", "They said the meeting is booked. Outreach stays stopped.")]);
     return "stopped";
   }
+  if (closed && replyWantsBooking(plan.cls)) return "skipped";
   if (!plan.send) return "skipped";
   const { loadSettings } = await import("../mail/sql.server.ts");
   const mail = await loadSettings(opts.userId);
   if (mail.testMode) {
-    await upsertProspects(opts.userId, [stamp(opts.prospect, "autonomy_reply_held", "Test Mode is on. Reply was classified and not sent.")]);
+    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, booking_url: bookingUrl }, "autonomy_reply_held", bookingUrl ? `Test Mode is on. Nothing was sent. ${bookingUrl}` : "Test Mode is on. Reply was classified and not sent.")]);
     return "held";
   }
   const to = usefulEmail(opts.prospect)?.value || "";
@@ -412,6 +422,6 @@ export async function autoReplyTo(opts: {
     threadId: opts.threadId,
   });
   if (!sent.ok) return "held";
-  await upsertProspects(opts.userId, [stamp({ ...opts.prospect, stage: "Replied" }, "autonomy_replied", plan.cls)]);
+  await upsertProspects(opts.userId, [stamp({ ...opts.prospect, stage: "Replied", booking_url: bookingUrl }, "autonomy_replied", plan.cls)]);
   return "sent";
 }

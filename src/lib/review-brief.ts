@@ -87,6 +87,7 @@ export type Prospect = {
   followup_sent_at?: string;
   followup_sent_to?: string;
   followup_sent_body?: string;
+  booking_url?: string;
 };
 
 export type Opportunity = {
