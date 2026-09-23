@@ -1,3 +1,5 @@
+import { handoffSummary, onboardingChecklist, type CheckItem, type ClientStatus } from "./handoff.ts";
+
 export type LifeStage =
   | "FOUND"
   | "RESEARCHED"
@@ -45,6 +47,9 @@ export type OutcomeProspect = {
     expectations: string;
     nextAction: string;
   };
+  client_status?: ClientStatus;
+  onboarding?: CheckItem[];
+  handoff_summary?: string;
   history?: { at?: string; action?: string; detail?: string }[];
 };
 
@@ -111,6 +116,8 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
     const value = input.clientValue;
     const hasValue = typeof value === "number" && Number.isFinite(value) && value >= 0;
     const billing = input.billing === "one-time" || input.billing === "monthly" ? input.billing : "";
+    const service = p.call_notes?.recommended || "Not chosen on the call";
+    const checklist = onboardingChecklist(service);
     const next = stamp({
       ...p,
       stage: "Won",
@@ -119,10 +126,12 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
       client_value: hasValue ? value : null,
       billing_type: billing,
       outcome_note: (input.note || "").slice(0, 500),
+      client_status: "ONBOARDING" as const,
+      onboarding: checklist,
       client_record: {
         company: p.name || "",
         contact: "",
-        service: p.call_notes?.recommended || "Not chosen on the call",
+        service,
         price: hasValue ? (value as number) : null,
         billing,
         startDate: new Date().toISOString().slice(0, 10),
@@ -130,7 +139,18 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
         expectations: p.call_notes?.desired || "",
         nextAction: p.call_notes?.nextStep || "Send the agreement and book onboarding.",
       },
-    }, "sales_won", hasValue ? `Won. Value entered: ${value} ${billing || "billing not set"}.` : "Won. Revenue left UNKNOWN until you enter it.");
+      handoff_summary: handoffSummary({
+        company: p.name || "",
+        service,
+        price: hasValue ? (value as number) : null,
+        billing,
+        gap: "",
+        goal: p.call_notes?.desired || "",
+        promised: p.call_notes?.notes || "",
+        needs: checklist.map((item) => item.label),
+        next: p.call_notes?.nextStep || "",
+      }),
+    }, "client_created", "Client record opened. Acquisition stays stopped.");
     return { ok: true, prospect: next as T };
   }
   if (input.outcome === "LOST") {

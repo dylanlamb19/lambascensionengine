@@ -106,3 +106,42 @@ export const saveCallSupportFn = createServerFn({ method: "POST" })
     await upsertProspects(context.userId, [next]);
     return { ok: true as const, prospect: next, draft: next.followup_draft || "", proposal: next.proposal_draft || "" };
   });
+
+export const sendApprovedFollowupFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { uid: string; body: string }) => data)
+  .handler(async ({ data, context }) => {
+    const body = (data.body || "").trim();
+    if (!body) return { ok: false as const, reason: "The note is empty. Nothing was sent." };
+    const { getProspectByUid, upsertProspects } = await import("../prospects/repo.server");
+    const prospect = await getProspectByUid(context.userId, data.uid);
+    if (!prospect) return { ok: false as const, reason: "That company is not on your list." };
+    if (prospect.followup_sent_body && prospect.followup_sent_body === body) {
+      return { ok: false as const, reason: "That exact note was already sent." };
+    }
+    const { loadSettings, lastThread } = await import("../mail/sql.server");
+    const settings = await loadSettings(context.userId);
+    if (settings.testMode) return { ok: false as const, reason: "Test Mode is on. Nothing was sent." };
+    const { usefulEmail } = await import("../prospects/reach");
+    const to = usefulEmail(prospect)?.value || "";
+    if (!to) return { ok: false as const, reason: "No email on file. Nothing was sent." };
+    const threadId = await lastThread(context.userId, data.uid);
+    const { sendLive } = await import("../mail/live.server");
+    const sent = await sendLive({
+      userId: context.userId,
+      prospect,
+      kind: "reply",
+      method: "MANUAL",
+      to,
+      subject: `Re: ${prospect.name}`,
+      body,
+      firstApproved: true,
+      threadId,
+    });
+    if (!sent.ok) return { ok: false as const, reason: sent.reason || "Send failed. It was not marked sent." };
+    const { applyFollowupSent } = await import("./handoff");
+    const applied = applyFollowupSent(prospect, { ok: true, to, body, at: new Date().toISOString() });
+    if (!applied.ok) return applied;
+    await upsertProspects(context.userId, [applied.prospect]);
+    return { ok: true as const, prospect: applied.prospect };
+  });

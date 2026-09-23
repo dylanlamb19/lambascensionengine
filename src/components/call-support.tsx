@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { recordOutcomeFn, saveCallSupportFn } from "@/lib/autonomy/actions";
+import { recordOutcomeFn, saveCallSupportFn, sendApprovedFollowupFn } from "@/lib/autonomy/actions";
 import { lifecycle } from "@/lib/autonomy/outcomes";
 import { callGuide, discoveryQuestions, type CallNotes } from "@/lib/autonomy/sales";
 import { opportunities, type Prospect } from "@/lib/review-brief";
@@ -25,7 +25,7 @@ export function CallSupport({ rows, onUpdated }: { rows: Prospect[]; onUpdated?:
   const [notes, setNotes] = useState<CallNotes>({});
   const [price, setPrice] = useState("");
   const [when, setWhen] = useState("");
-  const [msg, setMsg] = useState("");
+  const [draft, setDraft] = useState("");
   const today = new Date().toISOString().slice(0, 10);
   const calls = rows.filter((r) => lifecycle(r) === "BOOKED" || lifecycle(r) === "SHOWED");
   const due = rows.filter((r) => lifecycle(r) === "FOLLOW_UP_NEEDED" && (!r.follow_up_at || r.follow_up_at.slice(0, 10) <= today));
@@ -50,6 +50,7 @@ export function CallSupport({ rows, onUpdated }: { rows: Prospect[]; onUpdated?:
       return;
     }
     setMsg(kind === "draft" ? "Follow-up draft is ready. It was not sent." : kind === "proposal" ? "Proposal draft is ready. It was not sent." : "Notes saved.");
+    if (result.draft) setDraft(result.draft);
     onUpdated?.(result.prospect as Prospect);
   }
 
@@ -63,10 +64,17 @@ export function CallSupport({ rows, onUpdated }: { rows: Prospect[]; onUpdated?:
         <p><b>{clients.length}</b> new clients</p>
       </div>
       {due.slice(0, 3).map((row) => (
-        <p key={row.uid} className="mt-2 text-sm">{row.name} — follow up {row.follow_up_at || "when you can"}. {row.follow_up_reason || "No cold email."}</p>
+        <div key={row.uid} className="mt-2 text-sm">
+          <p>Follow up with {row.name}. {row.follow_up_at ? `Due ${row.follow_up_at.slice(0, 10)}.` : "Due when you can."} No cold email.</p>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <button type="button" className="la-btn la-btn-quiet" onClick={() => { setOpen(row.uid || null); setNotes(row.call_notes || {}); setDraft(row.followup_draft || ""); }}>Open</button>
+            <button type="button" className="la-btn la-btn-quiet" onClick={() => { setOpen(row.uid || null); setNotes(row.call_notes || {}); setDraft(row.followup_draft || ""); }}>Draft follow-up</button>
+            {row.phone && row.phone !== "UNKNOWN" ? <a className="la-btn la-btn-quiet" href={`tel:${row.phone}`}>Call</a> : <span className="text-muted">No phone on file.</span>}
+          </div>
+        </div>
       ))}
       {calls.slice(0, 3).map((row) => (
-        <button key={row.uid} type="button" className="la-btn la-btn-quiet mt-2" onClick={() => { setOpen(row.uid || null); setNotes(row.call_notes || {}); setMsg(""); }}>
+        <button key={row.uid} type="button" className="la-btn la-btn-quiet mt-2" onClick={() => { setOpen(row.uid || null); setNotes(row.call_notes || {}); setDraft(row.followup_draft || ""); setMsg(""); }}>
           {row.name} brief
         </button>
       ))}
@@ -107,8 +115,21 @@ export function CallSupport({ rows, onUpdated }: { rows: Prospect[]; onUpdated?:
               });
             }}>Follow up later</button>
           </div>
-          {active.followup_draft ? <pre className="mt-3 whitespace-pre-wrap text-sm">{active.followup_draft}</pre> : null}
+          {active.followup_draft || draft ? (
+            <label className="mt-3 block text-sm">Follow-up. Edit it, then send it yourself.
+              <textarea className="la-field mt-1 min-h-28" value={draft || active.followup_draft || ""} onChange={(e) => setDraft(e.target.value)} />
+            </label>
+          ) : null}
+          <button type="button" className="la-btn la-btn-primary mt-2" onClick={() => {
+            if (!active.uid) return;
+            void sendApprovedFollowupFn({ data: { uid: active.uid, body: draft || active.followup_draft || "" } }).then((r) => {
+              setMsg(r.ok ? `Sent to ${r.prospect.followup_sent_to || "them"}.` : r.reason);
+              if (r.ok) onUpdated?.(r.prospect as Prospect);
+            });
+          }}>Approve & send</button>
           {active.proposal_draft ? <pre className="mt-3 whitespace-pre-wrap text-sm">{active.proposal_draft}</pre> : null}
+          {active.handoff_summary ? <pre className="mt-3 whitespace-pre-wrap text-sm">{active.handoff_summary}</pre> : null}
+          {active.onboarding?.length ? <p className="mt-2">Onboarding: {active.onboarding.map((item) => item.label).join(", ")}</p> : null}
           {msg ? <p className="mt-2">{msg}</p> : null}
           <p className="mt-2 text-muted">Nothing here is sent. You still decide the price and whether it goes out.</p>
         </div>

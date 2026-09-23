@@ -81,6 +81,12 @@ export type Prospect = {
   followup_draft?: string;
   proposal_draft?: string;
   client_record?: import("./autonomy/sales").ClientRecord;
+  client_status?: "ONBOARDING" | "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELED";
+  onboarding?: import("./autonomy/handoff").CheckItem[];
+  handoff_summary?: string;
+  followup_sent_at?: string;
+  followup_sent_to?: string;
+  followup_sent_body?: string;
 };
 
 export type Opportunity = {
