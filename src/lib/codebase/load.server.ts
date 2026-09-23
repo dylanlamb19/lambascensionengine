@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import snapshot from "./snapshot.json" with { type: "json" };
 import { pathDenied, type CodeIndex } from "./query.ts";
 
 const ROOTS = ["src", "scripts", "migrations", ".github/workflows"];
@@ -31,6 +32,7 @@ function walk(root: string, dir: string, out: { path: string; text: string }[]) 
       walk(root, abs, out);
       continue;
     }
+    if (path.endsWith("src/lib/codebase/snapshot.json")) continue;
     if (!/\.(ts|tsx|mjs|js|sql|yml|yaml|json|md)$/.test(name)) continue;
     if (st.size > MAX_BYTES) continue;
     try {
@@ -42,6 +44,14 @@ function walk(root: string, dir: string, out: { path: string; text: string }[]) 
 }
 
 export function loadCodeIndex(root = process.cwd()): CodeIndex {
+  const live = readLiveIndex(root);
+  if (live.files.length > 40) return live;
+  const bundled = snapshot as CodeIndex;
+  if (bundled?.files?.length) return bundled;
+  return live;
+}
+
+function readLiveIndex(root: string): CodeIndex {
   const sha = git(root, ["rev-parse", "HEAD"]) || process.env.VERCEL_GIT_COMMIT_SHA || "unknown";
   if (cache && cache.sha === sha) return cache;
   const files: { path: string; text: string }[] = [];

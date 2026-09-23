@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectCode, pathDenied, redactSecrets, type CodeIndex } from "./query.ts";
+import { inspectCode, pathDenied, redactSecrets, classifyCodeQuestion, speakCodeResult, type CodeIndex } from "./query.ts";
 import { loadCodeIndex } from "./load.server.ts";
 import { executeAllowlistedTool, type AraDeskContext } from "../voice/tools.ts";
+import { sessionUpdatePayload } from "../voice/ara-context.ts";
 
 function index(files: CodeIndex["files"], extra: Partial<CodeIndex> = {}): CodeIndex {
   return {
@@ -75,6 +76,10 @@ test("a source comment cannot become a send, and inspection does not mutate", ()
   assert.equal(tool.plan.type, "codebase");
   assert.equal(tool.output.emailSent, false);
   assert.notEqual(tool.plan.type, "arm");
+  const names = (sessionUpdatePayload(desk).session as { tools: { name?: string }[] }).tools.map((item) => item.name);
+  for (const name of ["codebase_status", "codebase_search", "codebase_read_file", "codebase_tree", "codebase_find_symbol", "codebase_find_references", "codebase_trace", "codebase_diff"]) {
+    assert.equal(names.includes(name), true, name);
+  }
 });
 
 test("the workspace index can find the real tool and autonomy functions", () => {
@@ -89,4 +94,9 @@ test("the workspace index can find the real tool and autonomy functions", () => 
   if (!("files" in trace)) throw new Error("trace missing");
   assert.ok(trace.files.length > 0);
   assert.equal(trace.inspectedSha, live.sha);
+  assert.equal(classifyCodeQuestion("Can you access the Lamb Ascension source code?")?.action, "codebase_status");
+  assert.equal(classifyCodeQuestion("Find runAutonomyPass in the code.")?.action, "codebase_find_symbol");
+  const spoken = speakCodeResult(inspectCode(live, "codebase_status"));
+  assert.match(spoken, /read-only access/);
+  assert.match(spoken, new RegExp(live.sha.slice(0, 7)));
 });

@@ -189,3 +189,48 @@ function traceTerms(topic: string): string[] {
   const words = topic.split(/\W+/).filter((word) => word.length > 3).slice(0, 4);
   return words.length ? words : [topic];
 }
+
+export function classifyCodeQuestion(text: string): { action: string; args: Record<string, unknown> } | null {
+  const q = (text || "").replace(/^(hey |ok |okay |hi |yo )?ara[,:]?\s+/i, "").toLowerCase().replace(/[?.!,]/g, " ").replace(/\s+/g, " ").trim();
+  if (!q) return null;
+  if (/can you (read|access|see).{0,40}(code|source)|read (your own|lamb ascension).{0,20}(code|source)|access the (lamb ascension|lambda ascension) (source )?code/.test(q)) {
+    return { action: "codebase_status", args: {} };
+  }
+  if (/what file (defines|controls) your tools|file controls your tools/.test(q)) {
+    return { action: "codebase_search", args: { query: "realtimeToolSchemas" } };
+  }
+  if (/runautonomypass/.test(q)) return { action: "codebase_find_symbol", args: { name: "runAutonomyPass" } };
+  if (/test mode/.test(q) && /(email|live|prevent)/.test(q)) return { action: "codebase_trace", args: { topic: "Test Mode" } };
+  if (/everything is good/.test(q)) return { action: "codebase_search", args: { query: "Everything is good" } };
+  if (/production sha/.test(q)) return { action: "codebase_status", args: {} };
+  return null;
+}
+
+export function speakCodeResult(result: {
+  ok?: boolean;
+  stale?: boolean;
+  reason?: string;
+  fileCount?: number;
+  inspectedSha?: string;
+  productionSha?: string | null;
+  matchesProduction?: boolean | null;
+  hits?: { path: string; line: number }[];
+  files?: { path: string }[];
+  name?: string;
+  query?: string;
+}): string {
+  if (result.stale) return "The code index is stale, so I will not guess from it.";
+  if (result.ok === false) return result.reason || "I couldn't read the repository just now.";
+  if (typeof result.fileCount === "number") {
+    if (result.fileCount < 1) return "The code tool is registered, but this server has no source files. I will not guess.";
+    const prod = result.productionSha
+      ? `Production SHA is ${result.productionSha}. ${result.matchesProduction ? "That matches what I inspected." : "That is not the revision I inspected."}`
+      : "No production SHA is set on this server, so this is the source I can actually read.";
+    return `Yes. I have read-only access to the Lamb Ascension Engine repository. I inspected ${result.inspectedSha}. ${prod} I can search files and read code. I cannot edit or deploy.`;
+  }
+  const hits = result.hits || [];
+  const preferred = hits.find((hit) => /owner-desk|system-health|tools\.ts|run\.server/.test(hit.path)) || hits[0];
+  if (preferred) return `I found ${result.name || result.query || "that"} in ${preferred.path} at line ${preferred.line}.`;
+  if (result.files?.length) return `I traced that through ${result.files.slice(0, 3).map((file) => file.path).join(", ")}.`;
+  return "I ran the code tool and did not find a match. I will not guess.";
+}

@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { inspectCode } from "./query.ts";
-import { loadCodeIndex } from "./load.server.ts";
 
 const AUDIT: Record<string, string> = {
   codebase_search: "ARA_CODE_SEARCH",
@@ -18,6 +17,7 @@ export const inspectCodebaseFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { action: string; args?: Record<string, unknown>; expectSha?: string | null }) => data)
   .handler(async ({ data, context }) => {
+    const { loadCodeIndex } = await import("./load.server.ts");
     const index = loadCodeIndex();
     const result = inspectCode(index, data.action, data.args || {}, data.expectSha);
     try {

@@ -104,6 +104,7 @@ import {
   type NavFrame,
 } from "@/lib/voice/desk-actions";
 import { inspectCodebaseFn } from "@/lib/codebase/actions";
+import { classifyCodeQuestion, speakCodeResult } from "@/lib/codebase/query";
 import { createAraSessionFn, loadAraConversationFn, logVoiceAuditFn, saveAraConversationFn } from "@/lib/voice/ara-session";
 import { voiceFailureReason } from "@/lib/voice/voice-failure";
 import { makeVoiceAudit } from "@/lib/voice/audit";
@@ -2836,6 +2837,17 @@ export function OwnerDesk() {
       const found = answerMemory(folded.log, ask, text);
       utter(found.text, "TOOL_RESULT", `memory:${ask.kind}`);
       void logVoiceAuditFn({ data: { tool: found.action, result: ask.kind } }).catch(() => undefined);
+      return;
+    }
+    const codeAsk = classifyCodeQuestion(text);
+    if (codeAsk) {
+      araRef.current?.cancelResponse();
+      memoryHoldRef.current = Date.now() + 8000;
+      void inspectCodebaseFn({ data: codeAsk }).then((found) => {
+        utter(speakCodeResult(found), "TOOL_RESULT", `code:${codeAsk.action}`);
+      }).catch(() => {
+        utter("I couldn't read the repository just now.", "ERROR", "code:fail");
+      });
       return;
     }
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
