@@ -272,6 +272,14 @@ export function parseSpokenCommand(raw: string): ParsedIntent {
   if (hit(t, /is lascengine healthy|are there any bugs|what broke( today)?|did the last (deploy|deployment) pass|is the worker running|what is sentinel watching/)) {
     return { ...base, intent: "GET_SYSTEM_HEALTH", risk: "LOW", confidence: 0.97 };
   }
+  // Reach out to all / contact everyone → EMAIL campaign under Test Mode (not a count report).
+  if (hit(t, /reach out to all (the )?(prospects|companies|ones)|contact everyone( contactable)?|contact all (the )?prospects|reach out to everyone( contactable)?|email (all|everyone) (contactable|ready)|arm (a |an )?(reach[- ]?out|outreach) campaign/)) {
+    return { ...base, intent: "RUN_EMAIL_CAMPAIGN", risk: "HIGH", confidence: 0.97 };
+  }
+  if (hit(t, /confirm campaign/)) return { ...base, intent: "CONFIRM", risk: "HIGH", confidence: 0.95 };
+  if (hit(t, /(open |go to |show (me )?)?(email )?campaigns\b/)) {
+    return { ...base, intent: "NAVIGATE_CAMPAIGNS", risk: "LOW", confidence: 0.96 };
+  }
   if (hit(t, /how many (prospects )?(can we|could we|are (currently )?)(contact|contactable)|how many (are )?(currently )?(contactable|ready to (contact|send))|who can we contact|contact all (the )?(prospects |ones )?(we can|eligible)|reach out to everyone ready|contact all eligible/)) {
     return { ...base, intent: "CONTACT_ELIGIBLE_PROSPECTS", risk: "LOW", confidence: 0.97 };
   }
@@ -440,7 +448,12 @@ export function needsTarget(intent: IntentName): boolean {
 
 export function confirmPhraseOk(text: string): boolean {
   const t = stripWake(text).toLowerCase().replace(/[?.!,]/g, "").trim();
-  return t === "confirm send" || t === "confirm" || t === "confirm schedule";
+  return t === "confirm send" || t === "confirm" || t === "confirm schedule" || t === "confirm campaign";
+}
+
+export function confirmCampaignPhraseOk(text: string): boolean {
+  const t = stripWake(text).toLowerCase().replace(/[?.!,]/g, "").trim();
+  return t === "confirm campaign";
 }
 
 export function confirmSendPhraseOk(text: string): boolean {

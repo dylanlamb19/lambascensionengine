@@ -402,7 +402,7 @@ export type ToolPlan =
   | { type: "fill_find"; vertical: string; location: string; count: number }
   | { type: "filter"; filter: import("../prospects/view-filter.ts").ProspectViewFilter; ask?: string; unknown?: string }
   | { type: "contact_eligible" }
-  | { type: "campaign"; action: "arm" | "pause" | "status"; campaignId?: string; name?: string }
+  | { type: "campaign"; action: "arm" | "pause" | "status" | "reach_out_all"; campaignId?: string; name?: string }
   | { type: "research"; uid: string }
   | { type: "find_contact"; uid: string }
   | { type: "open_website"; uid: string }
@@ -537,7 +537,7 @@ export function realtimeToolSchemas(): { type: "function"; name: string; descrip
     { type: "function", name: "find_clients", description: "Fill Find Clients and run it. Same as the Find Clients button. Use ONLY to discover NEW companies. Do NOT use this to show, filter, or sort companies already on the list.", parameters: { type: "object", properties: { company_type: { type: "string" }, vertical: { type: "string" }, location: { type: "string" }, count: { type: "number" } }, required: ["location"] } },
     { type: "function", name: "contact_eligible_prospects", description: "Report how many prospects are currently CONTACTABLE by usable EMAIL (Acquisition OS). Test Mode gated. Never sends. Never invents counts. Use for ‘how many can we contact’, ‘contact all eligible’ (report only until Autopilot ships).", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_campaigns", description: "Open the Email Campaigns screen.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "run_email_campaign", description: "Arm (authorize) an email campaign by id or create+arm a named campaign. Campaign-level auth — not perpetual Autopilot. Does not send by itself; worker + Test Mode allowlist still apply. Never invents emails.", parameters: { type: "object", properties: { campaign_id: { type: "string" }, name: { type: "string" }, verticals: { type: "string" }, locations: { type: "string" }, confirm: { type: "boolean", description: "Required true to arm." } } } },
+    { type: "function", name: "run_email_campaign", description: "Arm an email campaign, or reach-out-all to EMAIL-contactable prospects with tailored Test Mode drafts. Never invents emails. Never turns Test Mode off. Does not send by itself.", parameters: { type: "object", properties: { campaign_id: { type: "string" }, name: { type: "string" }, verticals: { type: "string" }, locations: { type: "string" }, reach_out_all: { type: "boolean", description: "When true, create+arm personalized reach-out-all under Test Mode." }, confirm: { type: "boolean", description: "Required true to arm." } } } },
     { type: "function", name: "pause_email_campaign", description: "Pause an email campaign. Stops new first contacts; reply sync continues.", parameters: { type: "object", properties: { campaign_id: { type: "string" } }, required: ["campaign_id"] } },
     { type: "function", name: "campaign_status", description: "Report email campaign counts from the database only. Never invents metrics.", parameters: { type: "object", properties: { campaign_id: { type: "string" } } } },
     { type: "function", name: "filter_prospects", description: "Filter, sort, or show the Pipeline VIEW. Does not search Google Places, does not change records, does not send email. REFINE (compose=true) only when Dylan refers to the current set: those/these/the ones/of those/only/just/now show the ones. A fully specified new query REPLACES previous filters: pass compose=false and last_discovery=false. Examples of REPLACE: ‘show me good-fit roofing companies in Fort Worth that need contact info’, ‘show me med spas in Dallas’, ‘show companies added today’. Do not keep leftover filters he did not mention. For ‘those/these/just found’, set last_discovery=true.", parameters: { type: "object", properties: { compose: { type: "boolean", description: "true only when narrowing the CURRENT view. false or omit for a new fully specified query (replaces previous filters)." }, clear: { type: "boolean", description: "Clear all view filters and show the full list." }, last_discovery: { type: "boolean", description: "Restrict to the prospect UIDs from the latest Find Clients search. Do not re-run Places. Use only when Dylan refers to those/these/the ones you just found. Do NOT set this for a new standalone query." }, vertical: { type: "array", items: { type: "string" } }, city: { type: "string" }, location: { type: "string" }, fit: { type: "array", items: { type: "string", enum: ["GOOD FIT", "POSSIBLE FIT", "NEED MORE INFORMATION"] } }, research: { type: "array", items: { type: "string", enum: ["done", "unavailable", "not_started"] } }, reach: { type: "array", items: { type: "string", enum: ["READY_TO_CONTACT", "NEEDS_CONTACT_INFO", "NEEDS_RESEARCH", "BLOCKED", "SUPPRESSED"] } }, queue: { type: "string", enum: ["ACTIVE_PIPELINE", "NEEDS_CONTACT_INFORMATION", "NEEDS_RESEARCH", "NEEDS_DYLAN", "ARCHIVE_NOT_PURSUING", "SUPPRESSED"] }, has_phone: { type: "boolean" }, has_email: { type: "boolean" }, has_website: { type: "boolean" }, has_decision_maker: { type: "boolean" }, exclude_test: { type: "boolean" }, exclude_demo: { type: "boolean" }, added_after: { type: "string" }, min_reviews: { type: "number" }, min_rating: { type: "number" }, sort: { type: "string", enum: ["best_fit", "newest", "most_reviewed", "needs_attention", "score"] }, limit: { type: "number" }, prospect_uids: { type: "array", items: { type: "string" } } } } },
@@ -1412,6 +1412,9 @@ export function executeAllowlistedTool(
   }
   if (tool === "run_email_campaign") {
     const confirm = args.confirm === true || String(args.confirm || "").toLowerCase() === "true";
+    const reachOutAll = args.reach_out_all === true
+      || String(args.reach_out_all || "").toLowerCase() === "true"
+      || /reach.?out.?all|contact everyone|contact all prospects/i.test(String(args.name || ""));
     if (!confirm) {
       return {
         ok: false, tool, rejected: false,
@@ -1422,6 +1425,19 @@ export function executeAllowlistedTool(
           phrase: "Confirm campaign",
         },
         plan: { type: "arm", intent: "RUN_EMAIL_CAMPAIGN", uid: "", confirmPhrase: "Confirm campaign" },
+      };
+    }
+    if (reachOutAll) {
+      return {
+        ok: true, tool, rejected: false,
+        output: {
+          ok: true,
+          deferred: "server",
+          reach_out_all: true,
+          spoken: "Creating tailored Test Mode reach-out-all for EMAIL-contactable prospects only. Nothing was sent by this tool alone.",
+          emailSent: false,
+        },
+        plan: { type: "campaign", action: "reach_out_all", name: String(args.name || "Ara reach-out-all (Test Mode)") },
       };
     }
     return {
