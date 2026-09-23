@@ -103,6 +103,7 @@ import {
   type DeskWorld,
   type NavFrame,
 } from "@/lib/voice/desk-actions";
+import { inspectCodebaseFn } from "@/lib/codebase/actions";
 import { createAraSessionFn, loadAraConversationFn, logVoiceAuditFn, saveAraConversationFn } from "@/lib/voice/ara-session";
 import { voiceFailureReason } from "@/lib/voice/voice-failure";
 import { makeVoiceAudit } from "@/lib/voice/audit";
@@ -1711,6 +1712,23 @@ export function OwnerDesk() {
         };
       } catch {
         return { ok: false, reason: "I couldn’t look that up.", staysOnScreen: true, changed: false };
+      }
+    }
+    if (result.plan.type === "codebase") {
+      try {
+        const r = await inspectCodebaseFn({ data: { action: result.plan.action, args: result.plan.args } });
+        return {
+          ...result.output,
+          ...r,
+          staysOnScreen: true,
+          changed: false,
+          emailSent: false,
+          readOnly: true,
+          untrusted_content: true,
+          warning: r.warning,
+        };
+      } catch {
+        return { ok: false, reason: "I couldn’t read the source just now.", staysOnScreen: true, changed: false, readOnly: true, emailSent: false };
       }
     }
     if (result.plan.type === "campaign") {
