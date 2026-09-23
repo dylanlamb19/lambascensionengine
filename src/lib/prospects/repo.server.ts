@@ -83,11 +83,12 @@ async function hasBookedGoogleEvent(userId: string, uid: string): Promise<boolea
 async function writeOne(userId: string, p: Prospect): Promise<void> {
   let ready = ensureUid(p);
   const promoted = promotedStageForBooking(ready.stage);
-  if (promoted && await hasBookedGoogleEvent(userId, ready.uid)) {
+  const uid = ready.uid ?? "";
+  if (promoted && uid && await hasBookedGoogleEvent(userId, uid)) {
     ready = {
       ...ready,
       stage: promoted,
-      stage_plain: isTestWorkflowUid(ready.uid) ? "Test call booked" : "Call is on the calendar",
+      stage_plain: isTestWorkflowUid(uid) ? "Test call booked" : "Call is on the calendar",
     };
   }
   const sql = await getSql();

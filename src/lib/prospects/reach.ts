@@ -1,6 +1,6 @@
 import type { DecisionMaker } from "../research/types.ts";
 import type { Prospect } from "../review-brief.ts";
-import { isTestWorkflowUid } from "../mail/test-loop.ts";
+import { evaluateContactability, reachKindFromContactability } from "./contactability.ts";
 
 export type ReachKind = "READY_TO_CONTACT" | "NEEDS_CONTACT_INFO" | "NEEDS_RESEARCH" | "BLOCKED" | "SUPPRESSED";
 
@@ -176,30 +176,15 @@ export function contactFields(p: Prospect): ContactField[] {
   return out;
 }
 
-/** Same gate as evaluateContactability: test, demo, and unnamed rows are not ready to contact. */
-function blockedFromAutonomousContact(p: Prospect): boolean {
-  if (p.is_demo) return true;
-  if (isTestWorkflowUid(p.uid)) return true;
-  const name = (p.name || "").trim();
-  if (!name || /^unknown$/i.test(name)) return true;
-  return false;
-}
-
+/**
+ * Acquisition OS Part 1 — EMAIL-only READY TO CONTACT.
+ * Single source of truth: delegates to evaluateContactability (never invents email).
+ * Phone / LinkedIn / contact-form alone ≠ contactable.
+ * Test/demo rows stay BLOCKED when contactability says BLOCKED.
+ * Circular import with contactability.ts is safe: both sides only call each other at runtime.
+ */
 export function reachKind(p: Prospect): ReachKind {
-  // Acquisition OS Part 1: EMAIL-only READY TO CONTACT.
-  // Phone / LinkedIn / contact-form do not count as autonomous contactability.
-  if (p.suppressed) return "SUPPRESSED";
-  if (p.stage === "Do Not Contact") return "BLOCKED";
-  const email = usefulEmail(p);
-  if (email) {
-    if (blockedFromAutonomousContact(p)) return "BLOCKED";
-    return "READY_TO_CONTACT";
-  }
-  const researched = p.research_status === "complete" || p.research_status === "partial"
-    || p.research_status === "blocked" || p.research_status === "failed";
-  if (!researched && !listingPhone(p) && !verifiedWebsite(p)) return "NEEDS_RESEARCH";
-  if (!researched && p.research_status === "queued") return "NEEDS_RESEARCH";
-  return "NEEDS_CONTACT_INFO";
+  return reachKindFromContactability(evaluateContactability(p).status);
 }
 
 export function reachLabel(kind: ReachKind): string {

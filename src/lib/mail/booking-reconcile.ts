@@ -1,8 +1,22 @@
+/**
+ * PIPELINE_STATE_MISMATCH repair — booking-reconcile ONLY.
+ *
+ * Rules:
+ * - Set stage to Call Booked ONLY when a booked calendar row already has googleEventId + prospect uid
+ *   and the pipeline is still behind Call Booked (Proposal Sent, Negotiation, Won, Lost, and Do Not Contact stay put).
+ * - Do NOT create new Google Calendar events.
+ * - Do NOT invent bookings.
+ * - BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE is audited elsewhere (persistConfirmedBooking);
+ *   this module only reconciles pipeline stage to proven calendar evidence.
+ */
 import { isTestWorkflowUid } from "./test-loop.ts";
 import { promotedStageForBooking } from "./booking-stage.ts";
 import type { InvariantSnapshot } from "../sentinel/types.ts";
 
 export const BOOKING_INVARIANT_RECONCILED = "BOOKING_INVARIANT_RECONCILED";
+
+/** Explicit: repair path never mutates Calendar / never creates events. */
+export const BOOKING_REPAIR_MUTATES_CALENDAR = false as const;
 
 export type BookingMismatchRow = {
   calendarId: string;
@@ -25,6 +39,20 @@ export function shouldRepairPipelineMismatch(row: {
     && Boolean(row.prospectUid && row.prospectUid.trim())
     && row.calendarStatus === "booked"
     && promotedStageForBooking(row.pipelineStage) !== null;
+}
+
+/**
+ * Harden note for BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE:
+ * when Calendar create succeeded but pipeline save failed, repair uses the
+ * already-persisted googleEventId — never invents a second event.
+ */
+export function persistenceFailedRepairNote(googleEventId: string, prospectUid: string): string {
+  const eid = (googleEventId || "").trim();
+  const uid = (prospectUid || "").trim();
+  if (!eid || !uid) {
+    return "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE: missing proven googleEventId or prospect uid — will not invent a Calendar event.";
+  }
+  return `BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE: reconciling pipeline to existing google_event_id=${eid} for uid=${uid}. No new Calendar event.`;
 }
 
 export function bookingLightFromInvariant(inv: Pick<InvariantSnapshot, "bookedMissingPipeline" | "bookedMissingEventId">): "green" | "red" {
@@ -67,6 +95,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
   repaired: number;
   skipped: number;
   remaining: number;
+  mutatedCalendar: typeof BOOKING_REPAIR_MUTATES_CALENDAR;
   rows: Array<{
     googleEventId: string;
     prospectUid: string;
@@ -75,6 +104,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
     toStage: string;
     isTest: boolean;
     repaired: boolean;
+    note: string;
   }>;
 }> {
   const mismatches = await loadBookingMismatchRows(userId);
@@ -88,6 +118,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
     toStage: string;
     isTest: boolean;
     repaired: boolean;
+    note: string;
   }> = [];
   let repaired = 0;
   let skipped = 0;
@@ -102,10 +133,14 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
         toStage: row.pipelineStage,
         isTest: row.isTest,
         repaired: false,
+        note: "Skipped — association not proven, or stage is already at or past Call Booked.",
       });
       continue;
     }
+    // applyExistingBookingToTestState updates prospect stage + may upsert the EXISTING
+    // calendar row metadata — it does not call Google Calendar create.
     await applyExistingBookingToTestState(userId, row.prospectUid, row.googleEventId, null, null, row.title);
+    const note = persistenceFailedRepairNote(row.googleEventId, row.prospectUid);
     await audit(userId, BOOKING_INVARIANT_RECONCILED, `google_event_id=${row.googleEventId} uid=${row.prospectUid} ${row.pipelineStage}->Call Booked sha=${sha}`, {
       prospectUid: row.prospectUid,
       method: "MANUAL",
@@ -120,8 +155,16 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
       toStage: "Call Booked",
       isTest: row.isTest,
       repaired: true,
+      note,
     });
   }
   const remaining = (await loadBookingMismatchRows(userId)).length;
-  return { inspected: mismatches.length, repaired, skipped, remaining, rows: out };
+  return {
+    inspected: mismatches.length,
+    repaired,
+    skipped,
+    remaining,
+    mutatedCalendar: BOOKING_REPAIR_MUTATES_CALENDAR,
+    rows: out,
+  };
 }

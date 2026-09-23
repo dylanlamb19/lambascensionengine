@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bookingLightFromInvariant, shouldRepairPipelineMismatch } from "./booking-reconcile.ts";
+import {
+  BOOKING_REPAIR_MUTATES_CALENDAR,
+  bookingLightFromInvariant,
+  persistenceFailedRepairNote,
+  shouldRepairPipelineMismatch,
+} from "./booking-reconcile.ts";
 import { promotedStageForBooking } from "./booking-stage.ts";
 import { EMPTY_INVARIANTS } from "../sentinel/invariants.ts";
 import { evaluateInvariants } from "../sentinel/invariants.ts";
@@ -51,4 +56,16 @@ test("association is repaired only with persisted google event id + prospect uid
     calendarStatus: "booked",
     pipelineStage: "New",
   }), false);
+});
+
+test("repair path never mutates Calendar / never invents events", () => {
+  assert.equal(BOOKING_REPAIR_MUTATES_CALENDAR, false);
+  assert.match(
+    persistenceFailedRepairNote("evt-9", "uid-x"),
+    /No new Calendar event/,
+  );
+  assert.match(
+    persistenceFailedRepairNote("", "uid-x"),
+    /will not invent/,
+  );
 });

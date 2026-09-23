@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Prospect } from "../review-brief.ts";
-import { evaluateContactability, routeQualifiedWithoutEmail } from "./contactability.ts";
+import { evaluateContactability, reachKindFromContactability, routeQualifiedWithoutEmail } from "./contactability.ts";
 import { reachKind } from "./reach.ts";
 import { evaluateContactabilityInvariants } from "../sentinel/contactability-check.ts";
 import { TEST_RECORD_NAME, TEST_WORKFLOW_UID, testRunUid } from "../mail/test-loop.ts";
@@ -147,4 +147,81 @@ test("Part 3 routeQualifiedWithoutEmail", () => {
   const p = base({ contacts: [] });
   const r = routeQualifiedWithoutEmail(p);
   assert.equal(r.queue, "NEEDS_CONTACT_INFORMATION");
+});
+
+test("label sync: queued research with listing phone or website matches contactability", () => {
+  const withSite = base({
+    research_status: "queued",
+    website: "https://medspa.example",
+    phone: "",
+    contacts: [],
+  });
+  const withPhone = base({
+    research_status: "queued",
+    website: "",
+    phone: "(512) 555-0199",
+    contacts: [],
+  });
+  for (const p of [withSite, withPhone]) {
+    const c = evaluateContactability(p);
+    assert.equal(c.status, "NEEDS_CONTACT_INFORMATION");
+    assert.equal(reachKind(p), "NEEDS_CONTACT_INFO");
+    assert.equal(reachKind(p), reachKindFromContactability(c.status));
+  }
+});
+
+test("label sync: named people, incomplete research, no phone or website match", () => {
+  const p = base({
+    website: "",
+    phone: "",
+    research_status: "none",
+    contacts: [{ name: "Alex Owner", title: "Owner", email: "", email_status: "none", profile_url: "", source: "listing", last_verified: "" }],
+  });
+  const c = evaluateContactability(p);
+  assert.equal(c.status, "NEEDS_CONTACT_INFORMATION");
+  assert.equal(reachKind(p), "NEEDS_CONTACT_INFO");
+  assert.equal(reachKind(p), reachKindFromContactability(c.status));
+});
+
+test("label sync: demo and test rows with email are BLOCKED for both classifiers", () => {
+  const email = {
+    name: "Pat",
+    title: "Owner",
+    email: "pat@acme.example",
+    email_status: "verified" as const,
+    profile_url: "",
+    source: "x",
+    last_verified: "",
+  };
+  const rows = [
+    base({ is_demo: true, contacts: [email] }),
+    base({ uid: TEST_WORKFLOW_UID, name: TEST_RECORD_NAME, contacts: [email] }),
+    base({ uid: testRunUid("label-sync"), name: TEST_RECORD_NAME, contacts: [email] }),
+  ];
+  for (const p of rows) {
+    const c = evaluateContactability(p);
+    assert.equal(c.status, "BLOCKED");
+    assert.equal(reachKind(p), "BLOCKED");
+    assert.notEqual(reachKind(p), "READY_TO_CONTACT");
+  }
+  assert.equal(evaluateContactabilityInvariants(rows).length, 0);
+});
+
+test("reachKind always equals reachKindFromContactability(evaluateContactability.status)", () => {
+  const email = { name: "Pat", title: "Owner", email: "a@b.co", email_status: "verified" as const, profile_url: "", source: "x", last_verified: "" };
+  const samples = [
+    base({ contacts: [] }),
+    base({ research_status: "queued", contacts: [] }),
+    base({ research_status: "queued", website: "", phone: "(512) 555-0100", contacts: [] }),
+    base({ website: "", phone: "", research_status: "none", contacts: [{ name: "Sam", title: "Owner", email: "", email_status: "none", profile_url: "", source: "x", last_verified: "" }] }),
+    base({ suppressed: true, contacts: [email] }),
+    base({ is_demo: true, contacts: [email] }),
+    base({ uid: TEST_WORKFLOW_UID, name: TEST_RECORD_NAME, contacts: [email] }),
+    base({ contacts: [email] }),
+  ];
+  for (const p of samples) {
+    const c = evaluateContactability(p);
+    assert.equal(reachKind(p), reachKindFromContactability(c.status), `${p.name}/${p.research_status}/${c.status}`);
+  }
+  assert.equal(evaluateContactabilityInvariants(samples).filter((f) => f.code === "CONTACTABILITY_MISMATCH").length, 0);
 });
