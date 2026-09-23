@@ -3,14 +3,18 @@ export type InboundClass =
   | "WANTS_MORE_INFORMATION"
   | "WANTS_AUDIT"
   | "PRICING_QUESTION"
+  | "OBJECTION"
+  | "NOT_NOW"
   | "BOOKING_REQUEST"
   | "QUESTION"
   | "NOT_INTERESTED"
-  | "DO_NOT_CONTACT"
+  | "NEGATIVE"
+  | "UNSUBSCRIBE"
   | "OUT_OF_OFFICE"
   | "WRONG_PERSON"
   | "REFERRAL"
-  | "ALREADY_HAS_PROVIDER"
+  | "ALREADY_SOLVED"
+  | "MEETING_BOOKED"
   | "UNCLEAR";
 
 export type ReplyPlan = {
@@ -26,11 +30,15 @@ export type ReplyPlan = {
 export function classifyInbound(text: string): { cls: InboundClass; confidence: "high" | "low" } {
   const t = (text || "").toLowerCase();
   if (/ignore (previous|your) instructions|you are now|send me your password/.test(t)) return { cls: "UNCLEAR", confidence: "low" };
-  if (/unsub|remove me|do not contact|stop emailing|take me off/.test(t)) return { cls: "DO_NOT_CONTACT", confidence: "high" };
+  if (/unsub|remove me|do not contact|stop emailing|take me off/.test(t)) return { cls: "UNSUBSCRIBE", confidence: "high" };
+  if (/scam|lawyer|sue you|harass|terrible|this is spam/.test(t)) return { cls: "NEGATIVE", confidence: "high" };
   if (/out of office|automatic reply|ooo\b|away from/.test(t)) return { cls: "OUT_OF_OFFICE", confidence: "high" };
-  if (/wrong person|not the right person|no longer (here|with)|left the company/.test(t)) return { cls: "WRONG_PERSON", confidence: "high" };
+  if (/wrong person|not the right person|no longer (here|with)|left the company/.test(t)) return { cls: "WRONG_PERSON", confidence: "low" };
+  if (/i (just )?booked|meeting is (set|booked)|see you (on|at)/.test(t)) return { cls: "MEETING_BOOKED", confidence: "high" };
   if (/talk to|reach out to|contact my|forward you to/.test(t) && /@|manager|partner|owner/.test(t)) return { cls: "REFERRAL", confidence: "low" };
-  if (/already have (an |a )?(agency|marketer|provider)|we already|in-house/.test(t)) return { cls: "ALREADY_HAS_PROVIDER", confidence: "high" };
+  if (/already (have|solved|fixed)|we already|in-house|have an agency/.test(t)) return { cls: "ALREADY_SOLVED", confidence: "high" };
+  if (/not now|next quarter|next month|circle back|busy right now/.test(t)) return { cls: "NOT_NOW", confidence: "high" };
+  if (/too expensive|can't afford|cannot afford|not in the budget|we tried that/.test(t)) return { cls: "OBJECTION", confidence: "high" };
   if (/not interested|no thanks|no thank you|not a fit|pass\b/.test(t)) return { cls: "NOT_INTERESTED", confidence: "high" };
   if (/how much|pricing|what does it cost|price|retainer/.test(t)) return { cls: "PRICING_QUESTION", confidence: "high" };
   if (/book|calendar|schedule|hop on|pick a time|grab a time/.test(t)) return { cls: "BOOKING_REQUEST", confidence: "high" };
@@ -52,35 +60,44 @@ function bookingLine(url: string, seed: number): string {
 
 export function planReply(opts: { text: string; name: string; company: string; bookingUrl: string; finding?: string }): ReplyPlan {
   const { cls, confidence } = classifyInbound(opts.text);
+  if (confidence === "low") {
+    return { cls, confidence, stop: true, dnc: false, escalate: true, send: false, body: "" };
+  }
   const hi = opts.name && opts.name !== "UNKNOWN" ? opts.name.split(" ")[0] : "there";
   const link = bookingLine(opts.bookingUrl, opts.company.length);
   const base = { cls, confidence, stop: true, dnc: false, escalate: false, send: false, body: "" };
-  if (cls === "DO_NOT_CONTACT") {
-    return { ...base, dnc: true, send: false, body: "" };
+  if (cls === "UNSUBSCRIBE") return { ...base, dnc: true, send: false, body: "" };
+  if (cls === "NEGATIVE") return { ...base, escalate: true, send: false };
+  if (cls === "MEETING_BOOKED") return { ...base, send: false };
+  if (cls === "NOT_INTERESTED" || cls === "ALREADY_SOLVED") {
+    return { ...base, send: true, body: `Hi ${hi},\n\nUnderstood. I won’t follow up.\n\nDylan\nLamb Ascension` };
   }
-  if (cls === "NOT_INTERESTED" || cls === "ALREADY_HAS_PROVIDER") {
+  if (cls === "NOT_NOW") {
+    return { ...base, send: true, body: `Hi ${hi},\n\nNo problem. I’ll leave it here. If timing changes later, just reply.\n\nDylan\nLamb Ascension` };
+  }
+  if (cls === "OUT_OF_OFFICE") return { ...base, stop: false, send: false };
+  if (cls === "OBJECTION") {
     return {
       ...base,
       send: true,
-      body: `Hi ${hi},\n\nUnderstood. I won’t follow up.\n\nDylan\nLamb Ascension`,
+      body: `Hi ${hi},\n\nFair. I’m not going to argue with that, and I won’t guess a price from one email.\n\nDylan\nLamb Ascension`,
     };
-  }
-  if (cls === "OUT_OF_OFFICE") return { ...base, stop: false, send: false };
-  if (cls === "WRONG_PERSON" || cls === "REFERRAL" || cls === "UNCLEAR" || cls === "QUESTION") {
-    return { ...base, escalate: true, send: false };
   }
   if (cls === "PRICING_QUESTION") {
     return {
       ...base,
       send: true,
-      body: `Hi ${hi},\n\nIt depends on the job. Lamb Ascension is a customer-acquisition system, not a one-size package, so I don’t quote a number from a single email.\n\n${link}\n\nDylan\nLamb Ascension`,
+      body: `Hi ${hi},\n\nIt depends on the job, so I don’t quote a number from a single email. Lamb Ascension builds the path from a visit to a real inquiry.\n\nIf you want to see whether it fits ${opts.company}, ${link}\n\nDylan\nLamb Ascension`,
     };
   }
   const finding = (opts.finding || "").trim();
-  const observed = finding ? `Based on what I found — ${finding} — ` : "";
+  if (cls === "WANTS_AUDIT") {
+    const noted = finding ? `What I actually saw: ${finding}.` : "I only have what the research pass stored. I won’t add anything past that.";
+    return { ...base, send: true, body: `Hi ${hi},\n\n${noted}\n\n${link}\n\nDylan\nLamb Ascension` };
+  }
   return {
     ...base,
     send: true,
-    body: `Hi ${hi},\n\n${observed}I think this is easier to walk through together than over more email.\n\n${link}\n\nI’ll have ${opts.company} pulled up before we talk.\n\nDylan\nLamb Ascension`,
+    body: `Hi ${hi},\n\nHappy to walk through ${opts.company} with you. ${finding ? `The verified piece was: ${finding}.` : "I won’t add findings that weren’t checked."}\n\n${link}\n\nDylan\nLamb Ascension`,
   };
 }

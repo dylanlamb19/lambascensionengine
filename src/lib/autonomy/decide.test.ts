@@ -4,7 +4,10 @@ import { callPrep } from "./call-prep.ts";
 import { decideProspect, isSameCompany, type AutoView } from "./decide.ts";
 import { classifyInbound, planReply } from "./replies.ts";
 import { DEFAULT_AUTONOMY, nextMarket } from "./settings.ts";
-import { acquisitionCounts } from "./snapshot.ts";
+import { dailySummary } from "./daily.ts";
+import { emailLooksUsable, mayFirstTouch, reputationPause } from "./deliverability.ts";
+import { industryNudge } from "./learn.ts";
+import { priorityScore } from "./priority.ts";
 
 function view(over: Partial<AutoView> = {}): AutoView {
   return {
@@ -96,18 +99,39 @@ test("daily cap and missing research do not fabricate a send", () => {
   assert.match(blocked.reason, /invent/);
 });
 
-test("markets rotate and the owner snapshot counts the pipeline", () => {
-  const a = nextMarket(DEFAULT_AUTONOMY, 0);
-  const b = nextMarket(DEFAULT_AUTONOMY, 1);
-  assert.notEqual(`${a.vertical}|${a.city}`, `${b.vertical}|${b.city}`);
-  const counts = acquisitionCounts([
-    { stage: "New" },
-    { stage: "Approved for Outreach", fit: "strong" },
-    { stage: "Contacted", history: [{ action: "autonomy_sent" }] },
-    { stage: "Replied" },
-    { stage: "Call Booked" },
-  ]);
-  assert.equal(counts.discovered, 5);
-  assert.equal(counts.callsBooked, 1);
-  assert.ok(counts.emailsSent >= 1);
+test("priority, reputation, and today's counts stay honest", () => {
+  const strong = priorityScore({ gaps: ["NO_HOMEPAGE_FORM"], reviewCount: 80, hasEmail: true, fit: "strong", jobValue: 8000, industryNudge: 0 });
+  const weak = priorityScore({ gaps: [], reviewCount: 0, hasEmail: false, fit: "low", jobValue: 0, industryNudge: 0 });
+  assert.ok(strong.score > weak.score);
+  assert.equal(emailLooksUsable("owner@davisroofing.com"), true);
+  assert.equal(emailLooksUsable("noreply@davisroofing.com"), false);
+  const blocked = mayFirstTouch({
+    email: "owner@davisroofing.com",
+    bounced: new Set(["owner@davisroofing.com"]),
+    unsubscribed: new Set(),
+    domainsMailedToday: new Set(),
+    alreadyMailedCompany: false,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(reputationPause(5, 2), false);
+  assert.equal(reputationPause(25, 4), true);
+  assert.equal(industryNudge([{ vertical: "Roofing", stage: "Contacted", history: [{ action: "autonomy_sent" }] }], "Roofing"), 0);
+  const paused = decideProspect(view({ hasPack: true, reputationPaused: true }), DEFAULT_AUTONOMY, live);
+  assert.equal(paused.action, "hold");
+  const failed = decideProspect(view({ hasPack: true, sendFailed: true }), DEFAULT_AUTONOMY, live);
+  assert.equal(failed.action, "skip");
+  const objection = planReply({ text: "This is too expensive", name: "Sam", company: "Davis", bookingUrl: "https://cal.example/d" });
+  assert.equal(objection.cls, "OBJECTION");
+  assert.doesNotMatch(objection.body, /cal\.example|guarantee|10x/);
+  const day = "2026-09-23";
+  const summary = dailySummary([
+    { discovered_at: "2026-09-23T15:00:00.000Z", history: [{ at: "2026-09-23T16:00:00.000Z", action: "research_completed" }, { at: "2026-09-23T17:00:00.000Z", action: "outreach_generated" }] },
+    { stage: "Call Booked", history: [{ at: "2026-09-23T18:00:00.000Z", action: "call_prep" }, { at: "2026-09-23T18:00:00.000Z", action: "autonomy_escalate", detail: "UNCLEAR" }] },
+  ], day);
+  assert.equal(summary.found, 1);
+  assert.equal(summary.researched, 1);
+  assert.equal(summary.qualified, 1);
+  assert.equal(summary.callsBooked, 1);
+  assert.equal(summary.revenue, "UNKNOWN");
+  assert.ok(summary.needsYou.some((line) => /unclear|look/i.test(line)));
 });

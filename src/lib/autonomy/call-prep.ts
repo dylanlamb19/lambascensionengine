@@ -21,7 +21,8 @@ export function callPrep(opts: {
     opts.replySummary ? `What they said: ${opts.replySummary}` : "No reply text stored.",
     "",
     "Ask: How are you getting customers today, and what happens after someone visits the site?",
-    "Do not claim their revenue, ad spend, or that they already want to buy.",
+    "Likely objection: they may say they already get enough calls. Ask what happens to people who are not ready to call.",
+    "Do not invent testimonials, prices, or results. Do not claim their revenue, ad spend, or that they already want to buy.",
     opts.bookingUrl ? `Booking link on file: ${opts.bookingUrl}` : "",
     "Best next step: agree on one acquisition gap and whether a short engagement is worth a proposal.",
   ].filter((line) => line !== "").join("\n");

@@ -2,6 +2,9 @@ import { opportunities } from "../review-brief.ts";
 import type { Prospect } from "../review-brief.ts";
 import { usefulEmail } from "../prospects/reach.ts";
 import { decideProspect, isSameCompany, type AutoView } from "./decide.ts";
+import { mayFirstTouch, reputationPause } from "./deliverability.ts";
+import { industryNudge } from "./learn.ts";
+import { priorityScore } from "./priority.ts";
 import { callPrep } from "./call-prep.ts";
 import { planReply } from "./replies.ts";
 import { nextMarket, normalizeAutonomy, type AutonomySettings } from "./settings.ts";
@@ -27,6 +30,8 @@ function viewOf(p: Prospect): AutoView {
     booked: p.stage === "Call Booked",
     prepDone: acted(p, "call_prep"),
     disqualified: acted(p, "autonomy_disqualified"),
+    emailBlocked: acted(p, "autonomy_email_blocked"),
+    sendFailed: acted(p, "autonomy_send_failed"),
   };
 }
 
@@ -111,10 +116,61 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
   }
 
   const dirty: Prospect[] = [];
-  let sentToday = prospects.filter((p) => acted(p, "autonomy_sent") && (p.history || []).some((h) => h.action === "autonomy_sent" && (h.at || "").slice(0, 10) === new Date().toISOString().slice(0, 10))).length;
+  const today = new Date().toISOString().slice(0, 10);
+  let sentToday = prospects.filter((p) => (p.history || []).some((h) => h.action === "autonomy_sent" && (h.at || "").slice(0, 10) === today)).length;
+  const bounced = new Set<string>();
+  const unsubscribed = new Set<string>();
+  const domainsToday = new Set<string>();
+  let bounceCount = 0;
+  for (const p of prospects) {
+    for (const h of p.history || []) {
+      if (h.action === "bounced" || h.action === "email_bounced") {
+        bounceCount += 1;
+        const match = (h.detail || "").match(/[^\s]+@[^\s]+/);
+        if (match) bounced.add(match[0].toLowerCase());
+      }
+      if ((h.action === "autonomy_sent" || h.action === "email_sent") && (h.at || "").slice(0, 10) === today) {
+        const match = (h.detail || "").match(/[^\s]+@[^\s]+/);
+        if (match) domainsToday.add(match[0].split("@")[1]?.toLowerCase() || "");
+      }
+    }
+    if (p.suppressed || p.stage === "Do Not Contact") {
+      const email = usefulEmail(p)?.value;
+      if (email) unsubscribed.add(email.toLowerCase());
+    }
+  }
+  const paused = reputationPause(sentToday, bounceCount) || prospects.some((p) => (p.history || []).some((h) => h.action === "autonomy_paused" && (h.at || "").slice(0, 10) === today));
+  const ranked = [...prospects].sort((a, b) => {
+    const score = (p: Prospect) => priorityScore({
+      gaps: opportunities(p).map((o) => o.code),
+      reviewCount: p.review_count || 0,
+      hasEmail: Boolean(usefulEmail(p)),
+      fit: p.fit || "",
+      jobValue: p.job_value_est || 0,
+      industryNudge: industryNudge(prospects, p.vertical || ""),
+    }).score;
+    return score(b) - score(a);
+  });
 
-  for (const prospect of prospects) {
-    const decision = decideProspect(viewOf(prospect), settings, { testMode: mailSettings.testMode, sentToday });
+  for (const prospect of ranked) {
+    try {
+    const email = usefulEmail(prospect)?.value || "";
+    const screen = email ? mayFirstTouch({
+      email,
+      bounced,
+      unsubscribed,
+      domainsMailedToday: domainsToday,
+      alreadyMailedCompany: false,
+    }) : { ok: true as const };
+    const decision = decideProspect({
+      ...viewOf(prospect),
+      emailBlocked: !screen.ok || acted(prospect, "autonomy_email_blocked"),
+      reputationPaused: paused,
+    }, settings, { testMode: mailSettings.testMode, sentToday });
+    if (!screen.ok && !acted(prospect, "autonomy_email_blocked") && decision.action !== "research") {
+      dirty.push(stamp(prospect, "autonomy_email_blocked", screen.reason));
+      continue;
+    }
     if (decision.action === "research" && report.researched < 1 && !acted(prospect, "autonomy_research_queued")) {
       try {
         const { runDeepResearch } = await import("../research/orchestrate.ts");
@@ -178,19 +234,19 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       continue;
     }
     if (decision.action === "prep" && !acted(prospect, "call_prep")) {
-      const email = usefulEmail(prospect);
       const brief = callPrep({
         company: prospect.name,
-        contact: prospect.contacts?.[0]?.name || email?.value || "",
+        contact: prospect.contacts?.[0]?.name || email,
         when: "",
         vertical: prospect.vertical,
         city: prospect.city,
         finding: prospect.outreach?.brief.angle || opportunities(prospect)[0]?.plain || "",
         emailsSent: acted(prospect, "autonomy_sent") || acted(prospect, "email_sent") ? 1 : 0,
-        replySummary: "",
+        replySummary: (prospect.history || []).filter((h) => h.action === "reply" || h.action === "autonomy_replied").map((h) => h.detail || "").join(" "),
         bookingUrl: settings.bookingUrl,
       });
-      dirty.push(stamp(prospect, "call_prep", brief));
+      const prepped = stamp(prospect, "call_prep", brief);
+      dirty.push(acted(prospect, "meeting_booked") ? prepped : stamp(prepped, "meeting_booked", "Meeting is booked. Outreach is stopped."));
       report.prepped += 1;
       continue;
     }
@@ -224,9 +280,16 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
           dirty.push(stamp({ ...prospect, stage: "Contacted", stage_plain: "Email sent" }, "autonomy_sent", "First email sent by the acquisition engine."));
           report.sent += 1;
           sentToday += 1;
+        } else {
+          dirty.push(stamp(prospect, "autonomy_send_failed", sent.reason || "Send failed. It will not be retried automatically."));
         }
-      } catch {
-        /* send failure must not kill the tick */
+      } catch (err) {
+        dirty.push(stamp(prospect, "autonomy_send_failed", err instanceof Error ? err.message : "Send failed."));
+      }
+    }
+    } catch (err) {
+      if (!acted(prospect, "autonomy_failed")) {
+        dirty.push(stamp(prospect, "autonomy_failed", err instanceof Error ? err.message : "This company failed. The rest of the run continued."));
       }
     }
   }

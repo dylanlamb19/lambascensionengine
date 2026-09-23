@@ -14,6 +14,9 @@ export type AutoView = {
   booked: boolean;
   prepDone: boolean;
   disqualified: boolean;
+  emailBlocked?: boolean;
+  reputationPaused?: boolean;
+  sendFailed?: boolean;
 };
 
 export type AutoDecision =
@@ -31,6 +34,9 @@ const CLOSED = new Set(["Won", "Lost", "Do Not Contact", "Call Booked", "Replied
 export function decideProspect(p: AutoView, settings: AutonomySettings, opts: { testMode: boolean; sentToday: number }): AutoDecision {
   if (!settings.autonomous) return { action: "off", reason: "Autonomous outreach is off." };
   if (p.suppressed || p.stage === "Do Not Contact") return { action: "skip", reason: "Do not contact. Nothing will be sent." };
+  if (p.reputationPaused) return { action: "hold", reason: "Sending is paused. Bounce rate is high enough to protect the inbox." };
+  if (p.sendFailed) return { action: "skip", reason: "A send already failed for this company. It will not retry forever." };
+  if (p.emailBlocked) return { action: "skip", reason: "This address is not safe to mail." };
   if (p.booked || p.stage === "Call Booked") {
     if (!p.prepDone) return { action: "prep", reason: "A call is booked. Outreach stays stopped and call prep is ready." };
     return { action: "skip", reason: "Call is booked and prep already exists. Sequence stays stopped." };
