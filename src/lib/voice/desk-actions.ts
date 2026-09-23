@@ -897,6 +897,14 @@ export function applyDeskAction(state: DeskState, action: AppAction, world: Desk
       const brief = buildScreenContext(state, world);
       return withAction({ lastSpoken: spoken(readScreen(brief, mode)) });
     }
+    case "RUN_EMAIL_CAMPAIGN":
+      return withAction(
+        {
+          view: "campaigns",
+          lastSpoken: spoken("Reach-out-all stays under Test Mode. Say Confirm campaign. Nothing was sent."),
+        },
+        { type: "arm", intent: "RUN_EMAIL_CAMPAIGN", uid: state.openUid || "", phrase: "Confirm campaign" },
+      );
     case "PREPARE_SEND": {
       const uid = action.uid || state.openUid;
       if (!uid) return withAction({ lastSpoken: spoken("Which company do you mean?") });
@@ -1225,6 +1233,12 @@ export function intentToAction(parsed: ParsedIntent, resolvedUid: string | null,
       };
     case "CONTACT_ELIGIBLE_PROSPECTS":
       return { name: "CONTACT_ELIGIBLE_PROSPECTS" };
+    case "RUN_EMAIL_CAMPAIGN":
+      return { name: "RUN_EMAIL_CAMPAIGN" };
+    case "PAUSE_EMAIL_CAMPAIGN":
+      return { name: "PAUSE_EMAIL_CAMPAIGN" };
+    case "CAMPAIGN_STATUS":
+      return { name: "CAMPAIGN_STATUS" };
     case "OPEN_PROSPECT": return { name: "OPEN_PROSPECT", uid };
     case "OPEN_REVIEW": return { name: onTask ? "REVIEW_CURRENT_TASK" : "OPEN_REVIEW", uid };
     case "SHOW_EVIDENCE": return { name: "SHOW_EVIDENCE", uid };
@@ -1347,6 +1361,7 @@ export function planToAction(plan: ToolPlan): AppAction | null {
       if (plan.intent === "SCHEDULE_CALL") return { name: "PREPARE_SCHEDULE", uid: plan.uid };
       if (plan.intent === "APPROVE_PROSPECT") return { name: "APPROVE_PROSPECT", uid: plan.uid };
       if (plan.intent === "SKIP_PROSPECT") return { name: "SKIP_PROSPECT", uid: plan.uid };
+      if (plan.intent === "RUN_EMAIL_CAMPAIGN") return { name: "RUN_EMAIL_CAMPAIGN" };
       return null;
     case "skip": return { name: "SKIP_PROSPECT", uid: plan.uid };
     case "approve": return { name: "APPROVE_PROSPECT", uid: plan.uid };

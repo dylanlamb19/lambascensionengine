@@ -100,3 +100,6 @@ export const emailCampaignStatusFn = createServerFn({ method: "POST" })
     }
     return { ok: true as const, reports };
   });
+
+/** Reach-out-all under Test Mode — Owner Desk / Ara. */
+export { reachOutToAllContactableFn } from "./reach-out-all-actions";

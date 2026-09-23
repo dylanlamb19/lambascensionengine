@@ -58,6 +58,7 @@ import { FindVerticalField } from "@/components/find-vertical-field";
 import { EmailCampaignsPanel } from "@/components/email-campaigns-panel";
 import {
   armEmailCampaignFn,
+  reachOutToAllContactableFn,
   createEmailCampaignFn,
   emailCampaignStatusFn,
   pauseEmailCampaignFn,
@@ -1703,6 +1704,13 @@ export function OwnerDesk() {
           } else if ("reports" in r) {
             say(`${r.reports.length} campaign${r.reports.length === 1 ? "" : "s"} on file.`);
           }
+        } else if (result.plan.action === "reach_out_all") {
+          const r = await reachOutToAllContactableFn({
+            data: { name: result.plan.name || "Ara reach-out-all (Test Mode)" },
+          });
+          if (!r.ok) say(r.reason || "Could not arm reach-out-all.");
+          else say(r.spoken);
+          dispatchAction({ name: "NAVIGATE_CAMPAIGNS" });
         } else if (result.plan.action === "arm") {
           let id = result.plan.campaignId || "";
           if (!id) {
@@ -2821,6 +2829,21 @@ export function OwnerDesk() {
     if (pending.intent === "SKIP_PROSPECT" && pending.target != null) {
       const co = findByUid(liveRef.current.rows, pending.target);
       if (co) skipProspect(co, "VOICE");
+      return;
+    }
+    if (pending.intent === "RUN_EMAIL_CAMPAIGN") {
+      void (async () => {
+        try {
+          const r = await reachOutToAllContactableFn({
+            data: { name: "Ara reach-out-all (Test Mode)" },
+          });
+          if (!r.ok) say(r.reason || "Could not arm reach-out-all.");
+          else say(r.spoken);
+          dispatchAction({ name: "NAVIGATE_CAMPAIGNS" });
+        } catch {
+          say("Campaign confirm failed. Nothing was sent.");
+        }
+      })();
       return;
     }
     say("That confirmation doesn’t match. Nothing was changed.");
