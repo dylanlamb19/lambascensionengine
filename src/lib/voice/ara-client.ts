@@ -10,7 +10,7 @@ export type AraStatus = "ready" | "connecting" | "listening" | "speaking" | "una
 export type AraHandlers = {
   onStatus: (s: AraStatus) => void;
   onUserTranscript: (text: string, isFinal: boolean) => void;
-  onAraTranscript: (text: string) => void;
+  onAraTranscript: (text: string, isFinal?: boolean) => void;
   onToolCall: (name: string, args: Record<string, unknown>, callId: string) => Promise<Record<string, unknown>>;
   onError: (plain: string) => void;
   onMic?: (live: boolean, reason?: string) => void;
@@ -264,10 +264,10 @@ export class AraRealtime {
       this.playPcm(base64ToPcm(ev.delta));
     }
     if (type === "response.output_audio_transcript.delta" && typeof ev.delta === "string") {
-      this.handlers.onAraTranscript(ev.delta);
+      this.handlers.onAraTranscript(ev.delta, false);
     }
     if (type === "response.output_audio_transcript.done" && typeof ev.transcript === "string") {
-      this.handlers.onAraTranscript(ev.transcript);
+      this.handlers.onAraTranscript(ev.transcript, true);
     }
     if (type === "conversation.item.input_audio_transcription.updated" && typeof ev.transcript === "string") {
       this.handlers.onUserTranscript(ev.transcript, false);

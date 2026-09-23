@@ -66,6 +66,7 @@ import { LinkedInAgentChat } from "@/components/linkedin-agent-chat";
 import { NextMoves } from "@/components/next-moves";
 import { FindPresets } from "@/components/find-presets";
 import { CalendarDesk } from "@/components/calendar-desk";
+import { AraHistoryRail } from "@/components/ara-history-rail";
 import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/components/system-health";
 import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
 import { parseSentinelAsk, sentinelSpeech } from "@/lib/sentinel/speech";
@@ -77,6 +78,7 @@ import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmS
 import { stopSpeaking } from "@/lib/voice/speech";
 import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
+import { appendAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
 import { announceToAra, announceSource } from "@/lib/voice/announce";
 import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
 import { buildScreenContext } from "@/lib/voice/screen-context";
@@ -322,6 +324,9 @@ export function OwnerDesk() {
   const [youSaid, setYouSaid] = useState("");
   const youSaidRef = useRef("");
   const [voiceReply, setVoiceReply] = useState("");
+  const [araLog, setAraLog] = useState<AraLog>(emptyAraLog);
+  const [araFocusTurn, setAraFocusTurn] = useState<string | null>(null);
+  const araLogRef = useRef<AraLog>(emptyAraLog());
   const [voiceMuted, setVoiceMuted] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
   const gateRef = useRef(new ActionGate());
@@ -1490,6 +1495,20 @@ export function OwnerDesk() {
     setRows((prev) => patchByUid(prev, ensureUid(next)));
   }
 
+  function commitAraLog(next: AraLog) {
+    araLogRef.current = next;
+    setAraLog(next);
+    saveAraLog(userId, next);
+  }
+
+  function noteYou(text: string) {
+    commitAraLog(appendAraTurn(araLogRef.current, "you", text));
+  }
+
+  function noteAra(text: string) {
+    commitAraLog(appendAraTurn(araLogRef.current, "ara", text));
+  }
+
   function utter(text: string, source: SpeechSource, dedupeKey?: string) {
     const clean = (text || "").trim();
     if (!clean) return;
@@ -1497,6 +1516,7 @@ export function OwnerDesk() {
     const prev = lastUtterRef.current;
     if (prev && prev.key === key && Date.now() - prev.at < 8000) return;
     lastUtterRef.current = { key, at: Date.now() };
+    noteAra(clean);
     setVoiceReply(clean);
     araSpeech().setMuted(voiceMuted);
     void araSpeech().speakAsAra(clean, { source, exact: true, dedupeKey });
@@ -2586,12 +2606,13 @@ export function OwnerDesk() {
           youSaidRef.current = text;
           handleAraOwnerTranscript(text, isFinal);
         },
-        onAraTranscript: (text) => {
+        onAraTranscript: (text, isFinal) => {
           if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
             araRef.current?.cancelResponse();
             return;
           }
           setVoiceReply(text);
+          if (isFinal) noteAra(text);
           if (isOwnerCalendarRefusalSpeech(text)) {
             araRef.current?.cancelResponse();
           }
@@ -2703,6 +2724,7 @@ export function OwnerDesk() {
       araRef.current?.cancelResponse();
     }
     if (!isFinal) return;
+    noteYou(text);
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
@@ -2815,6 +2837,12 @@ export function OwnerDesk() {
     // Restart only when Talk is toggled — not on every prospect/task render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceMode]);
+
+  useEffect(() => {
+    const loaded = loadAraLog(userId);
+    araLogRef.current = loaded;
+    setAraLog(loaded);
+  }, [userId]);
 
   useEffect(() => {
     const c = araSpeech();
@@ -2946,6 +2974,7 @@ export function OwnerDesk() {
       say("I didn't catch that. Can you say it again?");
       return;
     }
+    noteYou(text);
     const speaking = araStatus === "speaking";
     const stop = classifyOwnerStopIntent(text, { finalized: true, araSpeaking: speaking });
     if (stop.kind === "stop_conversation") {
@@ -3564,6 +3593,22 @@ export function OwnerDesk() {
           ) : null}
         </div>
       </header>
+      <div className="la-workspace">
+        <AraHistoryRail
+          log={araLog}
+          focusTurnId={araFocusTurn}
+          onSelect={(threadId, turnId) => {
+            const next = { ...araLogRef.current, activeId: threadId };
+            commitAraLog(next);
+            setAraFocusTurn(turnId || null);
+          }}
+          onNew={() => {
+            const next = startAraThread(araLogRef.current);
+            commitAraLog(next);
+            setAraFocusTurn(null);
+          }}
+        />
+        <div className="la-stage">
       <main
         className={`la-main ${wide ? "la-main-wide" : ""}`}
         data-owner-view={view}
@@ -3919,6 +3964,8 @@ export function OwnerDesk() {
           />
         ) : null}
       </main>
+        </div>
+      </div>
       {view === "home" ? (
         <section className="la-scenery" data-scenery-view="1" aria-label="Scenery view">
           <button
