@@ -313,6 +313,15 @@ export async function tickOutreachWorker(source = "in-process"): Promise<{
       /* migration absent or transient — do not fail the whole tick */
     }
     const sawTest = await markTestWorkflowSeen(runId);
+    try {
+      const { listOwnerUserIds } = await import("../sentinel/sql.server");
+      const { repairPipelineBookingMismatches } = await import("./booking-reconcile");
+      for (const userId of await listOwnerUserIds()) {
+        await repairPipelineBookingMismatches(userId);
+      }
+    } catch {
+      /* booking heal must not fail the outreach tick */
+    }
     const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled} campaignSent=${campaignSent}`;
     await finishWorkerHeartbeat(runId, sawTest ? `${summary} test-seen` : summary);
     return { runId, sawTest, sent: due.sent, followupsSkipped: due.skipped, rescheduled: due.rescheduled, campaignSent };

@@ -60,6 +60,8 @@ export async function loadInvariantSnapshot(userId: string): Promise<InvariantSn
   } catch { /* ignore */ }
 
   try {
+    const { repairPipelineBookingMismatches } = await import("@/lib/mail/booking-reconcile");
+    await repairPipelineBookingMismatches(userId);
     const mismatch = await sql<{ google_event_id: string; prospect_uid: string }>`
       select ce.google_event_id, ce.prospect_uid
       from calendar_events ce
@@ -67,7 +69,7 @@ export async function loadInvariantSnapshot(userId: string): Promise<InvariantSn
       where ce.user_id = ${userId}
         and ce.status = 'booked'
         and ce.google_event_id is not null and ce.google_event_id <> ''
-        and p.stage is distinct from 'Call Booked'
+        and coalesce(p.stage, '') not in ('Call Booked', 'Proposal Sent', 'Negotiation', 'Won', 'Lost', 'Do Not Contact')
     `;
     const bookedNoEvent = await sql<{ google_event_id: string; prospect_uid: string }>`
       select '' as google_event_id, p.uid as prospect_uid

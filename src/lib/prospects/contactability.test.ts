@@ -3,6 +3,8 @@ import test from "node:test";
 import type { Prospect } from "../review-brief.ts";
 import { evaluateContactability, routeQualifiedWithoutEmail } from "./contactability.ts";
 import { reachKind } from "./reach.ts";
+import { evaluateContactabilityInvariants } from "../sentinel/contactability-check.ts";
+import { TEST_RECORD_NAME, TEST_WORKFLOW_UID, testRunUid } from "../mail/test-loop.ts";
 
 function base(partial: Partial<Prospect> = {}): Prospect {
   return {
@@ -94,7 +96,31 @@ test("demo is not autonomously contactable", () => {
   });
   const c = evaluateContactability(p);
   assert.equal(c.contactable, false);
+  assert.equal(c.status, "BLOCKED");
   assert.equal(c.isRealProspect, false);
+  assert.equal(reachKind(p), "BLOCKED");
+});
+
+test("TEST outreach verification agrees: reach and contactability are both BLOCKED", () => {
+  const email = {
+    name: "Dylan",
+    title: "Owner",
+    email: "dylan@example.com",
+    email_status: "verified" as const,
+    profile_url: "",
+    source: "test",
+    last_verified: "2026-09-22",
+  };
+  const rows = [
+    base({ uid: TEST_WORKFLOW_UID, name: TEST_RECORD_NAME, contacts: [email] }),
+    base({ uid: testRunUid("abc123"), name: TEST_RECORD_NAME, contacts: [email] }),
+  ];
+  for (const row of rows) {
+    assert.equal(reachKind(row), "BLOCKED");
+    assert.equal(evaluateContactability(row).status, "BLOCKED");
+  }
+  const findings = evaluateContactabilityInvariants(rows);
+  assert.equal(findings.length, 0);
 });
 
 test("hard bounce suppresses contactability", () => {

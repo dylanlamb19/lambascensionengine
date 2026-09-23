@@ -1,4 +1,5 @@
-export const WORKER_STALE_MS = 15 * 60 * 1000;
+/** GitHub's five-minute worker often lands 15–25 minutes apart. Alert only after a real stall. */
+export const WORKER_STALE_MS = 45 * 60 * 1000;
 
 export type WorkerLightState = "running" | "configured" | "missing";
 

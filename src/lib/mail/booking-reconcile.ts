@@ -1,4 +1,5 @@
 import { isTestWorkflowUid } from "./test-loop.ts";
+import { promotedStageForBooking } from "./booking-stage.ts";
 import type { InvariantSnapshot } from "../sentinel/types.ts";
 
 export const BOOKING_INVARIANT_RECONCILED = "BOOKING_INVARIANT_RECONCILED";
@@ -23,7 +24,7 @@ export function shouldRepairPipelineMismatch(row: {
   return Boolean(row.googleEventId && row.googleEventId.trim())
     && Boolean(row.prospectUid && row.prospectUid.trim())
     && row.calendarStatus === "booked"
-    && row.pipelineStage !== "Call Booked";
+    && promotedStageForBooking(row.pipelineStage) !== null;
 }
 
 export function bookingLightFromInvariant(inv: Pick<InvariantSnapshot, "bookedMissingPipeline" | "bookedMissingEventId">): "green" | "red" {
@@ -48,7 +49,7 @@ export async function loadBookingMismatchRows(userId: string): Promise<BookingMi
     where ce.user_id = ${userId}
       and ce.status = 'booked'
       and ce.google_event_id is not null and ce.google_event_id <> ''
-      and p.stage is distinct from 'Call Booked'
+      and coalesce(p.stage, '') not in ('Call Booked', 'Proposal Sent', 'Negotiation', 'Won', 'Lost', 'Do Not Contact')
   `;
   return rows.map((r) => ({
     calendarId: r.id,

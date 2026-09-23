@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bookingLightFromInvariant, shouldRepairPipelineMismatch } from "./booking-reconcile.ts";
+import { promotedStageForBooking } from "./booking-stage.ts";
 import { EMPTY_INVARIANTS } from "../sentinel/invariants.ts";
 import { evaluateInvariants } from "../sentinel/invariants.ts";
 
@@ -35,6 +36,15 @@ test("association is repaired only with persisted google event id + prospect uid
     calendarStatus: "booked",
     pipelineStage: "Call Booked",
   }), false);
+  assert.equal(shouldRepairPipelineMismatch({
+    googleEventId: "evt-1",
+    prospectUid: "uid-fire",
+    calendarStatus: "booked",
+    pipelineStage: "Proposal Sent",
+  }), false);
+  assert.equal(promotedStageForBooking("Contacted"), "Call Booked");
+  assert.equal(promotedStageForBooking("Won"), null);
+  assert.equal(promotedStageForBooking("Do Not Contact"), null);
   assert.equal(shouldRepairPipelineMismatch({
     googleEventId: "",
     prospectUid: "uid-fire",

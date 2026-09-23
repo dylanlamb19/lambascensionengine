@@ -4,6 +4,8 @@
  */
 import { getSql } from "@/lib/db";
 import type { Prospect } from "@/lib/review-brief";
+import { promotedStageForBooking } from "@/lib/mail/booking-stage";
+import { isTestWorkflowUid } from "@/lib/mail/test-loop";
 import { importWithoutDuplicates } from "./dedupe";
 import { ensureUid, websiteDomain } from "./ids";
 
@@ -62,8 +64,32 @@ export async function getProspectByUid(userId: string, uid: string): Promise<Pro
   return rows[0] ? rowToProspect(rows[0]) : null;
 }
 
+async function hasBookedGoogleEvent(userId: string, uid: string): Promise<boolean> {
+  try {
+    const sql = await getSql();
+    const rows = await sql<{ n: number }>`
+      select 1 as n from calendar_events
+      where user_id = ${userId} and prospect_uid = ${uid}
+        and status = 'booked'
+        and google_event_id is not null and google_event_id <> ''
+      limit 1
+    `;
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function writeOne(userId: string, p: Prospect): Promise<void> {
-  const ready = ensureUid(p);
+  let ready = ensureUid(p);
+  const promoted = promotedStageForBooking(ready.stage);
+  if (promoted && await hasBookedGoogleEvent(userId, ready.uid)) {
+    ready = {
+      ...ready,
+      stage: promoted,
+      stage_plain: isTestWorkflowUid(ready.uid) ? "Test call booked" : "Call is on the calendar",
+    };
+  }
   const sql = await getSql();
   const payload = JSON.stringify({ ...ready, uid: ready.uid });
   await sql`

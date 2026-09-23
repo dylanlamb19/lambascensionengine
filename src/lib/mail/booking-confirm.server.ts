@@ -10,6 +10,7 @@ import {
   type SalesTestState,
 } from "./sql.server";
 import { isTestWorkflowUid } from "./test-loop";
+import { promotedStageForBooking } from "./booking-stage";
 import {
   BOOKING_CONFIRMED,
   BOOKING_PERSISTENCE_FAILED,
@@ -64,9 +65,12 @@ export async function persistConfirmedBooking(opts: {
     );
     const prospect = await getProspectByUid(opts.userId, opts.prospectUid);
     if (prospect) {
-      prospect.stage = "Call Booked";
-      prospect.stage_plain = isTestWorkflowUid(opts.prospectUid) ? "Test call booked" : "Call is on the calendar";
-      await upsertProspects(opts.userId, [prospect]);
+      const promoted = promotedStageForBooking(prospect.stage);
+      if (promoted) {
+        prospect.stage = promoted;
+        prospect.stage_plain = isTestWorkflowUid(opts.prospectUid) ? "Test call booked" : "Call is on the calendar";
+        await upsertProspects(opts.userId, [prospect]);
+      }
     }
     if (isTestWorkflowUid(opts.prospectUid)) {
       await saveTestState(opts.userId, {
@@ -110,8 +114,9 @@ export async function applyExistingBookingToTestState(
   title?: string | null,
 ): Promise<SalesTestState> {
   const prospect = await getProspectByUid(userId, prospectUid);
-  if (prospect && prospect.stage !== "Call Booked") {
-    prospect.stage = "Call Booked";
+  const promoted = prospect ? promotedStageForBooking(prospect.stage) : null;
+  if (prospect && promoted) {
+    prospect.stage = promoted;
     prospect.stage_plain = isTestWorkflowUid(prospectUid) ? "Test call booked" : "Call is on the calendar";
     await upsertProspects(userId, [prospect]);
   }
@@ -127,6 +132,10 @@ export async function applyExistingBookingToTestState(
   }
   if (!isTestWorkflowUid(prospectUid)) {
     return loadTestState(userId);
+  }
+  const current = await loadTestState(userId);
+  if (current.prospect_uid && current.prospect_uid !== prospectUid) {
+    return current;
   }
   return saveTestState(userId, {
     event_id: eventId,
