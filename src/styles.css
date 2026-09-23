@@ -500,15 +500,30 @@
     padding: 0;
     text-align: left;
   }
-  .la-ara-log-delete {
+  .la-ara-log .la-ara-log-more {
     flex: 0 0 auto;
+    align-self: center;
+    width: 1.75rem;
+    min-height: 1.75rem;
+    padding: 0;
     border: 0;
-    background: transparent;
+    border-radius: var(--radius-sm);
     color: var(--color-muted);
-    font-size: 0.72rem;
-    padding: 0.1rem 0.25rem;
+    font-size: 1.15rem;
+    line-height: 1;
+    letter-spacing: 0;
+    opacity: 0.72;
   }
-  .la-ara-log-delete:hover { color: var(--color-bad); }
+  .la-ara-log-item:hover .la-ara-log-more,
+  .la-ara-log-hit:hover .la-ara-log-more,
+  .la-ara-log-turn:hover .la-ara-log-more,
+  .la-ara-log .la-ara-log-more:hover,
+  .la-ara-log .la-ara-log-more:focus-visible,
+  .la-ara-log .la-ara-log-more[aria-expanded="true"] {
+    opacity: 1;
+    color: var(--color-fg);
+    background: color-mix(in oklab, var(--color-fg) 8%, transparent);
+  }
   .la-ara-log-meta-row {
     display: flex;
     align-items: center;
@@ -555,8 +570,14 @@
   }
   .la-ara-log-turn {
     margin: 0 0.15rem 0.7rem;
-    padding-bottom: 0.65rem;
+    padding: 0.28rem 0.35rem 0.65rem;
     border-bottom: 1px solid color-mix(in oklab, var(--color-fg) 7%, transparent);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+  .la-ara-log-turn:hover,
+  .la-ara-log-turn[data-menu="1"] {
+    background: color-mix(in oklab, var(--color-fg) 4%, transparent);
   }
   .la-ara-log-turn[data-on="1"] {
     border-radius: var(--radius-md);
@@ -575,6 +596,50 @@
     margin: 0.4rem 0.35rem;
     color: var(--color-muted);
     font-size: 0.86rem;
+  }
+  .la-ara-log-menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 13rem;
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    border: 1px solid color-mix(in oklab, var(--color-gold) 28%, var(--color-line));
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--color-gold) 9%, var(--color-surface2)) 0%, var(--color-surface) 55%);
+    box-shadow: var(--shadow-card), 0 16px 40px color-mix(in oklab, black 48%, transparent);
+  }
+  .la-ara-log-menu .la-ara-log-menu-item {
+    width: 100%;
+    justify-content: flex-start;
+    min-height: 2.1rem;
+    padding: 0 0.7rem;
+    border-radius: 0.55rem;
+    font-size: 0.84rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    color: var(--color-fg);
+    background: transparent;
+  }
+  .la-ara-log-menu .la-ara-log-menu-item:hover,
+  .la-ara-log-menu .la-ara-log-menu-item:focus-visible {
+    background: color-mix(in oklab, var(--color-gold) 12%, transparent);
+    color: var(--color-gold2);
+  }
+  .la-ara-log-menu .la-ara-log-menu-item[data-danger="1"] {
+    color: var(--color-bad);
+  }
+  .la-ara-log-menu .la-ara-log-menu-item[data-danger="1"]:hover,
+  .la-ara-log-menu .la-ara-log-menu-item[data-danger="1"]:focus-visible {
+    color: var(--color-bad);
+    background: color-mix(in oklab, var(--color-bad) 14%, transparent);
+  }
+  .la-ara-log-menu .la-ara-log-menu-item[data-copied="1"],
+  .la-ara-log-menu .la-ara-log-menu-item[data-copied="1"]:hover,
+  .la-ara-log-menu .la-ara-log-menu-item[data-copied="1"]:focus-visible {
+    color: var(--color-good);
   }
   @media (max-width: 900px) {
     .la-workspace {
