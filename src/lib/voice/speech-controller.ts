@@ -164,6 +164,7 @@ export class AraSpeechController {
   private playing = false;
   private lastDedupe = new Map<string, number>();
   private micHold: ReturnType<typeof setTimeout> | null = null;
+  private outputArmed = false;
   micPermission = "UNKNOWN";
   micStreamActive = false;
   voiceSessionReady = false;
@@ -188,7 +189,9 @@ export class AraSpeechController {
 
   unlock(): boolean {
     unlockAraOutput();
-    return this.ensureCtx();
+    const ok = this.ensureCtx();
+    this.armOutputInGesture();
+    return ok;
   }
 
   setMuted(v: boolean) {
@@ -263,6 +266,8 @@ export class AraSpeechController {
     const priority = opts.priority || SOURCE_PRIORITY[source];
     const job: SpeechJob = { id: nextId(), text: clean, source, priority, dedupeKey: opts.dedupeKey };
     this.onCaption?.(clean);
+    // Resume inside the tap, before the TTS await, or iOS suspends playback after a blip.
+    this.unlock();
     if (opts.dedupeKey) {
       const last = this.lastDedupe.get(opts.dedupeKey) || 0;
       if (Date.now() - last < 30_000) return false;
@@ -411,6 +416,21 @@ export class AraSpeechController {
     this.onMicGate?.(false);
     this.onSpeaking?.(false, null);
     this.emit();
+  }
+
+  private armOutputInGesture() {
+    if (this.outputArmed || !this.playCtx) return;
+    try {
+      const ctx = this.playCtx;
+      const buf = ctx.createBuffer(1, 1, ctx.sampleRate || 24000);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start();
+      this.outputArmed = true;
+    } catch {
+      /* AudioContext is missing in tests and may be locked until a gesture. */
+    }
   }
 
   private ensureCtx(): boolean {

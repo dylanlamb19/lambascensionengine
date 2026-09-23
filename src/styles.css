@@ -159,6 +159,8 @@
   .la-quiet-status.is-warn { color: var(--color-warn); }
   .la-quiet-status.is-good { color: var(--color-muted); }
 
+  /* Stay less specific than `.la-shell > *:not(.la-scene)`.
+     Raising this to sticky covers Start My Tasks on a phone — the header is taller than half the screen. */
   .la-top {
     position: sticky;
     top: 0;
@@ -1005,7 +1007,7 @@
     border: 1px solid var(--color-line);
     background: color-mix(in oklab, var(--color-surface) 88%, transparent);
   }
-  .la-unsaved {
+  .la-shell > .la-unsaved {
     position: sticky;
     bottom: 0.75rem;
     z-index: 20;
@@ -1121,19 +1123,31 @@
     font-weight: 600;
   }
 
-  .la-sheet-backdrop {
+  /* Must beat `.la-shell > *:not(.la-scene)` (same specificity, later in the file)
+     or the task sheet is in normal flow under the scenery spacer and a phone never sees it. */
+  .la-shell > .la-sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 30;
+    z-index: 40;
     display: flex;
     align-items: flex-end;
     background: color-mix(in oklab, black 62%, transparent);
-    padding: 0.75rem;
+    padding:
+      max(0.75rem, env(safe-area-inset-top))
+      max(0.75rem, env(safe-area-inset-right))
+      max(0.75rem, env(safe-area-inset-bottom))
+      max(0.75rem, env(safe-area-inset-left));
+  }
+  .la-shell > .la-sheet-backdrop[data-sheet-armed="0"],
+  .la-shell > .la-sheet-backdrop[data-sheet-armed="0"] * {
+    pointer-events: none;
   }
   .la-sheet {
     margin: 0 auto;
     width: 100%;
     max-width: 42rem;
+    max-height: min(78dvh, 100%);
+    overflow: auto;
     border: 1px solid color-mix(in oklab, var(--color-fg) 10%, transparent);
     background: var(--color-surface);
     border-radius: var(--radius-xl) var(--radius-xl) 1rem 1rem;
@@ -1141,7 +1155,7 @@
     box-shadow: 0 -16px 40px color-mix(in oklab, black 35%, transparent);
   }
 
-  .la-explain {
+  .la-shell > .la-explain {
     position: fixed;
     z-index: 25;
     right: 0.75rem;

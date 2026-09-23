@@ -80,6 +80,7 @@ import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmS
 import { stopSpeaking } from "@/lib/voice/speech";
 import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
+import { mergeAraCaption, shouldCloseTaskSheet, TASK_SHEET_DISMISS_GUARD_MS } from "@/lib/voice/task-sheet";
 import { appendAraTurn, deleteAraThread, deleteAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
 import { announceToAra, announceSource } from "@/lib/voice/announce";
 import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
@@ -428,6 +429,8 @@ export function OwnerDesk() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const dispatchRef = useRef<(action: AppAction, source?: "local" | "mirror") => void>(() => {});
+  const voiceReplyRef = useRef("");
+  const deskSpokenAtRef = useRef(0);
   const filePickRef = useRef<HTMLInputElement>(null);
   const pickNsfwRef = useRef(false);
 
@@ -796,6 +799,8 @@ export function OwnerDesk() {
       const nav = /^(NAVIGATE_|OPEN_FIND|OPEN_ADD|GO_BACK|START_TASKS|CALENDAR_|FILTER_PROSPECTS)/.test(next.lastAction || "");
       const explain = next.lastAction === "EXPLAIN";
       const read = /^READ_/.test(next.lastAction || "");
+      deskSpokenAtRef.current = Date.now();
+      voiceReplyRef.current = next.lastSpoken;
       setVoiceReply(next.lastSpoken);
       if (liveRef.current.voiceMode === "conversation" && (nav || explain) && !read) {
         /* Conversation Mode: the model narrates tool results. Exact reads still go through Ara TTS. */
@@ -1527,6 +1532,8 @@ export function OwnerDesk() {
     if (prev && prev.key === key && Date.now() - prev.at < 8000) return;
     lastUtterRef.current = { key, at: Date.now() };
     noteAra(clean);
+    deskSpokenAtRef.current = Date.now();
+    voiceReplyRef.current = clean;
     setVoiceReply(clean);
     araSpeech().setMuted(voiceMuted);
     void araSpeech().speakAsAra(clean, { source, exact: true, dedupeKey });
@@ -2649,8 +2656,16 @@ export function OwnerDesk() {
             araRef.current?.cancelResponse();
             return;
           }
-          setVoiceReply(text);
-          if (isFinal) noteAra(text);
+          const merged = mergeAraCaption(voiceReplyRef.current, text, {
+            isFinal: isFinal ?? false,
+            deskSpokenAt: deskSpokenAtRef.current,
+            now: Date.now(),
+          });
+          if (merged !== voiceReplyRef.current) {
+            voiceReplyRef.current = merged;
+            setVoiceReply(merged);
+          }
+          if (isFinal && merged.trim() && merged.trim() === (text || "").trim()) noteAra(merged.trim());
           if (isOwnerCalendarRefusalSpeech(text)) {
             araRef.current?.cancelResponse();
           }
@@ -2969,10 +2984,19 @@ export function OwnerDesk() {
 
   useEffect(() => {
     if (voiceMode !== "conversation") return;
+    // session.update while Ara is mid-sentence aborts the ack. Refresh after she finishes.
+    if (araStatus === "speaking" || araStatus === "connecting" || outputSpeaking) return;
     araRef.current?.updateContext(araDesk());
     // Keep Ara's screen context fresh without restarting the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal, pendingProspectEdit]);
+  }, [rows, openUid, view, tasks, google, testModeOn, allowlist, taskIx, sales, testLoop, voiceMode, layout, visual, calView, calAnchor, calEvents, calEventId, integration, googleMissing, lastOwnerEvent, pendingOwnerCal, pendingProspectEdit, araStatus, outputSpeaking]);
+
+  useEffect(() => {
+    if (taskIx == null || view !== "home") return;
+    if (!window.matchMedia("(max-width: 719px)").matches) return;
+    const node = document.querySelector("[data-home-widget='up_next'][data-task-run='1']");
+    if (node instanceof HTMLElement) node.scrollIntoView({ block: "nearest" });
+  }, [taskIx, view]);
 
   useEffect(() => {
     if (!userId) return;
@@ -3379,8 +3403,13 @@ export function OwnerDesk() {
       return (
         <section key={id} data-home-widget="hero" className="mb-6">
           <button
+            type="button"
+            data-start-tasks="1"
             className={big ? "la-hero" : "la-btn la-btn-primary w-full min-h-12"}
-            onClick={() => dispatchAction({ name: "START_TASKS" })}
+            onClick={() => {
+              araSpeech().unlock();
+              dispatchAction({ name: "START_TASKS" });
+            }}
           >
             Start My Tasks
             <ArrowRight size={18} strokeWidth={2.2} />
@@ -3410,22 +3439,24 @@ export function OwnerDesk() {
       const company = upNext.company_uid ? findByUid(rows, upNext.company_uid) : null;
       if (company) {
         return (
-          <section key={id} data-home-widget="up_next" className="la-card la-card-accent mb-6">
+          <section key={id} data-home-widget="up_next" data-task-run={taskIx !== null ? "1" : "0"} className="la-card la-card-accent mb-6">
             <ProspectReachCard
               company={company}
-              heading="Up next"
+              heading={taskIx !== null ? `Task ${taskIx + 1} of ${tasks.length}` : "Up next"}
               gmailConnected={google.gmail === "connected"}
               busy={deepBusy}
               onAction={(action) => runProspectAction(company.uid, action)}
             />
             {deepErr ? <div className="la-ribbon la-ribbon-bad mt-3">{deepErr}</div> : null}
-            <p className="mt-3 text-xs text-muted">{Math.min((taskIx ?? 0) + 1, tasks.length)} of {tasks.length} tasks</p>
+            {taskIx !== null ? (
+              <p className="mt-3 text-xs text-muted" data-task-progress="1">Task {taskIx + 1} of {tasks.length}</p>
+            ) : null}
           </section>
         );
       }
       return (
-        <section key={id} data-home-widget="up_next" className="la-card la-card-accent mb-6">
-          <p className="la-kicker">Up next</p>
+        <section key={id} data-home-widget="up_next" data-task-run={taskIx !== null ? "1" : "0"} className="la-card la-card-accent mb-6">
+          <p className="la-kicker">{taskIx !== null ? `Task ${taskIx + 1} of ${tasks.length}` : "Up next"}</p>
           <h2 className="font-display mt-2 text-2xl leading-tight">{upNext.title}</h2>
           <p className="mt-2 text-sm">{upNext.plain}</p>
           <p className="mt-1 text-sm text-muted">{upNext.why}</p>
@@ -3433,7 +3464,9 @@ export function OwnerDesk() {
             <button className="la-btn la-btn-primary" onClick={() => runTask(upNext)}>{upNext.button}</button>
             <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: upNext.company_uid })}>Skip</button>
           </div>
-          <p className="mt-3 text-xs text-muted">{Math.min((taskIx ?? 0) + 1, tasks.length)} of {tasks.length} tasks</p>
+          {taskIx !== null ? (
+            <p className="mt-3 text-xs text-muted" data-task-progress="1">Task {taskIx + 1} of {tasks.length}</p>
+          ) : null}
         </section>
       );
     }
@@ -3697,6 +3730,7 @@ export function OwnerDesk() {
         data-company-name={open?.name || ""}
         data-evidence={evidence ? "1" : "0"}
         data-home-order={visibleOrder(layout).join(",")}
+        data-task-run={view === "home" && taskIx !== null ? "1" : "0"}
       >
         {syncErr ? <div className="la-ribbon la-ribbon-bad mb-3">{syncErr}</div> : null}
         <SystemHealthAlert
@@ -4071,14 +4105,14 @@ export function OwnerDesk() {
           text={`What happened: ${tasks[taskIx].plain}\n\nWhy it matters: ${tasks[taskIx].why}\n\nWhat I recommend: ${tasks[taskIx].recommend}`}
           onClose={() => dispatchAction({ name: "ACKNOWLEDGE_TASK" })}
         >
-          <button className="la-btn la-btn-primary" onClick={() => dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>
+          <button type="button" className="la-btn la-btn-primary" onClick={() => dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>
             Learn More
           </button>
           {tasks[taskIx].retry ? (
-            <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "FIND_CONTACT", uid: tasks[taskIx].company_uid })}>Find Contact</button>
+            <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "FIND_CONTACT", uid: tasks[taskIx].company_uid })}>Find Contact</button>
           ) : null}
-          <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Skip</button>
-          <button className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "NEXT_TASK" })}>Next</button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Skip</button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "NEXT_TASK" })}>Next</button>
         </Sheet>
       ) : null}
       {explain ? <ExplainPanel text={explain} onClose={() => dispatchAction({ name: "CLOSE_EXPLAIN" })} /> : null}
@@ -4409,15 +4443,33 @@ function ExplainPanel({ text, onClose }: { text: string; onClose: () => void }) 
 }
 
 function Sheet({ title, heading, text, onClose, children }: { title?: string; heading?: string; text: string; onClose: () => void; children?: ReactNode }) {
+  const openedAt = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setArmed(true), TASK_SHEET_DISMISS_GUARD_MS);
+    return () => window.clearTimeout(id);
+  }, []);
   return (
-    <div className="la-sheet-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div
+      className="la-sheet-backdrop"
+      data-task-sheet="1"
+      data-sheet-armed={armed ? "1" : "0"}
+      role="dialog"
+      aria-modal="true"
+      aria-label={heading || title || "Current task"}
+      onClick={(e) => {
+        const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+        if (!shouldCloseTaskSheet(openedAt.current, now, e.target === e.currentTarget)) return;
+        onClose();
+      }}
+    >
       <div className="la-sheet">
         {title ? <p className="text-sm text-muted">{title}</p> : null}
         {heading ? <h2 className="font-display mb-2 mt-1 text-xl">{heading}</h2> : null}
         <p className="mb-4 whitespace-pre-wrap text-sm">{text}</p>
         <div className="flex flex-wrap gap-2">
           {children}
-          <button className="la-btn la-btn-primary" onClick={onClose}>Got it</button>
+          <button type="button" className="la-btn la-btn-primary" onClick={onClose}>Got it</button>
         </div>
       </div>
     </div>
