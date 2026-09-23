@@ -84,6 +84,7 @@ import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
 import { mergeAraCaption, shouldCloseTaskSheet, TASK_SHEET_DISMISS_GUARD_MS } from "@/lib/voice/task-sheet";
 import { appendAraTurn, deleteAraThread, deleteAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
+import { answerMemory, classifyMemoryAsk, foldFinalUserTurn, historyInstruction, preferServerLog, shouldPersistTranscript, type UtteranceMark } from "@/lib/voice/ara-memory";
 import { announceToAra, announceSource } from "@/lib/voice/announce";
 import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
 import { buildScreenContext } from "@/lib/voice/screen-context";
@@ -102,7 +103,7 @@ import {
   type DeskWorld,
   type NavFrame,
 } from "@/lib/voice/desk-actions";
-import { createAraSessionFn, logVoiceAuditFn } from "@/lib/voice/ara-session";
+import { createAraSessionFn, loadAraConversationFn, logVoiceAuditFn, saveAraConversationFn } from "@/lib/voice/ara-session";
 import { voiceFailureReason } from "@/lib/voice/voice-failure";
 import { makeVoiceAudit } from "@/lib/voice/audit";
 import { araWebResearchFn } from "@/lib/voice/web-research/actions";
@@ -334,6 +335,7 @@ export function OwnerDesk() {
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("off");
   const [youSaid, setYouSaid] = useState("");
   const youSaidRef = useRef("");
+  const utteranceRef = useRef<UtteranceMark | null>(null);
   const [voiceReply, setVoiceReply] = useState("");
   const [araLog, setAraLog] = useState<AraLog>(emptyAraLog);
   const [araFocusTurn, setAraFocusTurn] = useState<string | null>(null);
@@ -1516,6 +1518,7 @@ export function OwnerDesk() {
     araLogRef.current = next;
     setAraLog(next);
     saveAraLog(userId, next);
+    void saveAraConversationFn({ data: { log: next } }).catch(() => undefined);
   }
 
   function noteYou(text: string) {
@@ -1626,6 +1629,7 @@ export function OwnerDesk() {
       taskUid: ctx.taskUid,
       screenActions: ctx.screenActions,
       lookingAt: ctx.lookingAt,
+      conversationHistory: historyInstruction(araLogRef.current),
       important: ctx.important,
       nextFocus: ctx.next,
       screenFacts: ctx.facts,
@@ -2648,10 +2652,11 @@ export function OwnerDesk() {
             if (reason) setAraErr(reason);
           }
         },
-        onUserTranscript: (text, isFinal) => {
+        onUserTranscript: (text, isFinal, itemId) => {
           setYouSaid(text);
           youSaidRef.current = text;
-          handleAraOwnerTranscript(text, isFinal);
+          if (!shouldPersistTranscript(isFinal)) return;
+          handleAraOwnerTranscript(text, true, itemId || "");
         },
         onAraTranscript: (text, isFinal) => {
           if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
@@ -2747,7 +2752,7 @@ export function OwnerDesk() {
     void startAra();
   }
 
-  function handleAraOwnerTranscript(text: string, isFinal = true) {
+  function handleAraOwnerTranscript(text: string, isFinal = true, itemId = "") {
     const speaking = araStatus === "speaking";
     const stop = classifyOwnerStopIntent(text, {
       finalized: isFinal,
@@ -2778,8 +2783,28 @@ export function OwnerDesk() {
       || (pendingCalManageRef.current && (isOwnerCalendarConfirmYes(text) || isOwnerCalendarConfirmNo(text)))) {
       araRef.current?.cancelResponse();
     }
-    if (!isFinal) return;
-    noteYou(text);
+    if (!shouldPersistTranscript(isFinal)) return;
+    const folded = foldFinalUserTurn(araLogRef.current, text, itemId, Date.now(), utteranceRef.current);
+    utteranceRef.current = folded.state;
+    if (folded.action === "replay" || folded.action === "ignore") {
+      araRef.current?.cancelResponse();
+      void logVoiceAuditFn({ data: { tool: "VOICE_DUPLICATE_UTTERANCE_BLOCKED", result: folded.action } }).catch(() => undefined);
+      return;
+    }
+    if (folded.action === "replace") {
+      commitAraLog(folded.log);
+      araRef.current?.cancelResponse();
+      return;
+    }
+    commitAraLog(folded.log);
+    const ask = classifyMemoryAsk(text);
+    if (ask) {
+      araRef.current?.cancelResponse();
+      const found = answerMemory(folded.log, ask, text);
+      utter(found.text, "TOOL_RESULT", `memory:${ask.kind}`);
+      void logVoiceAuditFn({ data: { tool: found.action, result: ask.kind } }).catch(() => undefined);
+      return;
+    }
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;
@@ -2909,9 +2934,17 @@ export function OwnerDesk() {
   }, [voiceMode]);
 
   useEffect(() => {
-    const loaded = loadAraLog(userId);
-    araLogRef.current = loaded;
-    setAraLog(loaded);
+    const local = loadAraLog(userId);
+    araLogRef.current = local;
+    setAraLog(local);
+    void loadAraConversationFn().then((remote) => {
+      if (!remote.ok) return;
+      const next = preferServerLog(remote.log, local);
+      if (next !== local) commitAraLog(next);
+      else if (next.threads.some((t) => t.turns.length)) void saveAraConversationFn({ data: { log: next } }).catch(() => undefined);
+    }).catch(() => undefined);
+    // Load once per owner. commitAraLog is the same save path used by new turns.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   useEffect(() => {

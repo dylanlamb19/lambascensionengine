@@ -9,7 +9,7 @@ export type AraStatus = "ready" | "connecting" | "listening" | "speaking" | "una
 
 export type AraHandlers = {
   onStatus: (s: AraStatus) => void;
-  onUserTranscript: (text: string, isFinal: boolean) => void;
+  onUserTranscript: (text: string, isFinal: boolean, itemId?: string) => void;
   onAraTranscript: (text: string, isFinal?: boolean) => void;
   onToolCall: (name: string, args: Record<string, unknown>, callId: string) => Promise<Record<string, unknown>>;
   onError: (plain: string) => void;
@@ -270,11 +270,11 @@ export class AraRealtime {
       this.handlers.onAraTranscript(ev.transcript, true);
     }
     if (type === "conversation.item.input_audio_transcription.updated" && typeof ev.transcript === "string") {
-      this.handlers.onUserTranscript(ev.transcript, false);
+      this.handlers.onUserTranscript(ev.transcript, false, String(ev.item_id || ""));
     }
     if (type === "conversation.item.input_audio_transcription.completed") {
       const text = String(ev.transcript || ev.text || "");
-      if (text) this.handlers.onUserTranscript(text, true);
+      if (text) this.handlers.onUserTranscript(text, true, String(ev.item_id || ""));
     }
     if (type === "response.function_call_arguments.done") {
       const name = String(ev.name || "");

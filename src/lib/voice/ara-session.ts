@@ -44,6 +44,36 @@ export const createAraSessionFn = createServerFn({ method: "POST" })
     return pub;
   });
 
+export const loadAraConversationFn = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { loadAraConversation } = await import("./ara-store.server");
+    const { scopedConversationUser } = await import("./ara-memory");
+    const userId = scopedConversationUser(context.userId);
+    if (!userId) return { ok: false as const, reason: "Not signed in." };
+    const log = await loadAraConversation(userId);
+    try {
+      const { logActivity } = await import("@/lib/prospects/repo.server");
+      const turns = log.threads.reduce((n, t) => n + t.turns.length, 0);
+      await logActivity(userId, "ARA_HISTORY_LOADED", `${turns} turns`, undefined, "VOICE");
+    } catch {
+      /* audit must not block the desk */
+    }
+    return { ok: true as const, log };
+  });
+
+export const saveAraConversationFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { log: unknown; requestedUserId?: string }) => data)
+  .handler(async ({ data, context }) => {
+    const { scopedConversationUser, sanitizeAraLog } = await import("./ara-memory");
+    const userId = scopedConversationUser(context.userId, data.requestedUserId);
+    if (!userId) return { ok: false as const, reason: "That conversation belongs to another owner." };
+    const { saveAraConversation } = await import("./ara-store.server");
+    const saved = await saveAraConversation(userId, sanitizeAraLog(data.log));
+    return saved ? { ok: true as const } : { ok: false as const, reason: "Could not save the conversation." };
+  });
+
 export const logVoiceAuditFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { tool: string; prospectUid?: string | null; confirmation?: string | null; result: string }) => data)

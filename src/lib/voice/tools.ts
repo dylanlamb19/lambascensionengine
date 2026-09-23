@@ -361,6 +361,7 @@ export type AraDeskContext = {
   taskUid?: string | null;
   screenActions?: { id: string; label: string; aliases: string[]; risk: string; tool: string }[];
   lookingAt?: string;
+  conversationHistory?: string;
   important?: string;
   nextFocus?: string;
   screenFacts?: { kind: string; text: string }[];
