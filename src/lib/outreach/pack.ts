@@ -26,6 +26,7 @@ export type PackedContext = {
   facts: PackedFact[];
   unknown: string[];
   fingerprint: string;
+  ads: { network: string; label: string; detail: string }[];
 };
 
 function fp(parts: string[]): string {
@@ -85,6 +86,7 @@ export function packContext(p: Prospect): PackedContext {
     opportunities: opps.map((o) => ({ code: o.code, title: o.title, plain: o.plain })),
     facts,
     unknown,
+    ads: (p.ads || []).map((ad) => ({ network: ad.network, label: ad.label, detail: ad.detail })),
     fingerprint: fp([
       p.name, p.vertical, p.research_status, String(p.review_count),
       opps.map((o) => o.code).join(","),

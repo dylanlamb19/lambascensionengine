@@ -1,5 +1,6 @@
 import type { PackedContext } from "./pack.ts";
 import type { OutreachPack, OutreachMessage } from "./types.ts";
+import { composeOutreachEmail } from "./email-copy.ts";
 
 function has(ctx: PackedContext, code: string): boolean {
   return ctx.opportunities.some((o) => o.code === code) || ctx.facts.some((f) => f.key === code);
@@ -85,22 +86,6 @@ function helpLine(ctx: PackedContext): string {
   return "Lamb Ascension helps high-ticket companies get customers through Google and Meta. I won’t pitch a package until a short call confirms it fits.";
 }
 
-function emailBody(ctx: PackedContext, obs: ReturnType<typeof observation>): string {
-  const hi = greeting(ctx);
-  return [
-    `Hi ${hi},`,
-    "",
-    obs.text,
-    "",
-    helpLine(ctx),
-    "",
-    "Would you be open to me sending over the short audit?",
-    "",
-    "Dylan",
-    "Lamb Ascension",
-  ].join("\n");
-}
-
 export function buildOutreach(ctx: PackedContext): OutreachPack {
   const obs = observation(ctx);
   const hi = greeting(ctx);
@@ -114,9 +99,18 @@ export function buildOutreach(ctx: PackedContext): OutreachPack {
     kind, body, subject, state: "READY FOR REVIEW", angle: obs.angle, angle_why: obs.why, evidence_used: obs.evidence,
   });
 
+  const letter = composeOutreachEmail(ctx);
   const messages: OutreachMessage[] = [
-    mk("email", emailBody(ctx, obs), `${ctx.name} / a short audit`),
-    mk("followup1", `Hi ${hi},\n\nQuick add: ${obs.text} If useful, I can send the 1-page version of what we actually checked — nothing invented.\n\nDylan`),
+    {
+      kind: "email",
+      body: letter.body,
+      subject: letter.subject,
+      state: "READY FOR REVIEW",
+      angle: letter.angle,
+      angle_why: letter.why,
+      evidence_used: letter.evidence,
+    },
+    mk("followup1", `Hi ${hi},\n\nQuick add: ${letter.sentence} If useful, I can send the 1-page version of what we actually checked — nothing invented.\n\nDylan`),
     mk("followup2", `Hi ${hi},\n\nSeparate thought: ${help}\nIf now’s not the time, a one-word “later” is enough.\n\nDylan`),
     mk("followup3", `Hi ${hi},\n\nI’ll close this thread so I’m not another “just following up.” If you ever want the short audit, reply “send it.”\n\nDylan`),
   ];

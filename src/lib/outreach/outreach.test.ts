@@ -84,6 +84,45 @@ test("medical company can use a homepage CTA gap without fake performance claims
   assert.doesNotMatch(email.body, /ROAS|conversion rate/i);
 });
 
+test("three industries stay different and only use stored findings", () => {
+  const roof = generateOutreach(p({
+    name: "Davis Roofing Solutions", vertical: "Roofing", city: "Fort Worth", phone: "(817) 555-0100",
+    research_status: "complete",
+    findings: [{ id: "contact_form", result: "No form detected on homepage", status: "OBSERVED" }],
+  }));
+  const hvac = generateOutreach(p({
+    name: "North Texas Air", vertical: "HVAC", city: "Arlington",
+    research_status: "complete",
+    findings: [
+      { id: "pagespeed_mobile", result: "38 mobile score", status: "VERIFIED" },
+    ],
+  }));
+  const law = generateOutreach(p({
+    name: "Harper Legal", vertical: "Law firm", city: "Dallas", review_count: 40,
+    research_status: "complete",
+    findings: [{ id: "testimonials", result: "No testimonials on the homepage", status: "OBSERVED" }],
+  }));
+  const bodies = [roof, hvac, law].map((pack) => pack.messages.find((m) => m.kind === "email")!.body);
+  assert.notEqual(bodies[0], bodies[1]);
+  assert.notEqual(bodies[1], bodies[2]);
+  assert.match(bodies[0], /Davis Roofing Solutions/);
+  assert.match(bodies[0], /homeowners|estimate/i);
+  assert.match(bodies[0], /did not find a contact form|didn’t see a contact form/i);
+  assert.doesNotMatch(bodies[0], /meta description|image compression|10x|guarantee more leads/i);
+  assert.match(bodies[1], /North Texas Air/);
+  assert.match(bodies[1], /38/);
+  assert.doesNotMatch(bodies[1], /contact form/i);
+  assert.match(bodies[2], /Harper Legal/);
+  assert.match(bodies[2], /reviews/);
+  assert.match(bodies[2], /consultation|potential clients/i);
+  for (const body of bodies) {
+    const words = body.split(/\s+/).filter(Boolean).length;
+    assert.ok(words >= 80 && words <= 190, `word count ${words}: ${body.slice(0, 80)}`);
+    assert.match(body, /Dylan\nLamb Ascension/);
+    assert.match(body, /Would you be open|Want me to send|helpful if I sent|Open to taking a look/);
+  }
+});
+
 test("unsubscribe reply is classified and never asks them to stay", () => {
   assert.equal(classifyReply("Please unsubscribe me"), "UNSUBSCRIBE");
   assert.match(draftReply("UNSUBSCRIBE", "Sam"), /off this thread/i);
