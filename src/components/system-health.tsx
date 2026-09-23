@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { HealthLight, SentinelSnapshot } from "@/lib/sentinel/types";
+import type { HealthLight, SentinelBug, SentinelSnapshot } from "@/lib/sentinel/types";
 import { featureLabel } from "@/lib/sentinel/health";
+import { ownerLabel } from "@/lib/sentinel/codes";
 import { canonicalHealth } from "@/lib/sentinel/system-health";
 
 function lightClass(light: HealthLight): string {
@@ -33,30 +34,36 @@ export function SystemHealthAlert({
   onOpen,
   onRepair,
   repairing,
+  result,
 }: {
   snapshot: SentinelSnapshot | null;
   onOpen: () => void;
-  onRepair?: () => void;
+  onRepair?: (alert: SentinelBug) => void;
   repairing?: boolean;
+  result?: string;
 }) {
-  const alert = snapshot?.alerts[0];
-  if (!snapshot || !alert) return null;
-  const showRepair = Boolean(onRepair) && isBookingMismatch(alert.error_code);
+  const alerts = (snapshot?.alerts || []).slice(0, 3);
+  if (!snapshot || !alerts.length) return null;
   return (
     <div className="la-ribbon la-ribbon-bad mb-3">
-      <span>
-        <b>{alert.summary}</b>
-        <span className="mt-1 block text-sm">
-          Sentinel found {alert.error_code}. First seen {formatWhen(alert.first_seen_at)}.
-          Production SHA {shortSha(alert.production_sha)}. Sentinel did not change production.
+      {alerts.map((alert) => (
+        <span key={alert.bug_id} className="block">
+          <b>{alert.summary}</b>
+          <span className="mt-1 block text-sm">
+            {ownerLabel(alert.error_code)}. First seen {formatWhen(alert.first_seen_at)}.
+            Production SHA {shortSha(alert.production_sha)}.
+          </span>
+          <span className="mt-2 flex flex-wrap gap-2">
+            {onRepair ? (
+              <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing)} onClick={() => onRepair(alert)}>
+                {repairing ? "Fixing…" : `Fix: ${ownerLabel(alert.error_code)}`}
+              </button>
+            ) : null}
+          </span>
         </span>
-      </span>
-      <span className="flex flex-wrap gap-2">
-        {showRepair ? (
-          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing)} onClick={onRepair}>
-            {repairing ? "Fixing…" : "Fix booking mismatch"}
-          </button>
-        ) : null}
+      ))}
+      {result ? <span className="mt-2 block text-sm">{result}</span> : null}
+      <span className="mt-2 flex flex-wrap gap-2">
         <button type="button" className="la-btn la-btn-quiet" onClick={onOpen}>Open System Health</button>
       </span>
     </div>
@@ -87,20 +94,20 @@ export function SystemHealthPage({
   onRun,
   onRepair,
   repairing,
+  result,
 }: {
   snapshot: SentinelSnapshot | null;
   running: boolean;
   onBack: () => void;
   onRun: () => void;
-  onRepair?: () => void;
+  onRepair?: (alert: SentinelBug) => void;
   repairing?: boolean;
+  result?: string;
 }) {
   const [advanced, setAdvanced] = useState(false);
   const snap = snapshot;
   const health = canonicalHealth({ snapshot: snap });
-  const mismatchOpen = Boolean(
-    onRepair && (snap?.alerts || []).some((a) => isBookingMismatch(a.error_code)),
-  );
+  const mismatch = (snap?.alerts || []).find((a) => isBookingMismatch(a.error_code));
   return (
     <section className="la-card">
       <p className="la-kicker">Lascengine Sentinel</p>
@@ -145,9 +152,9 @@ export function SystemHealthPage({
         <button type="button" className="la-btn la-btn-primary" disabled={running} onClick={onRun}>
           {running ? "Checking…" : "Check now"}
         </button>
-        {mismatchOpen ? (
-          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing) || running} onClick={onRepair}>
-            {repairing ? "Fixing…" : "Fix booking mismatch"}
+        {mismatch && onRepair ? (
+          <button type="button" className="la-btn la-btn-primary" disabled={Boolean(repairing) || running} onClick={() => onRepair(mismatch)}>
+            {repairing ? "Fixing…" : `Fix: ${ownerLabel(mismatch.error_code)}`}
           </button>
         ) : null}
         <button type="button" className="la-btn la-btn-ghost" onClick={onBack}>Back</button>
@@ -155,6 +162,7 @@ export function SystemHealthPage({
           {advanced ? "Hide details" : "Advanced details"}
         </button>
       </div>
+      {result ? <p className="mt-3 text-sm">{result}</p> : null}
       {advanced && snap ? (
         <div className="mt-5 text-sm text-muted">
           <p>Production SHA {shortSha(snap.productionSha) || "unknown"}{snap.previousSha ? ` · previous ${shortSha(snap.previousSha)}` : ""}</p>

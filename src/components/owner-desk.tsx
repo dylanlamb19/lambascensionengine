@@ -72,7 +72,7 @@ import { SystemHealthAlert, SystemHealthPage, SystemHealthStrip } from "@/compon
 import { sentinelRunFn, sentinelStatusFn } from "@/lib/sentinel/actions";
 import { parseSentinelAsk, sentinelSpeech } from "@/lib/sentinel/speech";
 import { canonicalHealth, homeIssueLine } from "@/lib/sentinel/system-health";
-import type { SentinelSnapshot } from "@/lib/sentinel/types";
+import type { SentinelBug, SentinelSnapshot } from "@/lib/sentinel/types";
 import { repairBookingInvariantFn } from "@/lib/mail/booking-reconcile-actions";
 import { ActionGate, makeActionId } from "@/lib/voice/idempotency";
 import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
@@ -317,6 +317,8 @@ export function OwnerDesk() {
   const [sentinel, setSentinel] = useState<SentinelSnapshot | null>(null);
   const [sentinelBusy, setSentinelBusy] = useState(false);
   const [repairBusy, setRepairBusy] = useState(false);
+  const [repairNote, setRepairNote] = useState("");
+  const [repairOk, setRepairOk] = useState(false);
   const [minRating, setMinRating] = useState(0);
   const [minReviews, setMinReviews] = useState(0);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2051,12 +2053,33 @@ export function OwnerDesk() {
   }
 
 
-  async function repairBookingMismatch() {
+  async function repairBookingMismatch(alert?: Pick<SentinelBug, "error_code" | "summary">) {
+    const summary = alert?.summary || sentinel?.alerts[0]?.summary || "Sentinel found a problem.";
+    const code = alert?.error_code || sentinel?.alerts[0]?.error_code || "PIPELINE_STATE_MISMATCH";
+    setRepairOk(false);
+    setRepairNote(summary);
     setRepairBusy(true);
     try {
-      await repairBookingInvariantFn();
+      if (code !== "PIPELINE_STATE_MISMATCH" && code !== "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE") {
+        setRepairNote(`${summary} I did not change any records from this button.`);
+        return;
+      }
+      const result = await repairBookingInvariantFn();
+      const spoken = ("spoken" in result && result.spoken) ? String(result.spoken) : summary;
+      const latest = await listProspectsFn();
+      if (latest.ok) {
+        setRows(latest.prospects);
+        saveCompanies(latest.prospects);
+      }
       const rerun = await sentinelRunFn({ data: { mode: "owner" } });
+      const still = Boolean(rerun.ok && rerun.snapshot.alerts.some((a) => a.error_code === "PIPELINE_STATE_MISMATCH" || a.error_code === "BOOKING_PERSISTENCE_FAILED_AFTER_CALENDAR_CREATE"));
       if (rerun.ok) setSentinel(rerun.snapshot);
+      setRepairOk(!still && result.repaired > 0);
+      setRepairNote(still && result.repaired === 0 ? spoken : spoken);
+    } catch (err) {
+      setRepairOk(false);
+      const why = err instanceof Error && err.message ? err.message : "The fix did not run.";
+      setRepairNote(`${summary} ${why}`);
     } finally {
       setRepairBusy(false);
     }
@@ -3652,9 +3675,13 @@ export function OwnerDesk() {
         <SystemHealthAlert
           snapshot={sentinel}
           onOpen={() => dispatchAction({ name: "NAVIGATE_HEALTH" })}
-          onRepair={() => void repairBookingMismatch()}
+          onRepair={(alert) => void repairBookingMismatch(alert)}
           repairing={repairBusy}
+          result={repairNote}
         />
+        {repairNote && !(sentinel?.alerts.length) ? (
+          <div className={`la-ribbon mb-3 ${repairOk ? "la-ribbon-good" : "la-ribbon-bad"}`}>{repairNote}</div>
+        ) : null}
         {testModeOn ? (
           <div className="la-quiet-line mb-3">
             <button type="button" className="la-quiet-status" onClick={() => setTestOpen((v) => !v)}>
@@ -3696,8 +3723,9 @@ export function OwnerDesk() {
             running={sentinelBusy}
             onBack={() => dispatchAction({ name: "NAVIGATE_HOME" })}
             onRun={() => void runSentinelNow()}
-          onRepair={() => void repairBookingMismatch()}
-          repairing={repairBusy}
+            onRepair={(alert) => void repairBookingMismatch(alert)}
+            repairing={repairBusy}
+            result={repairNote}
         />
         ) : null}
         {view === "campaigns" ? (

@@ -95,6 +95,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
   repaired: number;
   skipped: number;
   remaining: number;
+  spoken: string;
   mutatedCalendar: typeof BOOKING_REPAIR_MUTATES_CALENDAR;
   rows: Array<{
     googleEventId: string;
@@ -105,6 +106,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
     isTest: boolean;
     repaired: boolean;
     note: string;
+    name: string;
   }>;
 }> {
   const mismatches = await loadBookingMismatchRows(userId);
@@ -119,6 +121,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
     isTest: boolean;
     repaired: boolean;
     note: string;
+    name: string;
   }> = [];
   let repaired = 0;
   let skipped = 0;
@@ -134,6 +137,7 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
         isTest: row.isTest,
         repaired: false,
         note: "Skipped — association not proven, or stage is already at or past Call Booked.",
+        name: row.title || "A prospect",
       });
       continue;
     }
@@ -156,15 +160,90 @@ export async function repairPipelineBookingMismatches(userId: string, sha = ""):
       isTest: row.isTest,
       repaired: true,
       note,
+      name: row.title || "A prospect",
     });
   }
-  const remaining = (await loadBookingMismatchRows(userId)).length;
+  const { getSql } = await import("@/lib/db");
+  const sql = await getSql();
+  const orphans = await sql<{ uid: string; name: string }>`
+    select p.uid, p.name
+    from prospects p
+    where p.user_id = ${userId}
+      and p.stage = 'Call Booked'
+      and not exists (
+        select 1 from calendar_events ce
+        where ce.user_id = p.user_id and ce.prospect_uid = p.uid
+          and ce.status = 'booked'
+          and ce.google_event_id is not null and ce.google_event_id <> ''
+      )
+  `;
+  const { getProspectByUid, upsertProspects } = await import("@/lib/prospects/repo.server");
+  for (const orphan of orphans) {
+    const prospect = await getProspectByUid(userId, orphan.uid);
+    if (!prospect || prospect.stage !== "Call Booked") {
+      skipped += 1;
+      continue;
+    }
+    prospect.stage = "Approved for Outreach";
+    prospect.stage_plain = "No calendar event — not Call Booked";
+    await upsertProspects(userId, [prospect]);
+    if (isTestWorkflowUid(orphan.uid)) {
+      const { saveTestState } = await import("./sql.server");
+      await saveTestState(userId, { pipeline_stage: "Approved for Outreach", event_id: "" });
+    }
+    await audit(userId, BOOKING_INVARIANT_RECONCILED, `uid=${orphan.uid} Call Booked->Approved for Outreach (no booked event) sha=${sha}`, {
+      prospectUid: orphan.uid,
+      method: "MANUAL",
+    });
+    repaired += 1;
+    out.push({
+      googleEventId: "",
+      prospectUid: orphan.uid,
+      calendarId: "",
+      fromStage: "Call Booked",
+      toStage: "Approved for Outreach",
+      isTest: isTestWorkflowUid(orphan.uid),
+      repaired: true,
+      note: "Call Booked with no booked Google event. Moved back. No calendar event was created.",
+      name: orphan.name || "A prospect",
+    });
+  }
+  const remaining = (await loadBookingMismatchRows(userId)).length
+    + (await sql<{ n: number }>`
+      select count(*)::int as n from prospects p
+      where p.user_id = ${userId} and p.stage = 'Call Booked'
+        and not exists (
+          select 1 from calendar_events ce
+          where ce.user_id = p.user_id and ce.prospect_uid = p.uid
+            and ce.status = 'booked'
+            and ce.google_event_id is not null and ce.google_event_id <> ''
+        )
+    `)[0]?.n || 0;
+  const spoken = repairSpeech({ repaired, remaining, rows: out });
   return {
-    inspected: mismatches.length,
+    inspected: mismatches.length + orphans.length,
     repaired,
     skipped,
     remaining,
+    spoken,
     mutatedCalendar: BOOKING_REPAIR_MUTATES_CALENDAR,
     rows: out,
   };
+}
+
+export function repairSpeech(result: {
+  repaired: number;
+  remaining: number;
+  rows: Array<{ name?: string; repaired: boolean; toStage: string }>;
+}): string {
+  const fixed = result.rows.filter((row) => row.repaired);
+  if (!fixed.length) {
+    return "Pipeline and Calendar disagree, but I could not find a saved booking to correct. Nothing was changed, and no calendar event was created.";
+  }
+  const lines = fixed.map((row) => {
+    const who = row.name || "A prospect";
+    if (row.toStage === "Call Booked") return `${who} is now Call Booked, matching the calendar event.`;
+    return `${who} said Call Booked, but there is no calendar event. I moved it back to Approved for Outreach.`;
+  });
+  return `${lines.join(" ")}${result.remaining ? ` ${result.remaining} still open.` : " That problem is fixed."}`;
 }

@@ -4,6 +4,7 @@ import {
   BOOKING_REPAIR_MUTATES_CALENDAR,
   bookingLightFromInvariant,
   persistenceFailedRepairNote,
+  repairSpeech,
   shouldRepairPipelineMismatch,
 } from "./booking-reconcile.ts";
 import { promotedStageForBooking } from "./booking-stage.ts";
@@ -56,6 +57,20 @@ test("association is repaired only with persisted google event id + prospect uid
     calendarStatus: "booked",
     pipelineStage: "New",
   }), false);
+});
+
+test("repair speech says what changed", () => {
+  assert.match(repairSpeech({
+    repaired: 1,
+    remaining: 0,
+    rows: [{ name: "AWO Lending", repaired: true, toStage: "Call Booked" }],
+  }), /AWO Lending is now Call Booked/);
+  assert.match(repairSpeech({
+    repaired: 1,
+    remaining: 0,
+    rows: [{ name: "TEST", repaired: true, toStage: "Approved for Outreach" }],
+  }), /moved it back to Approved for Outreach/);
+  assert.match(repairSpeech({ repaired: 0, remaining: 1, rows: [] }), /Nothing was changed/);
 });
 
 test("repair path never mutates Calendar / never invents events", () => {
