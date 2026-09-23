@@ -115,7 +115,39 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
     }
   }
 
-  const dirty: Prospect[] = [];
+  const touchedMeetings: Prospect[] = [];
+  try {
+    const { getSql } = await import("../db.ts");
+    const sql = await getSql();
+    const events = await sql<{ prospect_uid: string; google_event_id: string; start_at: string; status: string }>`
+      select prospect_uid, google_event_id, start_at::text, status from calendar_events
+      where user_id = ${userId} and status = 'booked' and prospect_uid <> ''
+    `;
+    const { stopSequencesForProspect } = await import("../mail/sql.server.ts");
+    for (const event of events) {
+      const prospect = prospects.find((p) => p.uid === event.prospect_uid);
+      if (!prospect) continue;
+      if (prospect.stage === "Won" || prospect.stage === "Lost" || prospect.stage === "Do Not Contact") continue;
+      if (prospect.meeting_event_id === event.google_event_id) continue;
+      const rescheduled = Boolean(prospect.meeting_event_id);
+      prospect.meeting_at = event.start_at;
+      prospect.meeting_event_id = event.google_event_id || prospect.meeting_event_id;
+      prospect.stage = "Call Booked";
+      prospect.stage_plain = "Call is on the calendar";
+      prospect.sales_outcome = "";
+      prospect.history = [...(prospect.history || []), {
+        at: new Date().toISOString(),
+        action: rescheduled ? "meeting_rescheduled" : "meeting_booked",
+        detail: rescheduled ? "Meeting time changed. Cold outreach stays off." : "Meeting booked. Outreach stopped.",
+      }];
+      await stopSequencesForProspect(userId, prospect.uid || "");
+      touchedMeetings.push(prospect);
+    }
+  } catch {
+    /* calendar rows may be absent — do not stop the tick */
+  }
+
+  const dirty: Prospect[] = [...touchedMeetings];
   const today = new Date().toISOString().slice(0, 10);
   let sentToday = prospects.filter((p) => (p.history || []).some((h) => h.action === "autonomy_sent" && (h.at || "").slice(0, 10) === today)).length;
   const bounced = new Set<string>();
@@ -237,13 +269,16 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       const brief = callPrep({
         company: prospect.name,
         contact: prospect.contacts?.[0]?.name || email,
-        when: "",
+        when: prospect.meeting_at || "",
         vertical: prospect.vertical,
         city: prospect.city,
         finding: prospect.outreach?.brief.angle || opportunities(prospect)[0]?.plain || "",
         emailsSent: acted(prospect, "autonomy_sent") || acted(prospect, "email_sent") ? 1 : 0,
         replySummary: (prospect.history || []).filter((h) => h.action === "reply" || h.action === "autonomy_replied").map((h) => h.detail || "").join(" "),
         bookingUrl: settings.bookingUrl,
+        website: prospect.website,
+        angle: prospect.outreach?.brief.angle || "",
+        offer: prospect.outreach?.brief.help || "",
       });
       const prepped = stamp(prospect, "call_prep", brief);
       dirty.push(acted(prospect, "meeting_booked") ? prepped : stamp(prepped, "meeting_booked", "Meeting is booked. Outreach is stopped."));

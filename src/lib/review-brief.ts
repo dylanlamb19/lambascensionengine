@@ -68,6 +68,13 @@ export type Prospect = {
   website_source?: string;
   contact_page?: string;
   contact_page_source?: string;
+  meeting_at?: string;
+  meeting_event_id?: string;
+  sales_outcome?: "" | "SHOWED" | "NO_SHOW" | "FOLLOW_UP_NEEDED" | "WON" | "LOST";
+  client_value?: number | null;
+  billing_type?: "" | "one-time" | "monthly";
+  lost_reason?: string;
+  outcome_note?: string;
 };
 
 export type Opportunity = {

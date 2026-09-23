@@ -8,22 +8,28 @@ export function callPrep(opts: {
   emailsSent: number;
   replySummary: string;
   bookingUrl: string;
+  website?: string;
+  angle?: string;
+  offer?: string;
 }): string {
   const finding = opts.finding.trim() || "No single verified website gap was stored. Do not invent one on the call.";
   return [
     `${opts.company}`,
     opts.contact ? `With ${opts.contact}` : "Contact not named on file",
     opts.when ? `When: ${opts.when}` : "",
+    opts.website && opts.website !== "UNKNOWN" ? `Website: ${opts.website}` : "",
     "",
     `What they do: ${opts.vertical || "Unknown category"}${opts.city ? ` in ${opts.city}` : ""}.`,
     `Why they were targeted: ${finding}`,
+    opts.angle ? `Original angle: ${opts.angle}` : "",
+    opts.offer ? `Possible offer from what we stored: ${opts.offer}` : "No packaged offer was stored. Do not invent one.",
     `Emails sent: ${opts.emailsSent}.`,
     opts.replySummary ? `What they said: ${opts.replySummary}` : "No reply text stored.",
     "",
     "Ask: How are you getting customers today, and what happens after someone visits the site?",
     "Likely objection: they may say they already get enough calls. Ask what happens to people who are not ready to call.",
     "Do not invent testimonials, prices, or results. Do not claim their revenue, ad spend, or that they already want to buy.",
-    opts.bookingUrl ? `Booking link on file: ${opts.bookingUrl}` : "",
+    opts.bookingUrl ? `Booking link on file: ${opts.bookingUrl}` : "No booking link saved.",
     "Best next step: agree on one acquisition gap and whether a short engagement is worth a proposal.",
   ].filter((line) => line !== "").join("\n");
 }
