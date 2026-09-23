@@ -44,12 +44,7 @@ export function looksLikeEmail(raw: string): boolean {
 
 export function needsEmailEnrichment(p: Prospect): boolean {
   if (usableEmailRoute(p)) return false;
-  const c = evaluateContactability(p);
-  if (c.status === "NEEDS_CONTACT_INFORMATION") return true;
-  if (c.blockers.includes("no_email") && c.status !== "BLOCKED" && c.status !== "SUPPRESSED") {
-    return c.status === "NEEDS_CONTACT_INFORMATION";
-  }
-  return false;
+  return evaluateContactability(p).status === "NEEDS_CONTACT_INFORMATION";
 }
 
 export function readEmailEnrichAttempts(p: Prospect): number {

@@ -29,6 +29,24 @@ function isBookingMismatch(errorCode: string | undefined): boolean {
   return code.includes("PIPELINE_STATE_MISMATCH") || (code.includes("BOOKING") && code.includes("MISMATCH"));
 }
 
+function affectedLine(bug: { affected_records?: Array<Record<string, string>>; evidence?: Record<string, unknown> }): string {
+  const rows = bug.affected_records || [];
+  const bits: string[] = [];
+  for (const row of rows.slice(0, 3)) {
+    const uid = row.prospectUid || row.uid || "";
+    const gid = row.googleEventId || "";
+    if (uid && gid) bits.push(`prospect ${uid} · googleEventId ${gid}`);
+    else if (uid) bits.push(`prospect ${uid}${gid === "" ? " · googleEventId (empty)" : ""}`);
+    else if (gid) bits.push(`googleEventId ${gid}`);
+  }
+  if (!bits.length && bug.evidence) {
+    const uid = String(bug.evidence.prospectUid || bug.evidence.uid || "");
+    const gid = String(bug.evidence.googleEventId ?? "");
+    if (uid) bits.push(`prospect ${uid}${gid ? ` · googleEventId ${gid}` : " · googleEventId (empty)"}`);
+  }
+  return bits.join("; ");
+}
+
 export function SystemHealthAlert({
   snapshot,
   onOpen,
@@ -172,11 +190,15 @@ export function SystemHealthPage({
           ) : null}
           {snap.bugs.length ? (
             <ul className="mt-3 list-disc pl-5">
-              {snap.bugs.map((b) => (
-                <li key={b.bug_id}>
-                  {b.error_code} · {featureLabel(b.feature)} · {b.severity} · {b.status}
-                </li>
-              ))}
+              {snap.bugs.map((b) => {
+                const affected = affectedLine(b);
+                return (
+                  <li key={b.bug_id}>
+                    {b.error_code} · {featureLabel(b.feature)} · {b.severity} · {b.status}
+                    {affected ? <span className="mt-0.5 block text-xs">Affected: {affected}</span> : null}
+                  </li>
+                );
+              })}
             </ul>
           ) : <p className="mt-3">Ledger is clear.</p>}
           <p className="mt-3">Watching: {(snap.watching || []).join(", ")}.</p>

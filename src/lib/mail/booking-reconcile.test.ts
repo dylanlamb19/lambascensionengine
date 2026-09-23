@@ -22,6 +22,19 @@ test("Booking mismatch turns Booking red", () => {
   assert.equal(findings[0]?.severity, "high");
   assert.equal(findings[0]?.evidence.googleEventId, "gcal-abc");
   assert.equal(findings[0]?.evidence.prospectUid, "uid-fire");
+  assert.match(findings[0]?.summary || "", /without a matching Call Booked/);
+});
+
+test("reverse Call Booked without google event uses distinct summary", () => {
+  const inv = {
+    ...EMPTY_INVARIANTS,
+    bookedMissingPipeline: [{ googleEventId: "", prospectUid: "uid-reverse" }],
+  };
+  const findings = evaluateInvariants(inv);
+  assert.equal(findings[0]?.code, "PIPELINE_STATE_MISMATCH");
+  assert.match(findings[0]?.summary || "", /Call Booked without a booked Google Calendar event/);
+  assert.equal(findings[0]?.evidence.googleEventId, "");
+  assert.equal(findings[0]?.evidence.prospectUid, "uid-reverse");
 });
 
 test("repaired booking invariant turns Booking green", () => {
@@ -51,6 +64,20 @@ test("association is repaired only with persisted google event id + prospect uid
   assert.equal(promotedStageForBooking("Contacted"), "Call Booked");
   assert.equal(promotedStageForBooking("Won"), null);
   assert.equal(promotedStageForBooking("Do Not Contact"), null);
+  assert.equal(promotedStageForBooking(""), "Call Booked");
+  assert.equal(promotedStageForBooking("Booked"), "Call Booked");
+  assert.equal(shouldRepairPipelineMismatch({
+    googleEventId: "evt-1",
+    prospectUid: "uid-fire",
+    calendarStatus: "booked",
+    pipelineStage: "",
+  }), true);
+  assert.equal(shouldRepairPipelineMismatch({
+    googleEventId: "evt-1",
+    prospectUid: "uid-fire",
+    calendarStatus: "booked",
+    pipelineStage: "Booked",
+  }), true);
   assert.equal(shouldRepairPipelineMismatch({
     googleEventId: "",
     prospectUid: "uid-fire",

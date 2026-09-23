@@ -29,11 +29,14 @@ export function evaluateInvariants(snap: InvariantSnapshot): SentinelFinding[] {
   }
 
   for (const row of snap.bookedMissingPipeline) {
+    const hasGoogle = Boolean((row.googleEventId || "").trim());
     out.push(makeFinding(
       "PIPELINE_STATE_MISMATCH",
-      "A Google Calendar booking exists without a matching Call Booked pipeline state.",
+      hasGoogle
+        ? "A Google Calendar booking exists without a matching Call Booked pipeline state."
+        : "A prospect is Call Booked without a booked Google Calendar event id. Repair will not invent a Calendar event.",
       { googleEventId: row.googleEventId, prospectUid: row.prospectUid },
-      { extraKey: row.googleEventId, affected: [{ googleEventId: row.googleEventId, prospectUid: row.prospectUid }] },
+      { extraKey: row.googleEventId || row.prospectUid, affected: [{ googleEventId: row.googleEventId, prospectUid: row.prospectUid }] },
     ));
   }
 
