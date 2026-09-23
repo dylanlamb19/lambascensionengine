@@ -1,5 +1,6 @@
 import { isAllowedTool, type AraDeskContext } from "./tools.ts";
 import { sessionUpdatePayload } from "./ara-context.ts";
+import { conversationItemEvent } from "./ara-memory.ts";
 import { realtimeErrorText, voiceFailureReason } from "./voice-failure.ts";
 import { shouldFailClosedOnRealtimeError } from "./lifecycle.ts";
 import { araSpeech } from "./speech-controller.ts";
@@ -64,6 +65,7 @@ export class AraRealtime {
   private micLive = false;
   private sessionReady = false;
   private givenStream = false;
+  private seededIds = new Set<string>();
 
   constructor(
     private readonly token: string,
@@ -116,6 +118,7 @@ export class AraRealtime {
         return;
       }
       ws.send(JSON.stringify(sessionUpdatePayload(ctx)));
+      this.seedSavedConversation(ctx);
       this.sessionReady = true;
       araSpeech().setSession(true);
       if (this.microphoneLive) this.handlers.onStatus("listening");
@@ -147,11 +150,22 @@ export class AraRealtime {
   updateContext(ctx: AraDeskContext) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(sessionUpdatePayload(ctx)));
+      this.seedSavedConversation(ctx);
+    }
+  }
+
+  private seedSavedConversation(ctx: AraDeskContext) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    for (const message of (ctx.conversationMessages || []).slice(-30)) {
+      if (!message.id || !message.text || this.seededIds.has(message.id)) continue;
+      this.seededIds.add(message.id);
+      this.ws.send(JSON.stringify(conversationItemEvent(message)));
     }
   }
 
   stop() {
     this.closed = true;
+    this.seededIds.clear();
     this.sessionReady = false;
     this.micLive = false;
     try { this.processor?.disconnect(); } catch { /* ignore */ }

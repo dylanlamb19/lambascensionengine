@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendAraTurn, emptyAraLog } from "./ara-history.ts";
+import { appendAraTurn, emptyAraLog, startAraThread } from "./ara-history.ts";
 import {
   answerMemory,
   classifyMemoryAsk,
@@ -8,6 +8,7 @@ import {
   foldFinalUserTurn,
   historyInstruction,
   memoryAskClearsPending,
+  panelMessages,
   preferServerLog,
   sanitizeAraLog,
   scopedConversationUser,
@@ -24,7 +25,8 @@ test("what did you just say uses the saved Ara message, not the page", () => {
   const ask = classifyMemoryAsk("What did you just say?");
   assert.equal(ask?.kind, "last_ara");
   const found = answerMemory(log, ask!, "What did you just say?");
-  assert.equal(found.text, "The latest deployment is healthy.");
+  assert.match(found.text, /The latest deployment is healthy/);
+  assert.match(found.text, /^I said,/);
   assert.equal(classifyMemoryAsk("What am I looking at?"), null);
   assert.equal(classifyMemoryAsk("What did you just add?"), null);
   const page = "You’re looking at outreach for Davis Roofing Solutions";
@@ -32,13 +34,26 @@ test("what did you just say uses the saved Ara message, not the page", () => {
   assert.equal(page.includes("Davis"), true);
 });
 
-test("Ara, what's the last thing you said to me uses an older thread too", () => {
-  let older = appendAraTurn(emptyAraLog(), "ara", "The latest deployment is healthy.", 1_000);
-  older = { ...older, activeId: "new", threads: [...older.threads, { id: "new", title: "Ara", updatedAt: 5_000, turns: [] }] };
-  older = appendAraTurn(older, "you", "Ara, what's the last thing you said to me?", 5_100);
-  const ask = classifyMemoryAsk("Ara, what's the last thing you said to me?");
+test("screenshot: Okay. Stopped. is the last visible Ara message", () => {
+  let log = appendAraTurn(emptyAraLog(), "ara", "Okay. Stopped.", 1_000);
+  log = appendAraTurn(log, "you", "What's the last thing you said to me?", 1_100);
+  const panel = panelMessages(log);
+  const ask = classifyMemoryAsk("What's the last thing you said to me?");
   assert.equal(ask?.kind, "last_ara");
-  assert.equal(answerMemory(older, ask!, "Ara, what's the last thing you said to me?").text, "The latest deployment is healthy.");
+  const found = answerMemory(log, ask!, "What's the last thing you said to me?");
+  assert.equal(found.text, "I said, 'Okay. Stopped.'");
+  assert.equal(panel.messages.some((turn) => turn.text === "Okay. Stopped."), true);
+  assert.equal(found.text.includes("Davis"), false);
+  const next = classifyMemoryAsk("What did I just ask you?");
+  assert.match(answerMemory(log, next!, "What did I just ask you?").text, /last thing you said to me/i);
+});
+
+test("New conversation does not use the previous thread", () => {
+  const older = appendAraTurn(emptyAraLog(), "ara", "Okay. Stopped.", 1_000);
+  const fresh = startAraThread(older, 2_000);
+  const asked = appendAraTurn(fresh, "you", "What's the last thing you said to me?", 2_100);
+  assert.equal(answerMemory(asked, { kind: "last_ara" }, "What's the last thing you said to me?").ok, false);
+  assert.equal(panelMessages(older).messages[0].text, "Okay. Stopped.");
 });
 
 test("what did I just say and the message before that come from the thread", () => {
@@ -54,11 +69,10 @@ test("what did I just say and the message before that come from the thread", () 
 test("reload and a new voice session still have the saved thread", () => {
   const log = spoken("Sentinel is yellow because Ara Voice is stale.");
   const reloaded = sanitizeAraLog(JSON.parse(JSON.stringify(log)));
-  assert.equal(answerMemory(reloaded, { kind: "last_ara" }).text, "Sentinel is yellow because Ara Voice is stale.");
+  assert.equal(answerMemory(reloaded, { kind: "last_ara" }).text, "I said, 'Sentinel is yellow because Ara Voice is stale.'");
   const instructions = historyInstruction(reloaded);
   assert.match(instructions, /Sentinel is yellow/);
-  assert.match(instructions, /cannot see the Conversations box/);
-  assert.doesNotMatch(instructions, /I can read the full screen/);
+  assert.match(instructions, /SAVED CONVERSATION is separate/);
 });
 
 test("interim transcripts are not stored and a replayed final runs once", () => {
@@ -78,7 +92,7 @@ test("interim transcripts are not stored and a replayed final runs once", () => 
 test("missing history is truthful and another owner is blocked", () => {
   const missing = answerMemory(emptyAraLog(), { kind: "last_ara" });
   assert.equal(missing.ok, false);
-  assert.match(missing.text, /couldn’t retrieve/i);
+  assert.match(missing.text, /couldn't load our previous conversation/i);
   assert.equal(scopedConversationUser("dylan", "someone-else"), null);
   assert.equal(scopedConversationUser("dylan", "dylan"), "dylan");
   assert.equal(memoryAskClearsPending({ kind: "last_ara" }), false);

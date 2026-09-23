@@ -84,7 +84,7 @@ import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
 import { mergeAraCaption, shouldCloseTaskSheet, TASK_SHEET_DISMISS_GUARD_MS } from "@/lib/voice/task-sheet";
 import { appendAraTurn, deleteAraThread, deleteAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
-import { answerMemory, classifyMemoryAsk, foldFinalUserTurn, historyInstruction, preferServerLog, shouldPersistTranscript, type UtteranceMark } from "@/lib/voice/ara-memory";
+import { answerMemory, classifyMemoryAsk, foldFinalUserTurn, panelMessages, preferServerLog, shouldPersistTranscript, type UtteranceMark } from "@/lib/voice/ara-memory";
 import { announceToAra, announceSource } from "@/lib/voice/announce";
 import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
 import { buildScreenContext } from "@/lib/voice/screen-context";
@@ -336,6 +336,7 @@ export function OwnerDesk() {
   const [youSaid, setYouSaid] = useState("");
   const youSaidRef = useRef("");
   const utteranceRef = useRef<UtteranceMark | null>(null);
+  const memoryHoldRef = useRef(0);
   const [voiceReply, setVoiceReply] = useState("");
   const [araLog, setAraLog] = useState<AraLog>(emptyAraLog);
   const [araFocusTurn, setAraFocusTurn] = useState<string | null>(null);
@@ -1629,7 +1630,8 @@ export function OwnerDesk() {
       taskUid: ctx.taskUid,
       screenActions: ctx.screenActions,
       lookingAt: ctx.lookingAt,
-      conversationHistory: historyInstruction(araLogRef.current),
+      conversationId: panelMessages(araLogRef.current).conversationId,
+      conversationMessages: panelMessages(araLogRef.current).messages,
       important: ctx.important,
       nextFocus: ctx.next,
       screenFacts: ctx.facts,
@@ -2659,11 +2661,8 @@ export function OwnerDesk() {
           handleAraOwnerTranscript(text, true, itemId || "");
         },
         onAraTranscript: (text, isFinal) => {
-          const asked = classifyMemoryAsk(youSaidRef.current);
-          if (asked && /don'?t have a record|start of (our|this) current session|no record of a previous/i.test(text || "")) {
+          if (Date.now() < memoryHoldRef.current) {
             araRef.current?.cancelResponse();
-            const found = answerMemory(araLogRef.current, asked, youSaidRef.current);
-            utter(found.text, "TOOL_RESULT", `memory:${asked.kind}`);
             return;
           }
           if (/opening calendar/i.test(text) && !shouldAllowCalendarNavigation(youSaidRef.current, pendingOwnerCalRef.current)) {
@@ -2689,6 +2688,14 @@ export function OwnerDesk() {
             return { ok: true, ignored: true, cancelled_speech: true, conversation_active: true };
           }
           const result = executeAllowlistedTool(name, args, araDesk(), "owner_session");
+          if (name === "get_saved_conversation") {
+            const spoken = String(result.output.spoken || "");
+            if (spoken) {
+              memoryHoldRef.current = Date.now() + 6000;
+              utter(spoken, "TOOL_RESULT", "memory:tool");
+            }
+            return { ...hydrateAraOutput(name, result), already_spoken: true };
+          }
           if (result.plan.type === "design") {
             if (FLAGS.DESIGN_DIRECTOR) void applyLocalDesignOps(result.plan.operations, "ARA", result.plan.preview);
             const rec = makeVoiceAudit({
@@ -2807,6 +2814,7 @@ export function OwnerDesk() {
     const ask = classifyMemoryAsk(text);
     if (ask) {
       araRef.current?.cancelResponse();
+      memoryHoldRef.current = Date.now() + 6000;
       const found = answerMemory(folded.log, ask, text);
       utter(found.text, "TOOL_RESULT", `memory:${ask.kind}`);
       void logVoiceAuditFn({ data: { tool: found.action, result: ask.kind } }).catch(() => undefined);

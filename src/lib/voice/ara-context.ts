@@ -177,7 +177,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     `Current screen: ${ctx.screen || ctx.view}.`,
     `Current route: ${ctx.view}.`,
     `What Dylan is looking at: ${ctx.lookingAt || "unknown"}. Use this only when he asks about the screen.`,
-    ctx.conversationHistory || "CONVERSATION HISTORY: none saved yet.",
+    `Saved conversation id: ${ctx.conversationId || "none"}. Visible saved messages: ${ctx.conversationMessages?.length || 0}. Those messages are not this screen. Read them with get_saved_conversation. If that tool is available, do not say you have no stored history.`,
     `Important on this screen: ${ctx.important || "none"}.`,
     `Suggested next step: ${ctx.nextFocus || "none"}.`,
     `Screen facts (do not invent beyond these): ${(ctx.screenFacts || []).map((f) => `[${f.kind}] ${f.text}`).join(" | ") || "none"}.`,

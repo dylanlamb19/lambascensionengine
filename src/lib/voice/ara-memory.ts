@@ -28,7 +28,7 @@ export function classifyMemoryAsk(text: string): MemoryAsk | null {
   if (/what did you just add|what am i looking at|what is on (this )?screen|explain this screen/.test(q)) return null;
   const recent = q.match(/repeat your last (\d+) messages?/);
   if (recent) return { kind: "recent_ara", n: Math.min(5, Math.max(1, Number(recent[1]))) };
-  if (/what did you say before that|go back to what you said|before that/.test(q) && /say|said|tell|told/.test(q)) return { kind: "ara_before" };
+  if (/what did you say before that|go back to what you said/.test(q)) return { kind: "ara_before" };
   if (
     /what did you just (say|tell me)|repeat what you (just )?said|show me (what you just said|your last message)|your last message/.test(q)
     || /last thing you (said|told)/.test(q)
@@ -42,6 +42,7 @@ export function classifyMemoryAsk(text: string): MemoryAsk | null {
   ) return { kind: "last_user" };
   if (/what were we just talking about|what were we talking about|previous conversation|what did we just talk about/.test(q)) return { kind: "topic" };
   if (/read (our |the )?ara conversation|conversations box|saved ara conversation|can you not read the conversation|do you have a record/.test(q)) return { kind: "can_read" };
+  if (/why can'?t you (go back|see|read)|go back and see|can you go back/.test(q)) return { kind: "can_read" };
   return null;
 }
 
@@ -49,11 +50,13 @@ export function memoryAskClearsPending(_ask: MemoryAsk | null): boolean {
   return false;
 }
 
+export function panelMessages(log: AraLog): { conversationId: string | null; messages: AraTurn[] } {
+  const thread = log.threads.find((item) => item.id === log.activeId) || log.threads[0] || null;
+  return { conversationId: thread?.id || null, messages: thread?.turns || [] };
+}
+
 function turns(log: AraLog): AraTurn[] {
-  return log.threads
-    .flatMap((thread) => thread.turns)
-    .filter((turn) => turn.text)
-    .sort((a, b) => a.at - b.at);
+  return panelMessages(log).messages;
 }
 
 function prior(log: AraLog, currentText: string): AraTurn[] {
@@ -66,34 +69,53 @@ function prior(log: AraLog, currentText: string): AraTurn[] {
 
 export function answerMemory(log: AraLog, ask: MemoryAsk, currentText = ""): { ok: boolean; text: string; action: string } {
   const history = prior(log, currentText);
-  const ara = history.filter((t) => t.role === "ara");
-  const you = history.filter((t) => t.role === "you");
+  const ara = history.filter((turn) => turn.role === "ara");
+  const you = history.filter((turn) => turn.role === "you");
   if (ask.kind === "last_ara" || ask.kind === "can_read") {
     const last = ara[ara.length - 1];
-    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn’t retrieve the previous Ara message." };
+    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn't load our previous conversation messages right now." };
     if (ask.kind === "can_read") {
-      return { ok: true, action: "ARA_HISTORY_LOOKUP", text: `I can access the saved Ara conversation. The last thing I said was: ${last.text}` };
+      return { ok: true, action: "ARA_HISTORY_LOOKUP", text: `I can read this saved conversation. The last thing I said was: ${last.text}` };
     }
-    return { ok: true, action: "ARA_HISTORY_LOOKUP", text: last.text };
+    return { ok: true, action: "ARA_HISTORY_LOOKUP", text: `I said, '${last.text}'` };
   }
   if (ask.kind === "last_user") {
     const last = you[you.length - 1];
-    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn’t retrieve your previous message." };
+    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn't load our previous conversation messages right now." };
     return { ok: true, action: "ARA_HISTORY_LOOKUP", text: `You said: ${last.text}` };
   }
   if (ask.kind === "ara_before") {
     const last = ara[ara.length - 2];
-    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn’t retrieve the Ara message before that." };
+    if (!last) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn't load our previous conversation messages right now." };
     return { ok: true, action: "ARA_HISTORY_LOOKUP", text: last.text };
   }
   if (ask.kind === "recent_ara") {
     const slice = ara.slice(-ask.n);
-    if (!slice.length) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn’t retrieve the previous Ara messages." };
-    return { ok: true, action: "ARA_HISTORY_LOOKUP", text: slice.map((t) => t.text).join(" ") };
+    if (!slice.length) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn't load our previous conversation messages right now." };
+    return { ok: true, action: "ARA_HISTORY_LOOKUP", text: slice.map((turn) => turn.text).join(" ") };
   }
-  const bits = history.slice(-6).map((t) => `${t.role === "you" ? "You" : "I"}: ${t.text}`);
-  if (!bits.length) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn’t retrieve the previous conversation." };
+  const bits = history.slice(-6).map((turn) => `${turn.role === "you" ? "You" : "I"}: ${turn.text}`);
+  if (!bits.length) return { ok: false, action: "ARA_HISTORY_LOOKUP_FAILED", text: "I couldn't load our previous conversation messages right now." };
   return { ok: true, action: "ARA_HISTORY_LOOKUP", text: `We were just talking about this. ${bits.join(" ")}` };
+}
+
+export function savedConversationLookup(messages: AraTurn[], ask: MemoryAsk, currentText = "") {
+  return answerMemory({
+    activeId: "panel",
+    threads: [{ id: "panel", title: "Ara", updatedAt: messages.at(-1)?.at || 0, turns: messages }],
+  }, ask, currentText);
+}
+
+export function conversationItemEvent(message: { role: "you" | "ara"; text: string }): Record<string, unknown> {
+  const assistant = message.role === "ara";
+  return {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: assistant ? "assistant" : "user",
+      content: [{ type: assistant ? "output_text" : "input_text", text: message.text }],
+    },
+  };
 }
 
 export function conversationContext(log: AraLog, limit = 24): { summary: string; recent: string } {
@@ -101,27 +123,24 @@ export function conversationContext(log: AraLog, limit = 24): { summary: string;
   const recentTurns = all.slice(-limit);
   const older = all.slice(0, Math.max(0, all.length - limit));
   const summary = older
-    .filter((t) => t.role === "you" || t.role === "ara")
     .slice(-8)
-    .map((t) => `${t.role === "you" ? "Dylan" : "Ara"}: ${t.text.slice(0, 140)}`)
+    .map((turn) => `${turn.role === "you" ? "Dylan" : "Ara"}: ${turn.text.slice(0, 140)}`)
     .join(" | ")
     .slice(0, 700);
   const recent = recentTurns
-    .map((t) => `${t.role === "you" ? "USER" : "ARA"}: ${t.text.slice(0, 500)}`)
+    .map((turn) => `${turn.role === "you" ? "USER" : "ARA"}: ${turn.text.slice(0, 500)}`)
     .join("\n")
     .slice(0, 4000);
   return { summary, recent };
 }
 
 export function historyInstruction(log: AraLog): string {
-  const { summary, recent } = conversationContext(log);
+  const panel = panelMessages(log);
+  const { recent } = conversationContext(log);
   return [
-    "CONVERSATION HISTORY is the saved Ara thread for this owner. It is not the current page and not a screen reading.",
-    "If Dylan asks what you just said, what he just said, or what you were talking about, answer only from CONVERSATION HISTORY. Do not answer with the company on screen.",
-    "You cannot see the Conversations box or read the screen. You can use the saved conversation history included here.",
-    "If that history does not contain the message, say you couldn’t retrieve it. Do not invent it.",
-    summary ? `OLDER SUMMARY: ${summary}` : "OLDER SUMMARY: none.",
-    recent ? `RECENT TURNS:\n${recent}` : "RECENT TURNS: none saved.",
+    "SAVED CONVERSATION is separate from the current screen.",
+    `Active conversation id: ${panel.conversationId || "none"}.`,
+    recent ? `VISIBLE TURNS:\n${recent}` : "VISIBLE TURNS: none in the open conversation.",
   ].join("\n");
 }
 
@@ -152,14 +171,14 @@ export function foldFinalUserTurn(
     && norm(clean).length > norm(last.text).length,
   );
   if ((sameItem || growingWithoutId) && last) {
-    const thread = log.threads.find((t) => t.id === log.activeId) || log.threads[0];
+    const thread = log.threads.find((item) => item.id === log.activeId) || log.threads[0];
     if (thread) {
-      const idx = [...thread.turns].reverse().findIndex((t) => t.role === "you" && norm(t.text) === norm(last.text));
+      const idx = [...thread.turns].reverse().findIndex((turn) => turn.role === "you" && norm(turn.text) === norm(last.text));
       if (idx >= 0) {
         const at = thread.turns.length - 1 - idx;
         const turnsNext = thread.turns.slice();
         turnsNext[at] = { ...turnsNext[at], text: clean, at: now };
-        const threads = log.threads.map((t) => t.id === thread.id ? { ...t, turns: turnsNext, updatedAt: now } : t);
+        const threads = log.threads.map((item) => item.id === thread.id ? { ...item, turns: turnsNext, updatedAt: now } : item);
         return { log: { ...log, threads }, action: "replace", state: { itemId: itemId || last.itemId, text: clean, at: now } };
       }
     }
@@ -175,23 +194,23 @@ export function sanitizeAraLog(raw: unknown): AraLog {
   if (!raw || typeof raw !== "object") return emptyAraLog();
   const src = raw as AraLog;
   if (!Array.isArray(src.threads)) return emptyAraLog();
-  const threads = src.threads.filter((t) => t && typeof t.id === "string" && Array.isArray(t.turns)).slice(0, 40).map((t) => ({
-    id: t.id,
-    title: String(t.title || "Ara").slice(0, 80),
-    updatedAt: Number(t.updatedAt) || 0,
-    turns: t.turns.filter((turn) => turn && (turn.role === "you" || turn.role === "ara") && typeof turn.text === "string").slice(-200).map((turn) => ({
+  const threads = src.threads.filter((item) => item && typeof item.id === "string" && Array.isArray(item.turns)).slice(0, 40).map((item) => ({
+    id: item.id,
+    title: String(item.title || "Ara").slice(0, 80),
+    updatedAt: Number(item.updatedAt) || 0,
+    turns: item.turns.filter((turn) => turn && (turn.role === "you" || turn.role === "ara") && typeof turn.text === "string").slice(-200).map((turn) => ({
       id: String(turn.id || "turn"),
       role: turn.role,
       text: turn.text.replace(/\s+/g, " ").trim().slice(0, 2000),
       at: Number(turn.at) || 0,
     })).filter((turn) => turn.text),
   }));
-  const activeId = threads.some((t) => t.id === src.activeId) ? src.activeId : (threads[0]?.id ?? null);
+  const activeId = threads.some((item) => item.id === src.activeId) ? src.activeId : (threads[0]?.id ?? null);
   return { activeId, threads };
 }
 
 export function preferServerLog(server: AraLog, local: AraLog): AraLog {
-  const count = (log: AraLog) => log.threads.reduce((n, t) => n + t.turns.length, 0);
+  const count = (log: AraLog) => log.threads.reduce((n, item) => n + item.turns.length, 0);
   if (count(server) === 0 && count(local) > 0) return local;
   return count(server) > 0 ? server : local;
 }

@@ -1,3 +1,4 @@
+import { savedConversationLookup } from "./ara-memory.ts";
 import { confirmSendPhraseOk, confirmSchedulePhraseOk, confirmPhraseOk as confirmPhraseOkBase } from "./intents.ts";
 import { allowSendRecipient } from "../mail/test-mode.ts";
 import type { IntentName } from "./types.ts";
@@ -42,6 +43,7 @@ import { spokenEligibleReport } from "../prospects/pipeline-queues.ts";
 
 /** Tools Ara is allowed to call. Anything else is rejected. */
 export const ALLOWED_TOOLS = [
+  "get_saved_conversation",
   "get_daily_tasks",
   "open_prospect",
   "open_review",
@@ -361,7 +363,8 @@ export type AraDeskContext = {
   taskUid?: string | null;
   screenActions?: { id: string; label: string; aliases: string[]; risk: string; tool: string }[];
   lookingAt?: string;
-  conversationHistory?: string;
+  conversationId?: string | null;
+  conversationMessages?: { id: string; role: "you" | "ara"; text: string; at: number }[];
   important?: string;
   nextFocus?: string;
   screenFacts?: { kind: string; text: string }[];
@@ -503,6 +506,7 @@ function uidProps() {
 export function realtimeToolSchemas(): { type: "function"; name: string; description: string; parameters: Record<string, unknown> }[] {
   const uid = uidProps();
   return [
+    { type: "function", name: "get_saved_conversation", description: "Read the Ara conversation currently visible in the Conversations panel. This is not the screen, the prospect, or business state. Use which=last_ara for ‘what’s the last thing you said’, last_user for what Dylan just said, ara_before for the Ara message before that, or recent for what you were talking about. If already_spoken, remain silent.", parameters: { type: "object", properties: { which: { type: "string" }, current_text: { type: "string" } } } },
     { type: "function", name: "get_daily_tasks", description: "What the owner needs to do today.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_pipeline", description: "Pipeline counts by stage. Also opens Pipeline.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "navigate_home", description: "Open the Home screen. Same as the Home button.", parameters: { type: "object", properties: {} } },
@@ -736,6 +740,32 @@ export function executeAllowlistedTool(
   }
 
   const target = findProspect(ctx, args);
+
+  if (tool === "get_saved_conversation") {
+    const messages = ctx.conversationMessages || [];
+    const which = String(args.which || "last_ara");
+    const ask = which === "last_user" ? { kind: "last_user" as const }
+      : which === "ara_before" ? { kind: "ara_before" as const }
+        : which === "recent" ? { kind: "topic" as const }
+          : { kind: "last_ara" as const };
+    const found = savedConversationLookup(messages, ask, String(args.current_text || ctx.lastOwnerUtterance || ""));
+    return {
+      ok: found.ok,
+      tool,
+      rejected: false,
+      output: {
+        ok: found.ok,
+        source: "conversations_panel",
+        conversation_id: ctx.conversationId || null,
+        spoken: found.text,
+        already_spoken: true,
+        staysOnScreen: true,
+        changed: false,
+        messages: messages.slice(-24).map((message) => ({ role: message.role, text: message.text, at: message.at })),
+      },
+      plan: { type: "none" },
+    };
+  }
 
   if (tool === "get_daily_tasks") {
     const spoken = ctx.tasks.length
