@@ -5,8 +5,7 @@ import { decideProspect, isSameCompany, type AutoView } from "./decide.ts";
 import { mayFirstTouch, reputationPause } from "./deliverability.ts";
 import { industryNudge } from "./learn.ts";
 import { priorityScore } from "./priority.ts";
-import { planReply } from "./replies.ts";
-import { nextMarket, normalizeAutonomy, type AutonomySettings } from "./settings.ts";
+import { autopilotAuthorized, autonomyExecutionOff, autonomyTickEffects, legacyAutopilotUnauthorized, nextMarket, normalizeAutonomy, type AutonomySettings } from "./settings.ts";
 
 function acted(p: Prospect, action: string): boolean {
   return (p.history || []).some((h) => h.action === action);
@@ -39,7 +38,22 @@ async function loadAutonomy(userId: string): Promise<AutonomySettings> {
     const { getSql } = await import("../db.ts");
     const sql = await getSql();
     const rows = await sql<{ autonomy: unknown }>`select autonomy from outreach_settings where user_id = ${userId}`;
-    return normalizeAutonomy(rows[0]?.autonomy);
+    const raw = rows[0]?.autonomy;
+    if (legacyAutopilotUnauthorized(raw)) {
+      const repaired = autonomyExecutionOff(raw);
+      await sql`
+        update outreach_settings set autonomy = ${JSON.stringify(repaired)}::jsonb
+        where user_id = ${userId}
+      `;
+      try {
+        const { audit } = await import("../mail/sql.server.ts");
+        await audit(userId, "AUTOPILOT_LEGACY_STATE_REPAIRED", "Autonomy flags were on without an owner enable marker. Autopilot is off. History was kept.", { method: "AUTOMATION" });
+      } catch {
+        /* the repaired row is what matters */
+      }
+      return repaired;
+    }
+    return normalizeAutonomy(raw);
   } catch {
     return normalizeAutonomy(null);
   }
@@ -72,14 +86,14 @@ function stamp(p: Prospect, action: string, detail: string): Prospect {
 export async function runAutonomyPass(userId: string): Promise<{ researched: number; generated: number; held: number; sent: number; prepped: number }> {
   const report = { researched: 0, generated: 0, held: 0, sent: 0, prepped: 0 };
   const settings = await loadAutonomy(userId);
-  if (!settings.autonomous) return report;
   const { listProspects, upsertProspects, importProspects, logActivity } = await import("../prospects/repo.server.ts");
   const { loadSettings } = await import("../mail/sql.server.ts");
   const mailSettings = await loadSettings(userId);
   let prospects = await listProspects(userId);
   const foundToday = prospects.filter((p) => (p.discovered_at || "").slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
 
-  if (settings.prospecting && foundToday < settings.dailyProspectLimit) {
+  const effects = autonomyTickEffects(settings, mailSettings.testMode);
+  if (effects.discover && foundToday < settings.dailyProspectLimit) {
     try {
       const { env } = await import("../env.server.ts");
       const key = env("GOOGLE_PLACES_API_KEY");
@@ -219,7 +233,8 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       ...viewOf(prospect),
       emailBlocked: !screen.ok || acted(prospect, "autonomy_email_blocked"),
       reputationPaused: paused,
-    }, settings, { testMode: mailSettings.testMode, sentToday });
+    }, { ...settings, autonomous: true }, { testMode: mailSettings.testMode, sentToday });
+    if (!autopilotAuthorized(settings) && decision.action !== "prep") continue;
     if (!screen.ok && !acted(prospect, "autonomy_email_blocked") && decision.action !== "research") {
       dirty.push(stamp(prospect, "autonomy_email_blocked", screen.reason));
       continue;
@@ -300,7 +315,7 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       report.prepped += 1;
       continue;
     }
-    if (decision.action === "send" && report.sent < 1 && settings.autoSend && !mailSettings.testMode) {
+    if (decision.action === "send" && report.sent < 1 && effects.firstContact) {
       const to = usefulEmail(prospect)?.value || "";
       const email = prospect.outreach?.messages.find((m) => m.kind === "email");
       if (!to || !email) continue;
@@ -357,14 +372,43 @@ export async function autoReplyTo(opts: {
   const settings = await loadAutonomy(opts.userId);
   const { classifyInbound, planReply } = await import("./replies.ts");
   const { replyWantsBooking, publicBookingOrigin, trackedBookingUrl } = await import("./booking-link.ts");
+  const { upsertProspects } = await import("../prospects/repo.server.ts");
   const classified = classifyInbound(opts.text);
   const closed = opts.prospect.stage === "Call Booked" || opts.prospect.stage === "Won" || opts.prospect.stage === "Lost" || opts.prospect.stage === "Do Not Contact";
+  const planWithoutLink = planReply({
+    text: opts.text,
+    name: opts.prospect.contacts?.[0]?.name || "there",
+    company: opts.prospect.name,
+    bookingUrl: "",
+    finding: opts.prospect.outreach?.brief.angle || "",
+  });
+  if (planWithoutLink.dnc) {
+    const { stopSequencesForProspect } = await import("../mail/sql.server.ts");
+    await stopSequencesForProspect(opts.userId, opts.prospect.uid || "");
+    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, suppressed: true, stage: "Do Not Contact" }, "do_not_contact", "They asked to be removed. Outreach is stopped.")]);
+    return "stopped";
+  }
+  if (planWithoutLink.cls === "MEETING_BOOKED") {
+    await upsertProspects(opts.userId, [stamp({
+      ...opts.prospect,
+      stage: "Call Booked",
+      stage_plain: "Call is on the calendar",
+    }, "meeting_booked", "They said the meeting is booked. Outreach stays stopped.")]);
+    return "stopped";
+  }
+  const mayCompose = autopilotAuthorized(settings) && settings.autoReply;
+  if (!mayCompose || planWithoutLink.escalate || closed && replyWantsBooking(classified.cls)) {
+    await upsertProspects(opts.userId, [stamp({
+      ...opts.prospect,
+      stage: opts.prospect.stage === "Call Booked" ? opts.prospect.stage : "Replied",
+    }, "autonomy_escalate", `${classified.cls}: needs you. No automatic reply was sent.`)]);
+    return "escalated";
+  }
   let bookingUrl = "";
   if (!closed && classified.confidence === "high" && replyWantsBooking(classified.cls)) {
     const { accessFor } = await import("../mail/live.server.ts");
     const calendar = await accessFor(opts.userId, "calendar");
     if (!calendar) {
-      const { upsertProspects } = await import("../prospects/repo.server.ts");
       await upsertProspects(opts.userId, [stamp(opts.prospect, "calendar_unavailable", "Google Calendar is not connected. No booking link was sent.")]);
       return "escalated";
     }
@@ -373,38 +417,20 @@ export async function autoReplyTo(opts: {
     const token = await ensureBookingToken(opts.userId, opts.prospect.uid || "", { contact: email, threadId: opts.threadId || "" });
     bookingUrl = trackedBookingUrl(publicBookingOrigin(), token);
   }
-  const plan = planReply({
-    text: opts.text,
-    name: opts.prospect.contacts?.[0]?.name || "there",
-    company: opts.prospect.name,
-    bookingUrl,
-    finding: opts.prospect.outreach?.brief.angle || "",
-  });
-  const { upsertProspects } = await import("../prospects/repo.server.ts");
-  if (plan.dnc) {
-    const { stopSequencesForProspect } = await import("../mail/sql.server.ts");
-    await stopSequencesForProspect(opts.userId, opts.prospect.uid || "");
-    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, suppressed: true, stage: "Do Not Contact" }, "do_not_contact", "They asked to be removed. Outreach is stopped.")]);
-    return "stopped";
-  }
-  if (plan.escalate || !settings.autoReply) {
-    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, stage: opts.prospect.stage === "Call Booked" ? opts.prospect.stage : "Replied" }, "autonomy_escalate", `${plan.cls}: needs you. No automatic reply was sent.`)]);
-    return "escalated";
-  }
-  if (plan.cls === "MEETING_BOOKED") {
-    await upsertProspects(opts.userId, [stamp({
-      ...opts.prospect,
-      stage: "Call Booked",
-      stage_plain: "Call is on the calendar",
-    }, "meeting_booked", "They said the meeting is booked. Outreach stays stopped.")]);
-    return "stopped";
-  }
-  if (closed && replyWantsBooking(plan.cls)) return "skipped";
+  const plan = bookingUrl
+    ? planReply({
+      text: opts.text,
+      name: opts.prospect.contacts?.[0]?.name || "there",
+      company: opts.prospect.name,
+      bookingUrl,
+      finding: opts.prospect.outreach?.brief.angle || "",
+    })
+    : planWithoutLink;
   if (!plan.send) return "skipped";
   const { loadSettings } = await import("../mail/sql.server.ts");
   const mail = await loadSettings(opts.userId);
-  if (mail.testMode) {
-    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, booking_url: bookingUrl }, "autonomy_reply_held", bookingUrl ? `Test Mode is on. Nothing was sent. ${bookingUrl}` : "Test Mode is on. Reply was classified and not sent.")]);
+  if (mail.testMode || !autonomyTickEffects(settings, mail.testMode).autoReply) {
+    await upsertProspects(opts.userId, [stamp({ ...opts.prospect, booking_url: bookingUrl }, "autonomy_reply_held", mail.testMode ? "Test Mode is on. Reply was classified and not sent." : "Autopilot is off. Reply was not sent.")]);
     return "held";
   }
   const to = usefulEmail(opts.prospect)?.value || "";

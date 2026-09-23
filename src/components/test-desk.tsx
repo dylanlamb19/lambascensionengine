@@ -694,7 +694,8 @@ export function TestDesk({
         <h3 className="font-display mb-2 text-lg">Turn Test Mode off</h3>
         {data.testMode ? (
           <>
-            <p className="mb-2 text-sm">It stays on until you type DISABLE and confirm. After that, the test allowlist is no longer a gate. First-contact approval and send safeguards stay on.</p>
+            <p className="mb-2 text-sm">Test Mode only controls who can receive mail. Turning it off does not turn Acquisition Autopilot on, does not send a first email, and does not arm a campaign. Type DISABLE to continue. It stays on until you confirm.</p>
+            <p className="mb-2 text-sm">Before you do that, Live Outreach Readiness should be green: Test Sales Flow 8/8, Autopilot OFF, no live campaign, no unknown delivery, Gmail, Calendar, Places, worker, and database healthy. This screen does not turn Test Mode off for you.</p>
             <input
               className="la-field mb-2"
               placeholder="Type DISABLE"

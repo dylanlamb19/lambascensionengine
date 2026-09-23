@@ -5,7 +5,7 @@
  */
 import { env } from "@/lib/env.server";
 import { evaluateChecks, checkVoice } from "./checks.ts";
-import { overallFromSubsystems, overallGrade, overallLabel, rollupSubsystems, recentlyObserved } from "./health.ts";
+import { launchLight, overallGrade, overallLabel, rollupSubsystems, recentlyObserved, voiceObservation } from "./health.ts";
 import { runCalendarParserFixture } from "./parser.ts";
 import { SENTINEL_WATCHING } from "./speech.ts";
 import { SENTINEL_AUTO_FIX } from "./fix-prep.ts";
@@ -176,9 +176,12 @@ export async function runSentinel(opts: {
     ara_voice: beats.ara_voice?.lastOkAt || beats.ara_voice?.lastCheckAt || null,
   };
   const subsystems = rollupSubsystems(checks, openBugs, observedAt);
-  const overall = overallFromSubsystems(subsystems);
+  const overall = launchLight(subsystems);
+  const voice = voiceObservation(subsystems);
   const grade = overallGrade(overall);
-  const summary = overallLabel(overall, openBugs.length);
+  const summary = overall === "green" && voice === "stale"
+    ? "Outreach systems are healthy. Ara voice observation is stale."
+    : overallLabel(overall, openBugs.length);
 
   await insertRun({
     userId: opts.userId,
@@ -203,7 +206,7 @@ export async function runSentinel(opts: {
       previousSha: prev,
       newSha: sha,
       testResult: "not_run_in_process",
-      smokeResult: grade,
+      smokeResult: grade === "healthy" && voice === "stale" ? "healthy" : grade,
       newErrors: findings.map((f) => f.code),
       resolvedErrors: resolvedCodes,
       rollbackRecommended: rollback,
@@ -293,7 +296,7 @@ export async function loadSentinelSnapshot(): Promise<SentinelSnapshot> {
   const subsystems = rollupSubsystems([voiceCheck], openBugs, observedAt);
   const overall = run
     ? (run.overall === "healthy" ? "green" : run.overall === "critical" ? "red" : run.overall === "degraded" ? "yellow" : "unknown")
-    : overallFromSubsystems(subsystems);
+    : launchLight(subsystems);
   return {
     overall,
     overallLabel: overallLabel(overall, openBugs.length),

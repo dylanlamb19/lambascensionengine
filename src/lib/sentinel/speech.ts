@@ -14,6 +14,11 @@ export type SentinelSpeech = {
 export function everythingWorkingSpeech(snap: SentinelSnapshot): string {
   const red = (snap.subsystems || []).filter((s) => s.light === "red");
   const voiceRed = red.some((s) => s.feature === "ara_voice");
+  const voice = (snap.subsystems || []).find((s) => s.feature === "ara_voice");
+  const voiceStale = voice && voice.light !== "green" && voice.light !== "red";
+  if (snap.overall === "green" && voiceStale) {
+    return "Outreach systems are healthy. Ara voice has not been observed recently. That is separate from sending email.";
+  }
   if (snap.overall === "green" && !red.length) {
     return "Yes. Gmail, Calendar, Google Places, Database, Worker, Booking, Outreach safety, Ara actions, and Ara voice are all healthy.";
   }

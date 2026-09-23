@@ -3,6 +3,30 @@ import { authMiddleware } from "@/lib/auth/middleware";
 import { markCallOutcome, markRescheduleWaiting, markSalesOutcome, type BillingType } from "./outcomes.ts";
 import type { CallNotes } from "./sales.ts";
 
+export const setAutopilotFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { command: string }) => data)
+  .handler(async ({ data, context }) => {
+    const { readAutonomy, saveAutonomy } = await import("./run.server");
+    const { applyAutopilotCommand } = await import("./settings");
+    const current = await readAutonomy(context.userId);
+    const applied = applyAutopilotCommand(current, data.command, new Date().toISOString());
+    if (!applied.ok) return applied;
+    const saved = await saveAutonomy(context.userId, applied.settings);
+    const { audit } = await import("../mail/sql.server");
+    await audit(context.userId, applied.audit, applied.audit === "AUTOPILOT_ENABLED" ? "Owner enabled Acquisition Autopilot." : "Owner turned Acquisition Autopilot off.", { method: "MANUAL" });
+    return { ok: true as const, autopilot: saved.ownerEnabled && saved.autonomous, ownerEnabledAt: saved.ownerEnabledAt };
+  });
+
+export const autopilotStatusFn = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { readAutonomy } = await import("./run.server");
+    const { autopilotAuthorized } = await import("./settings");
+    const settings = await readAutonomy(context.userId);
+    return { ok: true as const, autopilot: autopilotAuthorized(settings), ownerEnabledAt: settings.ownerEnabledAt };
+  });
+
 export const bookingSettingsFn = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .handler(async ({ context }) => {

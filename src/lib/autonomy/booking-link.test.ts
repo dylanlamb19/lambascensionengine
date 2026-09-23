@@ -31,6 +31,8 @@ test("interested reply gets one company booking link and booking stops outreach 
   const booked = applyImmediateBooking({
     name: "AWO Lending",
     stage: "Replied",
+    meeting_at: "",
+    meeting_event_id: "",
     history: [{ at: "2026-09-23T12:00:00.000Z", action: "autonomy_sent", detail: "sent" }],
   }, {
     at: "2026-09-23T18:00:00.000Z",

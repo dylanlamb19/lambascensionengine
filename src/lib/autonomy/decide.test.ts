@@ -3,7 +3,18 @@ import test from "node:test";
 import { callPrep } from "./call-prep.ts";
 import { decideProspect, isSameCompany, type AutoView } from "./decide.ts";
 import { classifyInbound, planReply } from "./replies.ts";
-import { DEFAULT_AUTONOMY, nextMarket } from "./settings.ts";
+import { DEFAULT_AUTONOMY } from "./settings.ts";
+
+const LIVE_ON = {
+  ...DEFAULT_AUTONOMY,
+  autonomous: true,
+  prospecting: true,
+  autoSend: true,
+  autoFollowup: true,
+  autoReply: true,
+  ownerEnabled: true,
+  ownerEnabledAt: "2026-09-23T00:00:00.000Z",
+};
 import { dailySummary } from "./daily.ts";
 import { emailLooksUsable, mayFirstTouch, reputationPause } from "./deliverability.ts";
 import { industryNudge } from "./learn.ts";
@@ -30,16 +41,16 @@ function view(over: Partial<AutoView> = {}): AutoView {
 const live = { testMode: false, sentToday: 0 };
 
 test("good prospect generates, then holds while Test Mode is on", () => {
-  assert.equal(decideProspect(view(), DEFAULT_AUTONOMY, live).action, "generate");
-  const ready = decideProspect(view({ hasPack: true }), DEFAULT_AUTONOMY, { testMode: true, sentToday: 0 });
+  assert.equal(decideProspect(view(), LIVE_ON, live).action, "generate");
+  const ready = decideProspect(view({ hasPack: true }), LIVE_ON, { testMode: true, sentToday: 0 });
   assert.equal(ready.action, "hold");
   assert.match(ready.reason, /Test Mode/);
 });
 
 test("bad prospect is disqualified and never reaches send", () => {
-  const bad = decideProspect(view({ hasOpportunity: false, fit: "low" }), DEFAULT_AUTONOMY, live);
+  const bad = decideProspect(view({ hasOpportunity: false, fit: "low" }), LIVE_ON, live);
   assert.equal(bad.action, "disqualify");
-  const again = decideProspect(view({ disqualified: true }), DEFAULT_AUTONOMY, live);
+  const again = decideProspect(view({ disqualified: true }), LIVE_ON, live);
   assert.equal(again.action, "skip");
 });
 
@@ -49,14 +60,14 @@ test("duplicate company is recognized", () => {
 });
 
 test("qualified prospect with a pack sends only once", () => {
-  const first = decideProspect(view({ hasPack: true }), DEFAULT_AUTONOMY, live);
+  const first = decideProspect(view({ hasPack: true }), LIVE_ON, live);
   assert.equal(first.action, "send");
-  const second = decideProspect(view({ hasPack: true, alreadySent: true, stage: "Contacted" }), DEFAULT_AUTONOMY, live);
+  const second = decideProspect(view({ hasPack: true, alreadySent: true, stage: "Contacted" }), LIVE_ON, live);
   assert.equal(second.action, "skip");
 });
 
 test("a reply stops further first-touch and remove-me is do not contact", () => {
-  assert.equal(decideProspect(view({ stage: "Replied", hasPack: true }), DEFAULT_AUTONOMY, live).action, "skip");
+  assert.equal(decideProspect(view({ stage: "Replied", hasPack: true }), LIVE_ON, live).action, "skip");
   const removed = planReply({ text: "Please remove me", name: "Sam", company: "Davis", bookingUrl: "https://cal.example/d" });
   assert.equal(removed.dnc, true);
   assert.equal(removed.send, false);
@@ -75,9 +86,9 @@ test("audit and what-do-you-do replies are answerable and do not invent a findin
 });
 
 test("booked call stops outreach and writes prep", () => {
-  const booked = decideProspect(view({ stage: "Call Booked", booked: true }), DEFAULT_AUTONOMY, live);
+  const booked = decideProspect(view({ stage: "Call Booked", booked: true }), LIVE_ON, live);
   assert.equal(booked.action, "prep");
-  const again = decideProspect(view({ stage: "Call Booked", booked: true, prepDone: true }), DEFAULT_AUTONOMY, live);
+  const again = decideProspect(view({ stage: "Call Booked", booked: true, prepDone: true }), LIVE_ON, live);
   assert.equal(again.action, "skip");
   const brief = callPrep({
     company: "AWO Lending", contact: "Amos Oneil", when: "Thursday 11:00 AM",
@@ -90,11 +101,11 @@ test("booked call stops outreach and writes prep", () => {
 });
 
 test("daily cap and missing research do not fabricate a send", () => {
-  const capped = decideProspect(view({ hasPack: true }), DEFAULT_AUTONOMY, { testMode: false, sentToday: 8 });
+  const capped = decideProspect(view({ hasPack: true }), LIVE_ON, { testMode: false, sentToday: 8 });
   assert.equal(capped.action, "hold");
-  const thin = decideProspect(view({ researchStatus: "none" }), DEFAULT_AUTONOMY, live);
+  const thin = decideProspect(view({ researchStatus: "none" }), LIVE_ON, live);
   assert.equal(thin.action, "research");
-  const blocked = decideProspect(view({ researchStatus: "blocked" }), DEFAULT_AUTONOMY, live);
+  const blocked = decideProspect(view({ researchStatus: "blocked" }), LIVE_ON, live);
   assert.equal(blocked.action, "disqualify");
   assert.match(blocked.reason, /invent/);
 });
@@ -116,9 +127,9 @@ test("priority, reputation, and today's counts stay honest", () => {
   assert.equal(reputationPause(5, 2), false);
   assert.equal(reputationPause(25, 4), true);
   assert.equal(industryNudge([{ vertical: "Roofing", stage: "Contacted", history: [{ action: "autonomy_sent" }] }], "Roofing"), 0);
-  const paused = decideProspect(view({ hasPack: true, reputationPaused: true }), DEFAULT_AUTONOMY, live);
+  const paused = decideProspect(view({ hasPack: true, reputationPaused: true }), LIVE_ON, live);
   assert.equal(paused.action, "hold");
-  const failed = decideProspect(view({ hasPack: true, sendFailed: true }), DEFAULT_AUTONOMY, live);
+  const failed = decideProspect(view({ hasPack: true, sendFailed: true }), LIVE_ON, live);
   assert.equal(failed.action, "skip");
   const objection = planReply({ text: "This is too expensive", name: "Sam", company: "Davis", bookingUrl: "https://cal.example/d" });
   assert.equal(objection.cls, "OBJECTION");

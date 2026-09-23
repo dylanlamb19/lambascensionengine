@@ -31,6 +31,20 @@ export function overallFromSubsystems(rows: SubsystemHealth[]): HealthLight {
   return "green";
 }
 
+/** Launch smoke ignores a stale Ara voice tile. A real voice failure (red) still counts. */
+export function launchLight(rows: SubsystemHealth[]): HealthLight {
+  const counted = rows.filter((r) => r.feature !== "ara_voice" || r.light === "red");
+  return overallFromSubsystems(counted);
+}
+
+export function voiceObservation(rows: SubsystemHealth[]): "fresh" | "stale" | "failed" | "unknown" {
+  const voice = rows.find((r) => r.feature === "ara_voice");
+  if (!voice) return "unknown";
+  if (voice.light === "red") return "failed";
+  if (voice.light === "green") return "fresh";
+  return "stale";
+}
+
 export function overallGrade(light: HealthLight): "healthy" | "degraded" | "critical" | "unknown" {
   if (light === "green") return "healthy";
   if (light === "red") return "critical";
