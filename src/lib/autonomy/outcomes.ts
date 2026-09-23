@@ -31,6 +31,20 @@ export type OutcomeProspect = {
   billing_type?: BillingType;
   lost_reason?: LostReason;
   outcome_note?: string;
+  follow_up_at?: string;
+  follow_up_reason?: string;
+  call_notes?: { recommended?: string; desired?: string; notes?: string; nextStep?: string };
+  client_record?: {
+    company: string;
+    contact: string;
+    service: string;
+    price: number | null;
+    billing: string;
+    startDate: string;
+    notes: string;
+    expectations: string;
+    nextAction: string;
+  };
   history?: { at?: string; action?: string; detail?: string }[];
 };
 
@@ -87,6 +101,8 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
   billing?: BillingType;
   note?: string;
   lostReason?: string;
+  followUpAt?: string;
+  followUpReason?: string;
 }): { ok: true; prospect: T } | { ok: false; reason: string } {
   if (lifecycle(p) !== "SHOWED" && p.sales_outcome !== "FOLLOW_UP_NEEDED") {
     return { ok: false, reason: "Mark that they showed before recording won, lost, or follow-up." };
@@ -103,6 +119,17 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
       client_value: hasValue ? value : null,
       billing_type: billing,
       outcome_note: (input.note || "").slice(0, 500),
+      client_record: {
+        company: p.name || "",
+        contact: "",
+        service: p.call_notes?.recommended || "Not chosen on the call",
+        price: hasValue ? (value as number) : null,
+        billing,
+        startDate: new Date().toISOString().slice(0, 10),
+        notes: p.call_notes?.notes || input.note || "",
+        expectations: p.call_notes?.desired || "",
+        nextAction: p.call_notes?.nextStep || "Send the agreement and book onboarding.",
+      },
     }, "sales_won", hasValue ? `Won. Value entered: ${value} ${billing || "billing not set"}.` : "Won. Revenue left UNKNOWN until you enter it.");
     return { ok: true, prospect: next as T };
   }
@@ -123,6 +150,8 @@ export function markSalesOutcome<T extends OutcomeProspect>(p: T, input: {
     ...p,
     sales_outcome: "FOLLOW_UP_NEEDED" as SalesOutcome,
     outcome_note: (input.note || "").slice(0, 500),
+    follow_up_at: input.followUpAt || p.follow_up_at || "",
+    follow_up_reason: (input.followUpReason || "").slice(0, 200),
   }, "follow_up_needed", "Needs a decision from you. No automatic cold email.");
   return { ok: true, prospect: next as T };
 }

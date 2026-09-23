@@ -5,7 +5,6 @@ import { decideProspect, isSameCompany, type AutoView } from "./decide.ts";
 import { mayFirstTouch, reputationPause } from "./deliverability.ts";
 import { industryNudge } from "./learn.ts";
 import { priorityScore } from "./priority.ts";
-import { callPrep } from "./call-prep.ts";
 import { planReply } from "./replies.ts";
 import { nextMarket, normalizeAutonomy, type AutonomySettings } from "./settings.ts";
 
@@ -266,19 +265,22 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       continue;
     }
     if (decision.action === "prep" && !acted(prospect, "call_prep")) {
-      const brief = callPrep({
+      const { salesBrief } = await import("./sales.ts");
+      const { recommendOffer } = await import("../review-brief.ts");
+      const offer = recommendOffer(prospect);
+      const brief = salesBrief({
         company: prospect.name,
         contact: prospect.contacts?.[0]?.name || email,
-        when: prospect.meeting_at || "",
+        website: prospect.website,
         vertical: prospect.vertical,
         city: prospect.city,
-        finding: prospect.outreach?.brief.angle || opportunities(prospect)[0]?.plain || "",
-        emailsSent: acted(prospect, "autonomy_sent") || acted(prospect, "email_sent") ? 1 : 0,
+        gaps: opportunities(prospect).map((o) => o.code),
+        angle: prospect.outreach?.brief.angle || opportunities(prospect)[0]?.plain || "",
         replySummary: (prospect.history || []).filter((h) => h.action === "reply" || h.action === "autonomy_replied").map((h) => h.detail || "").join(" "),
-        bookingUrl: settings.bookingUrl,
-        website: prospect.website,
-        angle: prospect.outreach?.brief.angle || "",
-        offer: prospect.outreach?.brief.help || "",
+        emailsSent: acted(prospect, "autonomy_sent") || acted(prospect, "email_sent") ? 1 : 0,
+        researchDone: prospect.research_status === "complete" || prospect.research_status === "partial",
+        offerName: offer.name,
+        offerWhy: offer.why,
       });
       const prepped = stamp(prospect, "call_prep", brief);
       dirty.push(acted(prospect, "meeting_booked") ? prepped : stamp(prepped, "meeting_booked", "Meeting is booked. Outreach is stopped."));

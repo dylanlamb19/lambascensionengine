@@ -75,6 +75,12 @@ export type Prospect = {
   billing_type?: "" | "one-time" | "monthly";
   lost_reason?: string;
   outcome_note?: string;
+  follow_up_at?: string;
+  follow_up_reason?: string;
+  call_notes?: import("./autonomy/sales").CallNotes;
+  followup_draft?: string;
+  proposal_draft?: string;
+  client_record?: import("./autonomy/sales").ClientRecord;
 };
 
 export type Opportunity = {
