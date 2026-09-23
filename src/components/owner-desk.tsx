@@ -361,6 +361,7 @@ export function OwnerDesk() {
   const [lastOwnerEvent, setLastOwnerEvent] = useState<LastOwnerEvent | null>(null);
   const lastOwnerEventRef = useRef<LastOwnerEvent | null>(null);
   const pendingOwnerCalRef = useRef<PendingOwnerCal | null>(null);
+  const lastUtterRef = useRef<{ key: string; at: number } | null>(null);
   const [pendingOwnerCal, setPendingOwnerCal] = useState<PendingOwnerCal | null>(null);
 
   function writePendingOwnerCal(next: PendingOwnerCal | null) {
@@ -1492,6 +1493,10 @@ export function OwnerDesk() {
   function utter(text: string, source: SpeechSource, dedupeKey?: string) {
     const clean = (text || "").trim();
     if (!clean) return;
+    const key = dedupeKey || clean.toLowerCase();
+    const prev = lastUtterRef.current;
+    if (prev && prev.key === key && Date.now() - prev.at < 8000) return;
+    lastUtterRef.current = { key, at: Date.now() };
     setVoiceReply(clean);
     araSpeech().setMuted(voiceMuted);
     void araSpeech().speakAsAra(clean, { source, exact: true, dedupeKey });
@@ -1790,6 +1795,8 @@ export function OwnerDesk() {
           ok: true,
           created: true,
           alreadyExisted: true,
+          already_spoken: true,
+          say_nothing: true,
           eventId: last.id,
           title: last.title,
           whenLabel: last.whenLabel,
@@ -1799,7 +1806,7 @@ export function OwnerDesk() {
           prospect: false,
           sales: false,
           emailSent: false,
-          spoken: `Done — I added ‘${last.title}’ to your calendar for ${last.whenLabel}.`,
+          spoken: "",
         };
       }
       try {
@@ -1848,10 +1855,14 @@ export function OwnerDesk() {
           void refreshProspectsAndSales();
           if (r.prospectUid) void refreshProspectCall(r.prospectUid);
         }
+        const spoken = String(r.spoken || "");
+        if (spoken) utter(spoken, "TOOL_RESULT", `cal-created:${r.eventId || spoken}`);
         return {
           ok: true,
           created: true,
           alreadyExisted: r.alreadyExisted,
+          already_spoken: true,
+          say_nothing: true,
           eventId: r.eventId,
           title: r.title,
           whenLabel: r.whenLabel,
@@ -1864,7 +1875,7 @@ export function OwnerDesk() {
           prospectUid: r.prospectUid,
           sales: r.sales,
           emailSent: false,
-          spoken: r.spoken,
+          spoken,
         };
       } catch {
         return {
@@ -2418,7 +2429,8 @@ export function OwnerDesk() {
     } else {
       if (livePending && !shouldKeepPendingOwnerCalendar(text, livePending)) {
         const cmd = parseSpokenCommand(text);
-        if (cmd.intent !== "UNKNOWN" && cmd.confidence >= 0.9) {
+        const newTopic = /[?]/.test(text) || text.trim().split(/\s+/).filter(Boolean).length > 6;
+        if (newTopic || (cmd.intent !== "UNKNOWN" && cmd.confidence >= 0.9)) {
           writePendingOwnerCal(null);
         }
       }
@@ -2465,11 +2477,13 @@ export function OwnerDesk() {
         intent: "create",
         at: Date.now(),
       });
-      utter(String(output.spoken || output.question || "What should I name the call?"), "TOOL_RESULT");
+      if (!output.already_spoken) utter(String(output.spoken || output.question || "What should I name the call?"), "TOOL_RESULT");
       return true;
     }
     writePendingOwnerCal(null);
-    utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
+    if (!output.already_spoken && !output.say_nothing) {
+      utter(String(output.spoken || "I couldn't create that event, so nothing was added."), "TOOL_RESULT");
+    }
     return true;
   }
 
@@ -2688,21 +2702,7 @@ export function OwnerDesk() {
       || (pendingCalManageRef.current && (isOwnerCalendarConfirmYes(text) || isOwnerCalendarConfirmNo(text)))) {
       araRef.current?.cancelResponse();
     }
-    if (!isFinal) {
-      if (isPersonalCalendarCommand(text)) {
-        const parsed = parseOwnerCalendarSpeech(text);
-        if (parsed.matched && parsed.generic && (!pendingOwnerCalRef.current || pendingOwnerCalExpired(pendingOwnerCalRef.current))) {
-          writePendingOwnerCal({
-            title: parsed.title || "Call",
-            when: parsed.when,
-            need: "name",
-            intent: "create",
-            at: Date.now(),
-          });
-        }
-      }
-      return;
-    }
+    if (!isFinal) return;
     if (FLAGS.DESIGN_DIRECTOR && isDesignDirectorUtterance(text)) {
       void runDesignDirector(text);
       return;

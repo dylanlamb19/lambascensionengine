@@ -163,6 +163,7 @@ export class AraSpeechController {
   private gen = 0;
   private playing = false;
   private lastDedupe = new Map<string, number>();
+  private micHold: ReturnType<typeof setTimeout> | null = null;
   micPermission = "UNKNOWN";
   micStreamActive = false;
   voiceSessionReady = false;
@@ -239,6 +240,7 @@ export class AraSpeechController {
     this.playing = true;
     this.onSpeaking?.(true, "CONVERSATION");
     this.playPcm(pcm);
+    this.holdMicClosed(400);
     this.emit();
   }
 
@@ -249,6 +251,7 @@ export class AraSpeechController {
       this.playing = false;
       this.onSpeaking?.(false, null);
     }
+    this.holdMicClosed(450);
     this.drain();
     this.emit();
   }
@@ -286,6 +289,10 @@ export class AraSpeechController {
   stop(opts?: { keepConversation?: boolean }) {
     this.gen += 1;
     this.queue = [];
+    if (this.micHold) {
+      clearTimeout(this.micHold);
+      this.micHold = null;
+    }
     if (!opts?.keepConversation || this.current?.source !== "CONVERSATION") {
       this.current = opts?.keepConversation && this.conversationActive
         ? { id: "conversation", text: "", source: "CONVERSATION", priority: 1 }
@@ -299,6 +306,20 @@ export class AraSpeechController {
       }
     }
     this.emit();
+  }
+
+  private holdMicClosed(extraMs: number) {
+    this.onMicGate?.(true);
+    if (this.micHold) clearTimeout(this.micHold);
+    const ctx = this.playCtx;
+    const remaining = ctx ? Math.max(0, (this.playTime - ctx.currentTime) * 1000) : 0;
+    const wait = Math.min(20_000, remaining + extraMs);
+    this.micHold = setTimeout(() => {
+      this.micHold = null;
+      if (this.conversationActive) return;
+      if (this.playing && this.current?.source !== "CONVERSATION") return;
+      this.onMicGate?.(false);
+    }, wait);
   }
 
   private enqueue(job: SpeechJob) {

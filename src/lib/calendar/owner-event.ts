@@ -465,6 +465,9 @@ export function isOwnerCalendarFollowupName(raw: string): boolean {
   if (/\b(cancel|never mind|forget it|stop)\b/i.test(t) && t.length < 24) return false;
   if (isOwnerCalendarManageCommand(t)) return false;
   if (isOwnerCalendarFollowupTime(t) && t.length < 16) return false;
+  if (/[?]/.test(t)) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return false;
   const title = extractOwnerFollowupTitle(t);
   return Boolean(title) && !isGenericOwnerTitle(title);
 }

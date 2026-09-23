@@ -283,6 +283,8 @@ describe("generic call name ask and prospect-call manage", () => {
     assert.equal(first.matched, true);
     if (!first.matched) return;
     assert.equal(isOwnerCalendarFollowupName("Firefighter Roofing"), true);
+    assert.equal(isOwnerCalendarFollowupName("What are the four system issues?"), false);
+    assert.equal(isOwnerCalendarFollowupName("Can you tell me what is on my list for tomorrow afternoon"), false);
     assert.equal(extractOwnerFollowupTitle("Add it for Firefighter Roofing"), "Firefighter Roofing");
     assert.equal(extractOwnerFollowupTitle("Call CPA"), "Call CPA");
     assert.equal(isGenericOwnerTitle("Call CPA"), false);

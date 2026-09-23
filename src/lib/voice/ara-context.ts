@@ -160,7 +160,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     "Never use the raw command, duplicated speech, or ‘I want you to add a call’ as the event title. Strip add/schedule/put/please. If nothing meaningful remains, ask for the name.",
     "Resolve relative dates (tomorrow, Friday, next Monday, tonight) in the owner timezone below — never Vercel/server UTC. 4 PM means 4 PM local, not 4 PM UTC.",
     "If the time is missing (‘add a dentist appointment tomorrow’), ask ONE concise question such as ‘What time tomorrow?’ and do not invent a time.",
-    "Only say the event was created after create_owner_calendar_event returns created=true from Google. If it fails, say you couldn’t create it and nothing was added.",
+    "Only say the event was created after create_owner_calendar_event returns created=true from Google. If it fails, say you couldn’t create it and nothing was added. Say that confirmation once. Do not repeat it on later turns. Dylan’s next sentence is a new request — answer that, and do not restate the booking unless he asks what you just added or asks about that event.",
     "If Dylan asks what you just added, answer from last personal calendar event in this context, or call get_last_owner_calendar_event.",
     "You can list, delete, and update events on Dylan’s connected Google Calendar even if you did not originally create them, as long as Google permits it. Identify a REAL Google event ID first (event_id, last created, or title+time). If zero events match, say you couldn’t find a matching event and did not change anything. If two or more match, ask which one — never guess.",
     "A direct command like ‘delete my dentist appointment tomorrow at 2’ is authorization to remove that personal event. Do not ask a second time. If the event is a booked sales call, has guests/attendees, or would change pipeline state, the delete/update tool will ask for confirmation — speak that question and wait.",
@@ -182,7 +182,7 @@ export function buildAraInstructions(ctx: AraDeskContext): string {
     `Visible calendar events: ${(ctx.calendarEvents || []).map((e) => `${e.companyName || e.title} at ${e.when} id=${e.id} uid=${e.prospectUid || "none"}`).join("; ") || "none"}.`,
     `Owner timezone: ${ctx.timezone || "America/Chicago"}. Relative dates resolve in this timezone.`,
     ctx.lastOwnerEvent
-      ? `Last personal calendar event Ara created: title="${ctx.lastOwnerEvent.title}" when="${ctx.lastOwnerEvent.whenLabel}" id=${ctx.lastOwnerEvent.id}. If Dylan asks what you just added, answer from this — it is not a sales call.`
+      ? `Last personal calendar event Ara created: title="${ctx.lastOwnerEvent.title}" when="${ctx.lastOwnerEvent.whenLabel}" id=${ctx.lastOwnerEvent.id}. Mention it only if Dylan asks what you just added or asks about that event. Do not repeat the booking confirmation after other things he says.`
       : "Last personal calendar event Ara created: none this session.",
     pendingCalendarInstruction(ctx.pendingOwnerCalendar),
     pendingProspectEditInstruction(ctx.pendingProspectEdit),
