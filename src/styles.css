@@ -479,16 +479,43 @@
   }
   .la-ara-log-item,
   .la-ara-log-hit {
-    display: block;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
     width: 100%;
     margin: 0 0 0.35rem;
-    padding: 0.55rem 0.6rem;
+    padding: 0.45rem 0.45rem 0.45rem 0.6rem;
     border: 1px solid transparent;
     border-radius: var(--radius-md);
     background: transparent;
     color: inherit;
     text-align: left;
   }
+  .la-ara-log-open {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    text-align: left;
+  }
+  .la-ara-log-delete {
+    flex: 0 0 auto;
+    border: 0;
+    background: transparent;
+    color: var(--color-muted);
+    font-size: 0.72rem;
+    padding: 0.1rem 0.25rem;
+  }
+  .la-ara-log-delete:hover { color: var(--color-bad); }
+  .la-ara-log-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+  .la-ara-log-meta-row .la-ara-log-meta { margin-top: 0; }
   .la-ara-log-item:hover,
   .la-ara-log-hit:hover {
     background: color-mix(in oklab, var(--color-fg) 5%, transparent);

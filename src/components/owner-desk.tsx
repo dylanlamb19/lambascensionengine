@@ -79,7 +79,7 @@ import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmS
 import { stopSpeaking } from "@/lib/voice/speech";
 import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
-import { appendAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
+import { appendAraTurn, deleteAraThread, deleteAraTurn, emptyAraLog, loadAraLog, saveAraLog, startAraThread, type AraLog } from "@/lib/voice/ara-history";
 import { announceToAra, announceSource } from "@/lib/voice/announce";
 import { autoAnnounceFromScreen, readScreen } from "@/lib/voice/read-screen";
 import { buildScreenContext } from "@/lib/voice/screen-context";
@@ -3628,6 +3628,14 @@ export function OwnerDesk() {
           onNew={() => {
             const next = startAraThread(araLogRef.current);
             commitAraLog(next);
+            setAraFocusTurn(null);
+          }}
+          onDeleteMessage={(threadId, turnId) => {
+            commitAraLog(deleteAraTurn(araLogRef.current, threadId, turnId));
+            setAraFocusTurn((current) => (current === turnId ? null : current));
+          }}
+          onDeleteThread={(threadId) => {
+            commitAraLog(deleteAraThread(araLogRef.current, threadId));
             setAraFocusTurn(null);
           }}
         />

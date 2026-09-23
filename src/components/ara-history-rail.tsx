@@ -33,11 +33,15 @@ export function AraHistoryRail({
   log,
   onSelect,
   onNew,
+  onDeleteMessage,
+  onDeleteThread,
   focusTurnId,
 }: {
   log: AraLog;
   onSelect: (threadId: string, turnId?: string) => void;
   onNew: () => void;
+  onDeleteMessage: (threadId: string, turnId: string) => void;
+  onDeleteThread: (threadId: string) => void;
   focusTurnId: string | null;
 }) {
   const [query, setQuery] = useState("");
@@ -88,30 +92,32 @@ export function AraHistoryRail({
       <div className="la-ara-log-scroll" ref={scroller}>
         {query.trim() ? (
           hits.length ? hits.map((hit) => (
-            <button
-              key={`${hit.threadId}:${hit.turnId}:${hit.at}`}
-              type="button"
-              className="la-ara-log-hit"
-              data-turn={hit.turnId}
-              onClick={() => openHit(hit)}
-            >
-              <span className="la-ara-log-meta">{hit.role === "you" ? "You" : "Ara"} · {when(hit.at)}</span>
-              <span className="la-ara-log-title">{hit.title}</span>
-              <span className="la-ara-log-snippet"><Mark text={hit.snippet} query={query} /></span>
-            </button>
+            <div key={`${hit.threadId}:${hit.turnId}:${hit.at}`} className="la-ara-log-hit" data-turn={hit.turnId}>
+              <button type="button" className="la-ara-log-open" onClick={() => openHit(hit)}>
+                <span className="la-ara-log-meta">{hit.role === "you" ? "You" : "Ara"} · {when(hit.at)}</span>
+                <span className="la-ara-log-title">{hit.title}</span>
+                <span className="la-ara-log-snippet"><Mark text={hit.snippet} query={query} /></span>
+              </button>
+              <button type="button" className="la-ara-log-delete" onClick={() => onDeleteMessage(hit.threadId, hit.turnId)}>
+                Delete
+              </button>
+            </div>
           )) : <p className="la-ara-log-empty">No messages match that.</p>
         ) : browsing || !active ? (
           log.threads.length ? log.threads.map((thread) => (
-            <button
+            <div
               key={thread.id}
-              type="button"
               className="la-ara-log-item"
               data-on={thread.id === log.activeId ? "1" : "0"}
-              onClick={() => { onSelect(thread.id); setBrowsing(false); }}
             >
-              <span className="la-ara-log-title">{thread.title}</span>
-              <span className="la-ara-log-meta">{when(thread.updatedAt)} · {thread.turns.length}</span>
-            </button>
+              <button type="button" className="la-ara-log-open" onClick={() => { onSelect(thread.id); setBrowsing(false); }}>
+                <span className="la-ara-log-title">{thread.title}</span>
+                <span className="la-ara-log-meta">{when(thread.updatedAt)} · {thread.turns.length}</span>
+              </button>
+              <button type="button" className="la-ara-log-delete" onClick={() => onDeleteThread(thread.id)}>
+                Delete
+              </button>
+            </div>
           )) : <p className="la-ara-log-empty">Nothing saved yet. Talk to Ara and it stays here.</p>
         ) : (
           <>
@@ -126,7 +132,12 @@ export function AraHistoryRail({
                 data-turn={turn.id}
                 data-on={focusTurnId === turn.id ? "1" : "0"}
               >
-                <p className="la-ara-log-meta">{turn.role === "you" ? "You" : "Ara"} · {when(turn.at)}</p>
+                <div className="la-ara-log-meta-row">
+                  <p className="la-ara-log-meta">{turn.role === "you" ? "You" : "Ara"} · {when(turn.at)}</p>
+                  <button type="button" className="la-ara-log-delete" onClick={() => onDeleteMessage(active.id, turn.id)}>
+                    Delete
+                  </button>
+                </div>
                 <p className={turn.role === "ara" ? "la-ara-log-ara" : "la-ara-log-you"}>{turn.text}</p>
               </article>
             )) : <p className="la-ara-log-empty">This conversation is empty.</p>}

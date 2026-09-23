@@ -75,6 +75,30 @@ export function appendAraTurn(log: AraLog, role: AraTurn["role"], text: string, 
   return { activeId: active.id, threads: next };
 }
 
+export function deleteAraTurn(log: AraLog, threadId: string, turnId: string): AraLog {
+  const threads = log.threads.flatMap((thread) => {
+    if (thread.id !== threadId) return [thread];
+    if (!thread.turns.some((turn) => turn.id === turnId)) return [thread];
+    const turns = thread.turns.filter((turn) => turn.id !== turnId);
+    if (!turns.length) return [];
+    const firstYou = turns.find((turn) => turn.role === "you");
+    return [{
+      ...thread,
+      turns,
+      title: firstYou ? titleFromTurn(firstYou.text) : "Ara",
+      updatedAt: turns[turns.length - 1].at,
+    }];
+  });
+  const activeId = threads.some((thread) => thread.id === log.activeId) ? log.activeId : (threads[0]?.id ?? null);
+  return { activeId, threads };
+}
+
+export function deleteAraThread(log: AraLog, threadId: string): AraLog {
+  const threads = log.threads.filter((thread) => thread.id !== threadId);
+  const activeId = log.activeId === threadId ? (threads[0]?.id ?? null) : log.activeId;
+  return { activeId, threads };
+}
+
 export function startAraThread(log: AraLog, now = Date.now()): AraLog {
   const current = log.threads.find((t) => t.id === log.activeId);
   if (current && current.turns.length === 0) return log;
