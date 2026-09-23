@@ -945,6 +945,66 @@ export const deleteOwnerCalendarEventFn = createServerFn({ method: "POST" })
     };
   });
 
+export const deleteCalendarAgendaItemFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((data: { id?: string }) => {
+    const id = (data?.id || "").trim();
+    if (!id || id.length > 512) throw new Error("Missing event");
+    return { id };
+  })
+  .handler(async ({ data, context }) => {
+    const { findCalendarItem, deleteLocalCalendarItem, cancelBookedCalendarEvent, audit } = await import("./sql.server");
+    const { accessFor } = await import("./live.server");
+    const { deleteEvent } = await import("../google/calendar");
+    const local = await findCalendarItem(context.userId, data.id);
+    const googleId = (local?.googleEventId || (!local ? data.id : "")).trim();
+    let googleFailed = false;
+    if (googleId) {
+      const tokens = await accessFor(context.userId, "calendar");
+      if (tokens) {
+        const gone = await deleteEvent(tokens.access_token, googleId);
+        googleFailed = !gone.ok;
+      } else if (!local) {
+        return {
+          ok: false as const,
+          removed: false as const,
+          spoken: "Calendar isn’t connected, so nothing was deleted.",
+        };
+      }
+    }
+    if (googleFailed && (local?.status === "booked" || !local)) {
+      await audit(context.userId, "delete_owner_calendar_event", `failed:${local?.title || data.id}`, {
+        method: "MANUAL",
+        prospectUid: local?.prospectUid,
+        providerIds: googleId,
+      });
+      return {
+        ok: false as const,
+        removed: false as const,
+        spoken: "I couldn't delete that event, so nothing changed.",
+      };
+    }
+    if (local?.status === "booked" && local.googleEventId) {
+      await cancelBookedCalendarEvent(context.userId, local.googleEventId);
+    }
+    if (local) await deleteLocalCalendarItem(context.userId, local.id);
+    if (!local && !googleId) {
+      return { ok: false as const, removed: false as const, spoken: "That event is already gone." };
+    }
+    const title = local?.title || "Calendar event";
+    await audit(context.userId, "delete_owner_calendar_event", `deleted:${title}`, {
+      method: "MANUAL",
+      prospectUid: local?.prospectUid,
+      providerIds: googleId || local?.id || data.id,
+    });
+    return {
+      ok: true as const,
+      removed: true as const,
+      title,
+      spoken: `Removed ${title}.`,
+    };
+  });
+
 type BulkDeleteInput = {
   when?: string;
   horizon?: "unspecified" | "future" | "range" | "all";

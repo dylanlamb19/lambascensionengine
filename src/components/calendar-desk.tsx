@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { AgendaEvent } from "@/lib/mail/actions";
 import { formatLong, formatShort, formatTime, rangeFor, ymdInTz, type CalView } from "@/lib/calendar/range";
@@ -20,6 +21,7 @@ export function CalendarDesk({
   onSelect,
   onOpenProspect,
   onPrep,
+  onDelete,
   onSettings,
 }: {
   calView: CalView;
@@ -36,6 +38,7 @@ export function CalendarDesk({
   onSelect: (id: string) => void;
   onOpenProspect: (uid: string) => void;
   onPrep: (uid: string) => void;
+  onDelete: (event: AgendaEvent) => Promise<string>;
   onSettings: () => void;
 }) {
   const range = rangeFor(calView, calAnchor);
@@ -48,6 +51,15 @@ export function CalendarDesk({
     .slice(0, 5);
   const connected = health === "connected";
   const unknown = health === "unknown";
+  const [armedId, setArmedId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState("");
+
+  useEffect(() => {
+    setArmedId(null);
+    setDeleteErr("");
+    setDeleting(false);
+  }, [selectedId]);
 
   return (
     <section className="space-y-4" data-owner-calendar="1" data-cal-view={calView} data-cal-range={range.label} data-cal-health={health}>
@@ -177,7 +189,31 @@ export function CalendarDesk({
             ) : (
               <p className="text-sm text-muted">This isn’t linked to a Lamb Ascension prospect.</p>
             )}
+            {armedId === selected.id ? (
+              <>
+                <button
+                  className="la-btn la-btn-danger"
+                  disabled={deleting}
+                  onClick={() => {
+                    setDeleting(true);
+                    setDeleteErr("");
+                    void onDelete(selected)
+                      .then((message) => {
+                        if (message) setDeleteErr(message);
+                      })
+                      .catch(() => setDeleteErr("I couldn't delete that event, so nothing changed."))
+                      .finally(() => setDeleting(false));
+                  }}
+                >
+                  {deleting ? "Deleting…" : "Delete event"}
+                </button>
+                <button className="la-btn la-btn-ghost" disabled={deleting} onClick={() => setArmedId(null)}>Keep</button>
+              </>
+            ) : (
+              <button className="la-btn la-btn-danger" onClick={() => { setDeleteErr(""); setArmedId(selected.id); }}>Delete</button>
+            )}
           </div>
+          {deleteErr ? <p className="la-quiet-status is-bad mt-2">{deleteErr}</p> : null}
         </div>
       ) : null}
     </section>

@@ -47,7 +47,7 @@ import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";
 import { generateOutreach } from "@/lib/outreach/generate";
-import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
+import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, deleteCalendarAgendaItemFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
 import { CallCard, OutreachDesk, PrepCard } from "@/components/outreach-desk";
@@ -3835,6 +3835,16 @@ export function OwnerDesk() {
             onSelect={(id) => dispatchAction({ name: "OPEN_CALENDAR_EVENT", eventId: id })}
             onOpenProspect={(uid) => dispatchAction({ name: "OPEN_PROSPECT", uid })}
             onPrep={(uid) => dispatchAction({ name: "READ_CALL_OPENER", uid })}
+            onDelete={async (event) => {
+              const r = await deleteCalendarAgendaItemFn({ data: { id: event.id } });
+              if (r.ok && r.removed) {
+                setCalEventId((current) => (current === event.id ? null : current));
+                refreshCalendarAgenda();
+                void refreshProspectsAndSales();
+                return "";
+              }
+              return r.spoken || "I couldn't delete that event, so nothing changed.";
+            }}
             onSettings={() => dispatchAction({ name: "NAVIGATE_SETTINGS" })}
           />
         ) : null}

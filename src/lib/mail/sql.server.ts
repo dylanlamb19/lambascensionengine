@@ -596,6 +596,42 @@ export async function upcomingCallForProspect(
   return rows[0] || null;
 }
 
+export async function findCalendarItem(
+  userId: string,
+  agendaId: string,
+): Promise<{ id: string; googleEventId: string | null; title: string; status: string; prospectUid: string } | null> {
+  const id = (agendaId || "").trim();
+  if (!id) return null;
+  const sql = await getSql();
+  const rows = await sql<{
+    id: string;
+    google_event_id: string | null;
+    title: string;
+    status: string;
+    prospect_uid: string;
+  }>`
+    select id, google_event_id, title, status, prospect_uid
+    from calendar_events
+    where user_id = ${userId} and (id = ${id} or google_event_id = ${id})
+    order by created_at desc
+    limit 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    googleEventId: row.google_event_id || null,
+    title: row.title || "",
+    status: row.status,
+    prospectUid: row.prospect_uid,
+  };
+}
+
+export async function deleteLocalCalendarItem(userId: string, id: string): Promise<void> {
+  const sql = await getSql();
+  await sql`delete from calendar_events where user_id = ${userId} and id = ${id}`;
+}
+
 export async function listCallsInRange(
   userId: string,
   from: Date,

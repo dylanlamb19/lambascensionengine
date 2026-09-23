@@ -621,6 +621,14 @@
     border-color: color-mix(in oklab, var(--color-gold) 35%, var(--color-line));
     background: color-mix(in oklab, var(--color-gold) 8%, transparent);
   }
+  .la-btn-danger {
+    border-color: color-mix(in oklab, var(--color-bad) 55%, var(--color-line));
+    color: var(--color-bad);
+    background: color-mix(in oklab, var(--color-bad) 8%, transparent);
+  }
+  .la-btn-danger:hover {
+    background: color-mix(in oklab, var(--color-bad) 16%, transparent);
+  }
   .la-btn-quiet {
     min-height: 2.5rem;
     border: 0;
