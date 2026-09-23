@@ -48,6 +48,7 @@ import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";
 import { generateOutreach } from "@/lib/outreach/generate";
+import { AutonomyHome } from "@/components/autonomy-home";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, deleteCalendarAgendaItemFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
 import { calendarHealth, gmailHealth, type ConnectionHealth, type IntegrationStatus } from "@/lib/mail/integration-status";
 import { EMPTY_TEST_LOOP, isTestWorkflowUid, type TestLoopState } from "@/lib/mail/test-loop";
@@ -3396,6 +3397,7 @@ export function OwnerDesk() {
           <p className="la-kicker">Owner Mode</p>
           <h1 className="font-display mt-2 text-[2.15rem] leading-[1.12] sm:text-4xl">{greeting}</h1>
           <p className="la-lede">Here’s what needs you today.</p>
+          <AutonomyHome rows={rows} testMode={testModeOn} />
         </section>
       );
     }

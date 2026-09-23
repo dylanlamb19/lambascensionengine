@@ -275,6 +275,13 @@ export async function syncRepliesForUser(userId: string): Promise<{ ok: true; re
         prospect.stage = "Do Not Contact";
         const { upsertProspects } = await import("@/lib/prospects/repo.server");
         await upsertProspects(userId, [prospect]);
+      } else if (prospect) {
+        try {
+          const { autoReplyTo } = await import("@/lib/autonomy/run.server");
+          await autoReplyTo({ userId, prospect, text: m.body, threadId: t.gmail_thread_id });
+        } catch {
+          /* auto-reply must not fail reply sync */
+        }
       }
       void draftReply(cls, prospect?.name || "");
     }
@@ -316,11 +323,13 @@ export async function tickOutreachWorker(source = "in-process"): Promise<{
     try {
       const { listOwnerUserIds } = await import("../sentinel/sql.server");
       const { repairPipelineBookingMismatches } = await import("./booking-reconcile");
+      const { runAutonomyPass } = await import("../autonomy/run.server");
       for (const userId of await listOwnerUserIds()) {
         await repairPipelineBookingMismatches(userId);
+        await runAutonomyPass(userId);
       }
     } catch {
-      /* booking heal must not fail the outreach tick */
+      /* booking heal and autonomy must not fail the outreach tick */
     }
     const summary = `ok sent=${due.sent} skipped=${due.skipped} rescheduled=${due.rescheduled} campaignSent=${campaignSent}`;
     await finishWorkerHeartbeat(runId, sawTest ? `${summary} test-seen` : summary);
