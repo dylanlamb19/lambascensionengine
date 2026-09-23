@@ -57,8 +57,7 @@ export function decideProspect(p: AutoView, settings: AutonomySettings, opts: { 
   if (p.researchStatus !== "complete" && p.researchStatus !== "partial") {
     return { action: "research", reason: "Research is not finished." };
   }
-  const worthIt = p.hasOpportunity || p.fit === "strong" || p.fit === "GOOD FIT";
-  if (!worthIt) return { action: "disqualify", reason: "Research finished and there is no meaningful acquisition gap to talk about." };
+  if (!p.hasOpportunity) return { action: "disqualify", reason: "Research finished and there is no verified acquisition gap. The engine will not send a generic note." };
   if (!p.hasEmail) return { action: "disqualify", reason: "No usable email on file. The engine will not guess one." };
   if (!p.hasPack) return { action: "generate", reason: "Qualified. A personalized draft is written from the stored research." };
   if (!settings.autoSend) return { action: "hold", reason: "Auto send is off. The draft is saved and nothing was sent." };

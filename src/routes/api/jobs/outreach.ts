@@ -25,6 +25,7 @@ async function handleOutreachTick(request: Request): Promise<Response> {
 export const Route = createFileRoute("/api/jobs/outreach")({
   server: {
     handlers: {
+      GET: async ({ request }) => handleOutreachTick(request),
       POST: async ({ request }) => handleOutreachTick(request),
     },
   },

@@ -1,1 +1,9 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/jobs/outreach",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
+

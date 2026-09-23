@@ -121,6 +121,29 @@ export async function markGoogleError(userId: string, kind: OauthKind, message: 
   await sql`update google_accounts set status = 'attention', last_error = ${message}, updated_at = now() where user_id = ${userId} and kind = ${kind}`;
 }
 
+export async function recipientBounced(userId: string, recipient: string): Promise<boolean> {
+  const email = (recipient || "").trim().toLowerCase();
+  if (!email) return false;
+  const sql = await getSql();
+  const rows = await sql<{ n: number }>`
+    select count(*)::int as n from email_messages
+    where user_id = ${userId} and lower(recipient) = ${email} and status = 'BOUNCED'
+  `;
+  return Number(rows[0]?.n || 0) > 0;
+}
+
+export async function deliveryTotals(userId: string): Promise<{ sent: number; bounced: number }> {
+  const sql = await getSql();
+  const rows = await sql<{ sent: number; bounced: number }>`
+    select
+      count(*) filter (where status = 'SENT')::int as sent,
+      count(*) filter (where status = 'BOUNCED')::int as bounced
+    from email_messages
+    where user_id = ${userId}
+  `;
+  return { sent: Number(rows[0]?.sent || 0), bounced: Number(rows[0]?.bounced || 0) };
+}
+
 export async function insertMessage(row: {
   userId: string;
   prospectUid: string;

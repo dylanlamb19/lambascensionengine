@@ -19,6 +19,7 @@ import {
   markGoogleError,
   markTestWorkflowSeen,
   outboundMessageIds,
+  recipientBounced,
   startWorkerHeartbeat,
   finishWorkerHeartbeat,
   reserveSendCap,
@@ -73,6 +74,8 @@ export async function sendLive(opts: {
   }
   const caps = effectiveCaps(settings);
   const seq = await activeSequence(opts.userId, uid);
+  const priorBounce = await recipientBounced(opts.userId, opts.to).catch(() => false);
+  const historyBounce = (opts.prospect.history || []).some((h) => h.action === "email_bounced" || h.action === "bounced");
   const key = idempotencyKey(opts.userId, uid, opts.kind, opts.sequenceId || undefined);
   const gmail = tokens ? liveGmail(tokens.access_token) : null;
   const testRecord = isTestWorkflowUid(uid);
@@ -104,7 +107,7 @@ export async function sendLive(opts: {
       },
       firstApproved: opts.firstApproved,
       sequenceActive: seq || opts.kind === "email",
-      bounced: false,
+      bounced: priorBounce || historyBounce,
       unsubscribed: opts.prospect.stage === "Do Not Contact",
       existingKeys: new Set(),
       testMode: settings.testMode,
@@ -129,6 +132,18 @@ export async function sendLive(opts: {
   if (!result.ok) {
     if (result.record) {
       await updateMessageStatus(opts.userId, key, result.record.status);
+    }
+    if (result.code === "BOUNCED") {
+      await stopSequencesForProspect(opts.userId, uid);
+      try {
+        const { upsertProspects } = await import("../prospects/repo.server");
+        await upsertProspects(opts.userId, [{
+          ...opts.prospect,
+          history: [...(opts.prospect.history || []), { at: new Date().toISOString(), action: "email_bounced", detail: opts.to }],
+        }]);
+      } catch {
+        /* the send is already blocked; history can catch up next tick */
+      }
     }
     await audit(opts.userId, "send_failed", result.reason, { prospectUid: uid, method: opts.method });
     return { ok: false, reason: result.reason, code: result.code };
@@ -183,6 +198,7 @@ export async function runDueFollowups(): Promise<{ sent: number; skipped: number
       testMode: settings.testMode,
       allowlist: settings.allowlist,
       skipHours: isTestWorkflowUid(job.prospect_uid),
+      bounced: Boolean(prospect && (prospect.history || []).some((h) => h.action === "email_bounced" || h.action === "bounced")),
     });
     if (decision.action === "reschedule") {
       await finishFollowup(job.id, "scheduled", decision.dueAt);

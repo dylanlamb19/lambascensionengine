@@ -44,8 +44,17 @@ export function decideFollowupSend(opts: {
   testMode?: boolean;
   allowlist?: string[];
   skipHours?: boolean;
+  bounced?: boolean;
 }): { action: "send" | "reschedule" | "cancel"; dueAt?: Date; reason: string } {
-  if (!opts.sequenceActive || opts.prospect.suppressed || opts.prospect.stage === "Do Not Contact") {
+  const stage = opts.prospect.stage || "";
+  if (
+    !opts.sequenceActive
+    || opts.prospect.suppressed
+    || stage === "Do Not Contact"
+    || stage === "Won"
+    || stage === "Lost"
+    || stage === "Call Booked"
+  ) {
     return { action: "cancel", reason: "Sequence stopped. Follow-up was not sent." };
   }
   const gate = canSend({
@@ -56,7 +65,7 @@ export function decideFollowupSend(opts: {
     method: "AUTOMATION",
     firstApproved: true,
     sequenceActive: true,
-    bounced: false,
+    bounced: Boolean(opts.bounced),
     unsubscribed: false,
     usage: { first: 0, followups: 0 },
     caps: { maxFirst: 999, maxFollowups: 999 },

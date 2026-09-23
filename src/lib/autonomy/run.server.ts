@@ -148,21 +148,35 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
 
   const dirty: Prospect[] = [...touchedMeetings];
   const today = new Date().toISOString().slice(0, 10);
-  let sentToday = prospects.filter((p) => (p.history || []).some((h) => h.action === "autonomy_sent" && (h.at || "").slice(0, 10) === today)).length;
+  let sentToday = prospects.filter((p) => (p.history || []).some((h) => (h.action === "autonomy_sent" || h.action === "email_sent") && (h.at || "").slice(0, 10) === today)).length;
   const bounced = new Set<string>();
   const unsubscribed = new Set<string>();
   const domainsToday = new Set<string>();
-  let bounceCount = 0;
+  const mailedCompany = new Map<string, string>();
+  let lifetimeSent = 0;
+  let lifetimeBounced = 0;
+  const companyKey = (p: Prospect) => {
+    const site = (p.website || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "").toLowerCase();
+    return site || (p.name || "").trim().toLowerCase();
+  };
   for (const p of prospects) {
+    const sentThis = (p.history || []).some((h) => h.action === "autonomy_sent" || h.action === "email_sent") || p.stage === "Contacted" || p.stage === "Won";
+    if (sentThis) {
+      const key = companyKey(p);
+      if (key && !mailedCompany.has(key)) mailedCompany.set(key, p.uid || p.name);
+    }
     for (const h of p.history || []) {
+      if (h.action === "autonomy_sent" || h.action === "email_sent") lifetimeSent += 1;
       if (h.action === "bounced" || h.action === "email_bounced") {
-        bounceCount += 1;
+        lifetimeBounced += 1;
         const match = (h.detail || "").match(/[^\s]+@[^\s]+/);
         if (match) bounced.add(match[0].toLowerCase());
       }
       if ((h.action === "autonomy_sent" || h.action === "email_sent") && (h.at || "").slice(0, 10) === today) {
-        const match = (h.detail || "").match(/[^\s]+@[^\s]+/);
-        if (match) domainsToday.add(match[0].split("@")[1]?.toLowerCase() || "");
+        const fromDetail = (h.detail || "").match(/[^\s]+@[^\s]+/);
+        const address = fromDetail?.[0] || usefulEmail(p)?.value || "";
+        const domain = address.split("@")[1]?.toLowerCase() || "";
+        if (domain) domainsToday.add(domain);
       }
     }
     if (p.suppressed || p.stage === "Do Not Contact") {
@@ -170,7 +184,15 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       if (email) unsubscribed.add(email.toLowerCase());
     }
   }
-  const paused = reputationPause(sentToday, bounceCount) || prospects.some((p) => (p.history || []).some((h) => h.action === "autonomy_paused" && (h.at || "").slice(0, 10) === today));
+  try {
+    const { deliveryTotals } = await import("../mail/sql.server.ts");
+    const totals = await deliveryTotals(userId);
+    lifetimeSent = Math.max(lifetimeSent, totals.sent);
+    lifetimeBounced = Math.max(lifetimeBounced, totals.bounced);
+  } catch {
+    /* counts from history still apply */
+  }
+  const paused = reputationPause(lifetimeSent, lifetimeBounced) || prospects.some((p) => (p.history || []).some((h) => h.action === "autonomy_paused" && (h.at || "").slice(0, 10) === today));
   const ranked = [...prospects].sort((a, b) => {
     const score = (p: Prospect) => priorityScore({
       gaps: opportunities(p).map((o) => o.code),
@@ -191,7 +213,7 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
       bounced,
       unsubscribed,
       domainsMailedToday: domainsToday,
-      alreadyMailedCompany: false,
+      alreadyMailedCompany: Boolean(mailedCompany.get(companyKey(prospect)) && mailedCompany.get(companyKey(prospect)) !== (prospect.uid || prospect.name)),
     }) : { ok: true as const };
     const decision = decideProspect({
       ...viewOf(prospect),
@@ -314,7 +336,7 @@ export async function runAutonomyPass(userId: string): Promise<{ researched: num
               { step: "followup3", dueAt: now + 12 * 86400000, idempotencyKey: `${userId}:${uid}:followup3`, body: prospect.outreach?.messages.find((m) => m.kind === "followup3")?.body || "", subject: email.subject || prospect.name, recipient: to, threadId: sent.threadId },
             ]);
           }
-          dirty.push(stamp({ ...prospect, stage: "Contacted", stage_plain: "Email sent" }, "autonomy_sent", "First email sent by the acquisition engine."));
+          dirty.push(stamp({ ...prospect, stage: "Contacted", stage_plain: "Email sent" }, "autonomy_sent", `First email sent to ${to}.`));
           report.sent += 1;
           sentToday += 1;
         } else {
@@ -351,12 +373,22 @@ export async function autoReplyTo(opts: {
   });
   const { upsertProspects } = await import("../prospects/repo.server.ts");
   if (plan.dnc) {
+    const { stopSequencesForProspect } = await import("../mail/sql.server.ts");
+    await stopSequencesForProspect(opts.userId, opts.prospect.uid || "");
     await upsertProspects(opts.userId, [stamp({ ...opts.prospect, suppressed: true, stage: "Do Not Contact" }, "do_not_contact", "They asked to be removed. Outreach is stopped.")]);
     return "stopped";
   }
   if (plan.escalate || !settings.autoReply) {
     await upsertProspects(opts.userId, [stamp({ ...opts.prospect, stage: opts.prospect.stage === "Call Booked" ? opts.prospect.stage : "Replied" }, "autonomy_escalate", `${plan.cls}: needs you. No automatic reply was sent.`)]);
     return "escalated";
+  }
+  if (plan.cls === "MEETING_BOOKED") {
+    await upsertProspects(opts.userId, [stamp({
+      ...opts.prospect,
+      stage: "Call Booked",
+      stage_plain: "Call is on the calendar",
+    }, "meeting_booked", "They said the meeting is booked. Outreach stays stopped.")]);
+    return "stopped";
   }
   if (!plan.send) return "skipped";
   const { loadSettings } = await import("../mail/sql.server.ts");

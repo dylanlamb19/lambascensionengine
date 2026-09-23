@@ -227,6 +227,22 @@ test("reply received before due follow-up prevents send", async () => {
   assert.equal(store.sequence.status, "stopped");
 });
 
+test("booked, won, and bounced prospects do not get another follow-up", () => {
+  const snap = freezeSnapshot({
+    recipient: "sarah@abc.com", subject: "Re: Hi", body: "f1", gmailThreadId: "t", sequenceId: "seq",
+  });
+  const base = {
+    sequenceActive: true,
+    snapshot: snap,
+    now: new Date("2026-09-17T15:00:00Z"),
+    gmailConnected: true,
+    hours: { workStart: 8, workEnd: 17, workDays: [1, 2, 3, 4, 5], timezone: "UTC" },
+  };
+  assert.equal(decideFollowupSend({ ...base, prospect: { ...prospect, stage: "Won" } }).action, "cancel");
+  assert.equal(decideFollowupSend({ ...base, prospect: { ...prospect, stage: "Call Booked" } }).action, "cancel");
+  assert.equal(decideFollowupSend({ ...base, prospect, bounced: true }).action, "cancel");
+});
+
 test("outside-hours job reschedules instead of failing", () => {
   const sunday = new Date("2026-09-20T21:00:00Z");
   const snap = freezeSnapshot({
