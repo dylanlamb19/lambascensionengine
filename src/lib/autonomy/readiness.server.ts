@@ -50,7 +50,7 @@ export async function collectLiveOutreachReadiness(userId: string) {
     liveCampaigns: -1,
     productionSha,
     smoke: "unknown",
-    voiceLiveSend: "disabled",
+    voiceLiveSend: "green",
   };
   try {
     const sql = await getSql();
