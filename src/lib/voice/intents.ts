@@ -456,7 +456,17 @@ export function confirmCampaignPhraseOk(text: string): boolean {
   return t === "confirm campaign";
 }
 
+export function hasTerminalCancellationClause(fullTurn: string): boolean {
+  const text = (fullTurn || "").replace(/\s+/g, " ").trim().replace(/[?.!]+$/g, "");
+  return /\b(never mind|nevermind|cancel that|forget it|scratch that|don'?t do that|do not do that)\s*$/i.test(text);
+}
+
+export function voiceMayMutate(text: string, isFinal: boolean): boolean {
+  return isFinal === true && !hasTerminalCancellationClause(text);
+}
+
 export function confirmSendPhraseOk(text: string): boolean {
+  if (!voiceMayMutate(text, true)) return false;
   const t = stripWake(text).toLowerCase().replace(/[?.!,]/g, "").trim();
   return t === "confirm send";
 }

@@ -1,6 +1,7 @@
 import { schedulerEvidenceOk } from "./heartbeat.ts";
 
 export const TEST_CAPS = { maxFirst: 2, maxFollowups: 3 } as const;
+export const CONTROLLED_LIVE_CAPS = { maxFirst: 5, maxFollowups: 10 } as const;
 
 export type TestSettings = {
   testMode: boolean;
@@ -43,8 +44,8 @@ export function isAllowlisted(recipient: string, allowlist: string[]): boolean {
 export function effectiveCaps(settings: { testMode: boolean; maxFirst: number; maxFollowups: number }): { maxFirst: number; maxFollowups: number } {
   if (settings.testMode) return { maxFirst: TEST_CAPS.maxFirst, maxFollowups: TEST_CAPS.maxFollowups };
   return {
-    maxFirst: Math.max(1, settings.maxFirst || 15),
-    maxFollowups: Math.max(1, settings.maxFollowups || 30),
+    maxFirst: Math.min(CONTROLLED_LIVE_CAPS.maxFirst, Math.max(1, settings.maxFirst || CONTROLLED_LIVE_CAPS.maxFirst)),
+    maxFollowups: Math.min(CONTROLLED_LIVE_CAPS.maxFollowups, Math.max(1, settings.maxFollowups || CONTROLLED_LIVE_CAPS.maxFollowups)),
   };
 }
 
@@ -69,6 +70,20 @@ export function allowSendRecipient(opts: { testMode: boolean; allowlist: string[
 
 export function canDisableTestMode(confirm: string): boolean {
   return (confirm || "").trim() === "DISABLE";
+}
+
+export function gateTestModeDisable(opts: {
+  confirm: string;
+  testMode: boolean;
+  readiness: { ready: boolean; blockers: string[] };
+}): { ok: true } | { ok: false; reason: string; blockers: string[] } {
+  if (!canDisableTestMode(opts.confirm)) return { ok: false, reason: "Type DISABLE exactly to continue.", blockers: [] };
+  if (!opts.testMode) return { ok: false, reason: "Test Mode is already off.", blockers: [] };
+  if (!opts.readiness?.ready) {
+    const blockers = opts.readiness?.blockers?.length ? opts.readiness.blockers : ["Live Outreach Readiness is not available."];
+    return { ok: false, reason: blockers[0], blockers };
+  }
+  return { ok: true };
 }
 
 /**

@@ -50,8 +50,8 @@ test("test caps are 2 first / 3 follow-ups", () => {
   const caps = effectiveCaps({ testMode: true, maxFirst: 15, maxFollowups: 30 });
   assert.deepEqual(caps, TEST_CAPS);
   const live = effectiveCaps({ testMode: false, maxFirst: 15, maxFollowups: 30 });
-  assert.equal(live.maxFirst, 15);
-  assert.equal(live.maxFollowups, 30);
+  assert.equal(live.maxFirst, 5);
+  assert.equal(live.maxFollowups, 10);
 });
 
 test("parseAllowlist drops junk and de-dupes", () => {

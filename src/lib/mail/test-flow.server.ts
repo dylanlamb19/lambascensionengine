@@ -23,6 +23,7 @@ import {
 import { getProspectByUid, upsertProspects } from "@/lib/prospects/repo.server";
 import {
   canDisableTestMode,
+  gateTestModeDisable,
   isEmailShape,
   light,
   parseAllowlist,
@@ -258,13 +259,10 @@ export async function updateTestMode(userId: string, data: { testMode?: boolean;
   const current = await loadSettings(userId);
   let testMode = current.testMode;
   if (wantsDisableTestMode(data)) {
-    if (!canDisableTestMode(data.confirm || "")) {
-      return { ok: false as const, reason: "Type DISABLE exactly to continue." };
-    }
-    if (current.testMode === false) {
-      const view = await testSettingsView(userId);
-      return { ...view, alreadyOff: true as const };
-    }
+    const { collectLiveOutreachReadiness } = await import("@/lib/autonomy/readiness.server");
+    const readiness = await collectLiveOutreachReadiness(userId);
+    const gate = gateTestModeDisable({ confirm: data.confirm || "", testMode: current.testMode, readiness });
+    if (!gate.ok) return { ok: false as const, reason: gate.reason, blockers: gate.blockers, readiness };
     testMode = false;
     const allowlist = data.allowlist ? parseAllowlist(data.allowlist) : current.allowlist;
     await saveTestSettings(userId, { testMode, allowlist });

@@ -74,7 +74,7 @@ function readLiveIndex(root: string): CodeIndex {
     : [];
   const productionSha = process.env.VERCEL_GIT_COMMIT_SHA?.trim() || null;
   cache = {
-    repo: "dylanlamb19/lamb-ascension-engine",
+    repo: "dylanlamb19/lambascensionengine",
     branch: git(root, ["rev-parse", "--abbrev-ref", "HEAD"]) || "unknown",
     sha,
     productionSha,

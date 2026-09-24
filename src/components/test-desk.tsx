@@ -6,6 +6,7 @@ import {
   chooseTestRecipientFn,
   confirmTestSendFn,
   connectionTestFn,
+  liveOutreachReadinessFn,
   resetTestFlowFn,
   saveTestModeFn,
   syncTestRepliesFn,
@@ -119,6 +120,7 @@ export function TestDesk({
   const [calTestId, setCalTestId] = useState("");
   const [resetAsk, setResetAsk] = useState(false);
   const [resetMsg, setResetMsg] = useState("");
+  const [readiness, setReadiness] = useState<{ ready: boolean; blockers: string[]; checks: { name: string; ok: boolean; detail: string }[]; productionSha: string } | null>(null);
 
   async function refresh() {
     const r = await testSettingsFn();
@@ -137,6 +139,7 @@ export function TestDesk({
         trail: r.trail,
       });
       setStep(r.state.step || 1);
+      void liveOutreachReadinessFn().then((ready) => setReadiness(ready)).catch(() => setReadiness(null));
       if (r.state.message_id) setSendIds({ messageId: r.state.message_id, threadId: r.state.thread_id || undefined });
       else setSendIds(null);
       setBooked(r.state.event_id || "");
@@ -695,7 +698,14 @@ export function TestDesk({
         {data.testMode ? (
           <>
             <p className="mb-2 text-sm">Test Mode only controls who can receive mail. Turning it off does not turn Acquisition Autopilot on, does not send a first email, and does not arm a campaign. Type DISABLE to continue. It stays on until you confirm.</p>
-            <p className="mb-2 text-sm">Before you do that, Live Outreach Readiness should be green: Test Sales Flow 8/8, Autopilot OFF, no live campaign, no unknown delivery, Gmail, Calendar, Places, worker, and database healthy. This screen does not turn Test Mode off for you.</p>
+            <div className="mb-3">
+              <p className="mb-1 text-sm font-semibold">{readiness?.ready ? "READY FOR CONTROLLED LIVE OUTREACH" : "NOT READY"}</p>
+              {(readiness?.checks || []).map((check) => (
+                <p key={check.name} className="text-sm"><span className={`la-dot la-dot-inline ${check.ok ? "la-dot-good" : "la-dot-bad"}`} />{check.name} — {check.detail}</p>
+              ))}
+              {(readiness?.blockers || []).map((blocker) => <p key={blocker} className="text-sm text-muted">{blocker}</p>)}
+              {!readiness ? <p className="text-sm text-muted">Live Outreach Readiness has not loaded from the server yet.</p> : null}
+            </div>
             <input
               className="la-field mb-2"
               placeholder="Type DISABLE"
@@ -710,7 +720,7 @@ export function TestDesk({
             <button
               type="button"
               className="la-btn la-btn-ghost"
-              disabled={disableConfirm.trim() !== "DISABLE" || busy === "disable"}
+              disabled={disableConfirm.trim() !== "DISABLE" || busy === "disable" || readiness?.ready !== true}
               onClick={() => void disableTestMode()}
             >
               {busy === "disable" ? "Disabling…" : "Disable Test Mode"}

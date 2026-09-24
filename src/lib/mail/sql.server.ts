@@ -778,8 +778,9 @@ export async function saveTestSettings(userId: string, patch: { testMode?: boole
   const testMode = patch.testMode ?? current.testMode;
   const allowlist = patch.allowlist ?? current.allowlist;
   const sql = await getSql();
-  const capsFirst = testMode ? 2 : 15;
-  const capsFollow = testMode ? 3 : 30;
+  const { TEST_CAPS, CONTROLLED_LIVE_CAPS } = await import("./test-mode");
+  const capsFirst = testMode ? TEST_CAPS.maxFirst : CONTROLLED_LIVE_CAPS.maxFirst;
+  const capsFollow = testMode ? TEST_CAPS.maxFollowups : CONTROLLED_LIVE_CAPS.maxFollowups;
   // Persist as 'true'/'false' text then cast — JS boolean false has been
   // dropped or misread by some drivers, which left Test Mode stuck on.
   const flag = testMode ? "true" : "false";

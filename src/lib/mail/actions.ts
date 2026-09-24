@@ -1393,6 +1393,13 @@ export const testSettingsFn = createServerFn({ method: "GET" })
     return testSettingsView(context.userId);
   });
 
+export const liveOutreachReadinessFn = createServerFn({ method: "GET" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { collectLiveOutreachReadiness } = await import("@/lib/autonomy/readiness.server");
+    return collectLiveOutreachReadiness(context.userId);
+  });
+
 export const saveTestModeFn = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((data: { testMode?: boolean; allowlist?: string[]; confirm?: string }) => data)

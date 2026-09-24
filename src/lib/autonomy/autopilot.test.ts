@@ -75,7 +75,8 @@ test("stale Ara voice does not fail production smoke or block a clean launch by 
     gmail: "green", database: "green", worker: "green", outreach: "green",
     calendar: "green", booking: "green", places: "green",
     highCriticalOutreach: 0, unknownDelivery: 0, dncFutureSends: 0, repliedFutureSends: 0, duplicateOutreach: 0,
-    autopilotOn: false, liveCampaigns: 0, productionSha: "abc123", smoke: "pass",
+    pendingRealFollowups: 0, activeRealSequences: 0, unsubscribedFutureSends: 0, bouncedFutureSends: 0, bookedFutureSends: 0, wonLostFutureSends: 0,
+    autopilotOn: false, liveCampaigns: 0, productionSha: "abc123", smoke: "pass", pipeline: "green", voiceLiveSend: "disabled",
   });
   assert.equal(clean.ready, true);
   assert.equal(liveOutreachReadiness({ ...cleanInput(), unknownDelivery: 1 }).ready, false);
@@ -90,6 +91,7 @@ function cleanInput() {
     gmail: "green" as const, database: "green" as const, worker: "green" as const, outreach: "green" as const,
     calendar: "green" as const, booking: "green" as const, places: "green" as const,
     highCriticalOutreach: 0, unknownDelivery: 0, dncFutureSends: 0, repliedFutureSends: 0, duplicateOutreach: 0,
-    autopilotOn: false, liveCampaigns: 0, productionSha: "abc123", smoke: "pass" as const,
+    pendingRealFollowups: 0, activeRealSequences: 0, unsubscribedFutureSends: 0, bouncedFutureSends: 0, bookedFutureSends: 0, wonLostFutureSends: 0,
+    autopilotOn: false, liveCampaigns: 0, productionSha: "abc123", smoke: "pass" as const, pipeline: "green" as const, voiceLiveSend: "disabled" as const,
   };
 }

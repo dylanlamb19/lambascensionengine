@@ -36,7 +36,7 @@ function git(args) {
 }
 const raw = git(["log", "-15", "--pretty=format:%h%x09%s"]);
 const index = {
-  repo: "dylanlamb19/lamb-ascension-engine",
+  repo: "dylanlamb19/lambascensionengine",
   branch: git(["rev-parse", "--abbrev-ref", "HEAD"]) || "unknown",
   sha: git(["rev-parse", "HEAD"]) || process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
   productionSha: process.env.VERCEL_GIT_COMMIT_SHA || null,

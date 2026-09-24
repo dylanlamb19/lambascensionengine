@@ -15,10 +15,18 @@ export type LiveReadinessInput = {
   dncFutureSends: number;
   repliedFutureSends: number;
   duplicateOutreach: number;
+  pendingRealFollowups: number;
+  activeRealSequences: number;
+  unsubscribedFutureSends: number;
+  bouncedFutureSends: number;
+  bookedFutureSends: number;
+  wonLostFutureSends: number;
   autopilotOn: boolean;
   liveCampaigns: number;
   productionSha: string;
   smoke: "pass" | "fail" | "unknown";
+  pipeline: ReadinessLight;
+  voiceLiveSend: "green" | "disabled";
 };
 
 export function liveOutreachReadiness(input: LiveReadinessInput): { ready: boolean; blockers: string[] } {
@@ -35,7 +43,15 @@ export function liveOutreachReadiness(input: LiveReadinessInput): { ready: boole
   if (input.unknownDelivery > 0) blockers.push("An email delivery is still unknown.");
   if (input.dncFutureSends > 0) blockers.push("A Do Not Contact company still has a future send.");
   if (input.repliedFutureSends > 0) blockers.push("A company that replied still has a future send.");
-  if (input.duplicateOutreach > 0) blockers.push("Duplicate outreach is still active.");
+  if (input.duplicateOutreach !== 0) blockers.push("Duplicate outreach is still active.");
+  if (input.pendingRealFollowups !== 0) blockers.push(input.pendingRealFollowups > 0 ? `${input.pendingRealFollowups} real follow-ups are already scheduled. Review or cancel them before disabling Test Mode.` : "Pending real follow-ups could not be verified.");
+  if (input.activeRealSequences !== 0) blockers.push(input.activeRealSequences > 0 ? `${input.activeRealSequences} real sequences are still active. Review or cancel them before disabling Test Mode.` : "Active real sequences could not be verified.");
+  if (input.unsubscribedFutureSends !== 0) blockers.push("An unsubscribed company still has a future send.");
+  if (input.bouncedFutureSends !== 0) blockers.push("A bounced company still has a future send.");
+  if (input.bookedFutureSends !== 0) blockers.push("A booked company still has a future cold send.");
+  if (input.wonLostFutureSends !== 0) blockers.push("A won or lost company still has a future cold send.");
+  if (input.pipeline !== "green") blockers.push("Pipeline booking sync is not healthy.");
+  if (input.voiceLiveSend !== "green" && input.voiceLiveSend !== "disabled") blockers.push("Voice live-send is not in a safe state.");
   if (input.autopilotOn) blockers.push("Acquisition Autopilot is on. Controlled launch needs it off.");
   if (input.liveCampaigns > 0) blockers.push("A live campaign is still enabled.");
   if (!input.productionSha) blockers.push("Production SHA is not identified.");

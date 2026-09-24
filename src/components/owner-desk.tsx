@@ -78,7 +78,7 @@ import { canonicalHealth, homeIssueLine } from "@/lib/sentinel/system-health";
 import type { SentinelBug, SentinelSnapshot } from "@/lib/sentinel/types";
 import { repairBookingInvariantFn } from "@/lib/mail/booking-reconcile-actions";
 import { ActionGate, makeActionId } from "@/lib/voice/idempotency";
-import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
+import { classifyOwnerStopIntent, confirmPhraseOk, confirmSendPhraseOk, confirmSchedulePhraseOk, hasTerminalCancellationClause, isClientOwnedStopTool, parseSpokenCommand } from "@/lib/voice/intents";
 import { stopSpeaking } from "@/lib/voice/speech";
 import { teardownAraOutput, unlockAraOutput } from "@/lib/voice/audio-out";
 import { araSpeech, type SpeechSource } from "@/lib/voice/speech-controller";
@@ -2817,6 +2817,13 @@ export function OwnerDesk() {
       araRef.current?.cancelResponse();
     }
     if (!shouldPersistTranscript(isFinal)) return;
+    if (hasTerminalCancellationClause(text)) {
+      araRef.current?.cancelResponse();
+      gateRef.current.cancel();
+      setVoiceReply("Okay. I won't do that.");
+      utter("Okay. I won't do that.", "STOP");
+      return;
+    }
     const folded = foldFinalUserTurn(araLogRef.current, text, itemId, Date.now(), utteranceRef.current);
     utteranceRef.current = folded.state;
     if (folded.action === "replay" || folded.action === "ignore") {
