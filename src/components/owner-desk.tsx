@@ -48,6 +48,7 @@ import { loadLastDiscovery, saveLastDiscovery, type LastDiscovery } from "@/lib/
 import { findClientsFn, discoveryStatusFn } from "@/lib/discovery/run";
 import { createLinkedInAgentOrderFn, fillHighTicketLeadsFn } from "@/lib/linkedin-agent/actions";
 import { generateOutreach } from "@/lib/outreach/generate";
+import { approveLabel, freezeDraft, nextIndexAfterRemoval, ownerTaskStateFromHistory, primaryTaskCta, taskKind, voiceTaskIntent, isUnresolvedTask } from "@/lib/tasks/queue";
 import { AutonomyHome, BookingLinkField } from "@/components/autonomy-home";
 import { CallSupport } from "@/components/call-support";
 import { googleStatusFn, salesCountsFn, sendFirstEmailFn, stopSequenceFn, availabilityFn, nextCallFn, prospectUpcomingCallFn, testSettingsFn, calendarAgendaFn, createOwnerCalendarEventFn, listOwnerCalendarEventsFn, deleteOwnerCalendarEventFn, deleteOwnerCalendarEventsBulkFn, deleteCalendarAgendaItemFn, updateOwnerCalendarEventFn, type AgendaEvent } from "@/lib/mail/actions";
@@ -294,6 +295,9 @@ export function OwnerDesk() {
   const [view, setView] = useState<OwnerView>("home");
   const [rows, setRows] = useState<Prospect[]>(SEED);
   const [taskIx, setTaskIx] = useState<number | null>(null);
+  const [taskPane, setTaskPane] = useState<"brief" | "review">("brief");
+  const [taskNote, setTaskNote] = useState("");
+  const [deferredTasks, setDeferredTasks] = useState<string[]>([]);
   const [explain, setExplain] = useState<string | null>(null);
   const [openUid, setOpenUid] = useState<string | null>(null);
   const [evidence, setEvidence] = useState(false);
@@ -441,7 +445,16 @@ export function OwnerDesk() {
   const filePickRef = useRef<HTMLInputElement>(null);
   const pickNsfwRef = useRef(false);
 
-  const tasks = useMemo(() => buildTasks(rows), [rows]);
+  const tasks = useMemo(() => {
+    const open = buildTasks(rows).filter((task) => {
+      const company = rows.find((row) => row.uid && row.uid === task.company_uid);
+      if (!company) return true;
+      return isUnresolvedTask(ownerTaskStateFromHistory(company.history));
+    });
+    const later = open.filter((task) => deferredTasks.includes(task.company_uid || ""));
+    const now = open.filter((task) => !deferredTasks.includes(task.company_uid || ""));
+    return [...now, ...later];
+  }, [rows, deferredTasks]);
   const visibleRows = useMemo(
     () => applyProspectFilter(rows.map(fromProspect), prospectFilter, lastDiscovery),
     [rows, prospectFilter, lastDiscovery],
@@ -2824,6 +2837,25 @@ export function OwnerDesk() {
       utter("Okay. I won't do that.", "STOP");
       return;
     }
+    const taskIntent = taskIx != null ? voiceTaskIntent(text) : null;
+    if (taskIntent) {
+      araRef.current?.cancelResponse();
+      if (taskIntent === "next") dispatchAction({ name: "NEXT_TASK" });
+      else if (taskIntent === "skip") deferCurrentTask();
+      else if (taskIntent === "not_pursuing") {
+        const open = currentTaskCompany();
+        if (open) skipProspect(open, "VOICE");
+        advanceAfterResolve(open?.uid || "");
+      } else if (testModeOn) {
+        approveTaskForLive("VOICE");
+      } else if (confirmSendPhraseOk(text)) {
+        void approveAndSendTask("VOICE");
+      } else {
+        setTaskPane("review");
+        say("Say Confirm send if you want this email sent. Nothing was sent.");
+      }
+      return;
+    }
     const folded = foldFinalUserTurn(araLogRef.current, text, itemId, Date.now(), utteranceRef.current);
     utteranceRef.current = folded.state;
     if (folded.action === "replay" || folded.action === "ignore") {
@@ -3204,6 +3236,74 @@ export function OwnerDesk() {
     });
   }
 
+  function currentTaskCompany() {
+    const task = taskIx != null ? tasks[taskIx] : null;
+    if (!task?.company_uid) return null;
+    return rows.find((row) => row.uid === task.company_uid) || null;
+  }
+
+  function advanceAfterResolve(uid: string) {
+    const remaining = tasks.filter((task) => task.company_uid !== uid);
+    setTaskIx(nextIndexAfterRemoval(taskIx || 0, remaining.length));
+    setTaskPane("brief");
+  }
+
+  function approveTaskForLive(method: "MANUAL" | "VOICE" = "MANUAL") {
+    const open = currentTaskCompany();
+    if (!open) return;
+    const pack = open.outreach || generateOutreach(open);
+    const email = pack.messages.find((message) => message.kind === "email");
+    const recipient = usefulEmail(open)?.value || "";
+    if (!email || !recipient) {
+      setTaskNote("There is no usable recipient or draft. Nothing was approved.");
+      return;
+    }
+    const frozen = freezeDraft({
+      recipient,
+      subject: email.subject || `${open.name} — quick opportunity I noticed`,
+      body: email.body,
+      at: new Date().toISOString(),
+    });
+    patchCompany({
+      ...open,
+      outreach: pack,
+      history: [...(open.history || []), {
+        at: frozen.frozen.approvedAt,
+        action: "owner_task_approved_waiting",
+        detail: `Approved — waiting for live outreach. To ${frozen.frozen.recipient}. Not sent. (${method})`,
+      }],
+    });
+    setTaskNote(`Approved — waiting for live outreach. ${open.name} was not contacted.`);
+    advanceAfterResolve(open.uid || "");
+    if (method === "VOICE") say(`${open.name} is approved and waiting for live outreach. Nothing was sent.`);
+  }
+
+  async function approveAndSendTask(method: "MANUAL" | "VOICE" = "MANUAL") {
+    if (testModeOn) {
+      approveTaskForLive(method);
+      return;
+    }
+    const open = currentTaskCompany();
+    if (!open?.uid) return;
+    const sent = await doSend(open, method, true);
+    if (!sent) return;
+    setTaskNote(`${open.name} completed`);
+    advanceAfterResolve(open.uid);
+  }
+
+  function deferCurrentTask() {
+    const open = currentTaskCompany();
+    if (!open?.uid) {
+      dispatchAction({ name: "NEXT_TASK" });
+      return;
+    }
+    setDeferredTasks((list) => list.includes(open.uid || "") ? list : [...list, open.uid || ""]);
+    setTaskNote(`${open.name} skipped for now. It is still open.`);
+    setTaskPane("brief");
+    const remainingNow = tasks.filter((task) => task.company_uid !== open.uid);
+    setTaskIx(remainingNow.length ? Math.min(taskIx || 0, remainingNow.length - 1) : null);
+  }
+
   function approveProspect(open: Prospect, method: "MANUAL" | "VOICE") {
     const gate = admitToActivePipeline(open, "Approved for Outreach");
     if (!gate.allowed) {
@@ -3236,17 +3336,18 @@ export function OwnerDesk() {
     if (method === "VOICE") say(`Approved ${open.name}. Your message is ready. Nothing was sent.`);
   }
 
-  async function doSend(open: Prospect, method: "MANUAL" | "VOICE") {
+  async function doSend(open: Prospect, method: "MANUAL" | "VOICE", approveSequence = false): Promise<boolean> {
     if (!open.uid) {
       say("This company is missing an id. Nothing was sent.");
-      return;
+      return false;
     }
     try {
-      const result = await sendFirstEmailFn({ data: { uid: open.uid, method, approveSequence: false } });
+      const result = await sendFirstEmailFn({ data: { uid: open.uid, method, approveSequence } });
       if (!result.ok) {
         setSyncErr(result.reason);
+        setTaskNote(result.reason);
         if (method === "VOICE") say(result.reason);
-        return;
+        return false;
       }
       patchCompany({
         ...open,
@@ -3255,12 +3356,15 @@ export function OwnerDesk() {
         outreach: open.outreach
           ? { ...open.outreach, messages: open.outreach.messages.map((m) => m.kind === "email" ? { ...m, state: "SENT" } : m) }
           : open.outreach,
-        history: [...(open.history || []), { at: new Date().toISOString(), action: "sent", detail: `Gmail confirmed send (${method})` }],
+        history: [...(open.history || []), { at: new Date().toISOString(), action: "sent", detail: `Gmail confirmed send (${method})` }, { at: new Date().toISOString(), action: "owner_task_completed", detail: "Owner task completed after a confirmed send." }],
       });
       if (method === "VOICE") say(`Sent to ${open.name}.`);
+      return true;
     } catch {
       setSyncErr("Lamb Ascension could not send this email. It has NOT been marked sent.");
+      setTaskNote("The send did not succeed. This task is still open.");
       if (method === "VOICE") say("Could not send. It has not been marked sent.");
+      return false;
     }
   }
 
@@ -4192,17 +4296,29 @@ export function OwnerDesk() {
         <Sheet
           title={`Task ${taskIx + 1} of ${tasks.length}`}
           heading={tasks[taskIx].title}
-          text={`What happened: ${tasks[taskIx].plain}\n\nWhy it matters: ${tasks[taskIx].why}\n\nWhat I recommend: ${tasks[taskIx].recommend}`}
+          text={taskPane === "review" ? "" : `What happened: ${tasks[taskIx].plain}\n\nWhy it matters: ${tasks[taskIx].why}\n\nWhat I recommend: ${tasks[taskIx].recommend}`}
           onClose={() => dispatchAction({ name: "ACKNOWLEDGE_TASK" })}
+          showGotIt={taskKind(tasks[taskIx]) === "info"}
         >
-          <button type="button" className="la-btn la-btn-primary" onClick={() => dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>
-            Learn More
-          </button>
-          {tasks[taskIx].retry ? (
-            <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "FIND_CONTACT", uid: tasks[taskIx].company_uid })}>Find Contact</button>
-          ) : null}
-          <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "SKIP_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Skip</button>
-          <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "NEXT_TASK" })}>Next</button>
+          {taskNote ? <p className="mb-2 text-sm">{taskNote}</p> : null}
+          {taskPane === "review" && taskKind(tasks[taskIx]) === "contact" ? (
+            <TaskDraft company={rows.find((row) => row.uid === tasks[taskIx].company_uid) || null} testMode={testModeOn} onApprove={() => { if (testModeOn) approveTaskForLive(); else void approveAndSendTask(); }} onBack={() => setTaskPane("brief")} />
+          ) : (
+            <>
+              <button type="button" className="la-btn la-btn-primary" onClick={() => {
+                const kind = taskKind(tasks[taskIx]);
+                if (kind === "contact") { setTaskNote(""); setTaskPane("review"); return; }
+                if (kind === "research" || kind === "contact_info") dispatchAction({ name: "RETRY_CURRENT_TASK", uid: tasks[taskIx].company_uid });
+                else dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid });
+              }}>
+                {primaryTaskCta(taskKind(tasks[taskIx]), testModeOn).label}
+              </button>
+              <button type="button" className="la-btn la-btn-ghost" onClick={() => dispatchAction({ name: "REVIEW_CURRENT_TASK", uid: tasks[taskIx].company_uid })}>Learn More</button>
+              <button type="button" className="la-btn la-btn-ghost" onClick={deferCurrentTask}>Skip</button>
+              <button type="button" className="la-btn la-btn-ghost" onClick={() => { const open = currentTaskCompany(); if (open) skipProspect(open, "MANUAL"); advanceAfterResolve(open?.uid || ""); }}>Not pursuing</button>
+              <button type="button" className="la-btn la-btn-ghost" onClick={() => { setTaskPane("brief"); dispatchAction({ name: "NEXT_TASK" }); }}>Next task</button>
+            </>
+          )}
         </Sheet>
       ) : null}
       {explain ? <ExplainPanel text={explain} onClose={() => dispatchAction({ name: "CLOSE_EXPLAIN" })} /> : null}
@@ -4532,7 +4648,26 @@ function ExplainPanel({ text, onClose }: { text: string; onClose: () => void }) 
   );
 }
 
-function Sheet({ title, heading, text, onClose, children }: { title?: string; heading?: string; text: string; onClose: () => void; children?: ReactNode }) {
+function TaskDraft({ company, testMode, onApprove, onBack }: { company: Prospect | null; testMode: boolean; onApprove: () => void; onBack: () => void }) {
+  if (!company) return <p className="text-sm">That company is not on this task.</p>;
+  const pack = company.outreach || generateOutreach(company);
+  const email = pack.messages.find((message) => message.kind === "email");
+  const recipient = usefulEmail(company)?.value || "No usable email";
+  return (
+    <div className="mb-3">
+      <p className="text-sm"><b>To</b> {recipient}</p>
+      <p className="text-sm"><b>Subject</b> {email?.subject || "No subject"}</p>
+      <p className="mt-2 whitespace-pre-wrap text-sm">{email?.body || "No draft yet."}</p>
+      {email?.evidence_used?.length ? <p className="mt-2 text-sm text-muted">Evidence: {email.evidence_used.slice(0, 3).join(" · ")}</p> : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="la-btn la-btn-primary" onClick={onApprove} disabled={!email || recipient === "No usable email"}>{approveLabel(testMode)}</button>
+        <button type="button" className="la-btn la-btn-ghost" onClick={onBack}>Back</button>
+      </div>
+    </div>
+  );
+}
+
+function Sheet({ title, heading, text, onClose, children, showGotIt = false }: { title?: string; heading?: string; text: string; onClose: () => void; children?: ReactNode; showGotIt?: boolean }) {
   const openedAt = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -4559,7 +4694,7 @@ function Sheet({ title, heading, text, onClose, children }: { title?: string; he
         <p className="mb-4 whitespace-pre-wrap text-sm">{text}</p>
         <div className="flex flex-wrap gap-2">
           {children}
-          <button type="button" className="la-btn la-btn-primary" onClick={onClose}>Got it</button>
+          {showGotIt ? <button type="button" className="la-btn la-btn-primary" onClick={onClose}>Got it</button> : null}
         </div>
       </div>
     </div>
