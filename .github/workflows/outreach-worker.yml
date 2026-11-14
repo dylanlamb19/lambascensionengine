@@ -1,33 +1,26 @@
+# Retired on this repository.
+#
+# Production outreach is woken by dylanlamb19/lamb-ascension-engine:
+# Vercel Cron in that repo, plus its Outreach Worker, which returned HTTP 200
+# on 2026-11-14. This copy never had the OUTREACH_JOB_SECRET Actions secret,
+# so every scheduled run failed before any HTTP call (run 801 and the rest).
+# Do not schedule this file again. Adding the secret here would wake the same
+# live worker a second time.
 name: Outreach Worker
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  pull_request:
   workflow_dispatch:
 
 jobs:
   tick:
-    name: Wake production outreach worker
+    name: Retired — do not wake production
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: POST existing production worker endpoint
-        env:
-          JOB_SECRET: ${{ secrets.OUTREACH_JOB_SECRET }}
+      - name: Confirm this scheduler does not call production
         run: |
           set -euo pipefail
-          if [ -z "${JOB_SECRET}" ]; then
-            echo "OUTREACH_JOB_SECRET repository secret is not set"
-            exit 1
-          fi
-          code=$(curl -sS -o /tmp/worker-body -w "%{http_code}" \
-            -X POST "https://lamb-ascension-engine.vercel.app/api/jobs/outreach" \
-            -H "Authorization: Bearer ${JOB_SECRET}" \
-            -H "x-job-secret: ${JOB_SECRET}" \
-            -H "Content-Type: application/json" \
-            --max-time 90)
-          echo "HTTP ${code}"
-          if [ "${code}" -lt 200 ] || [ "${code}" -ge 300 ]; then
-            echo "worker endpoint returned non-2xx"
-            exit 1
-          fi
+          echo "Outreach Worker in dylanlamb19/lambascensionengine is retired."
+          echo "Live scheduler: dylanlamb19/lamb-ascension-engine (Vercel Cron + Outreach Worker)."
+          echo "No HTTP request was made. No email was sent."
