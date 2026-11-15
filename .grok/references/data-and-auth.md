@@ -54,9 +54,11 @@ and `auth` skills.
   the rule about not adding a React route there.
 - Read the user with `useCurrentUser()` (`@/lib/auth/use-current-user`) and gate
   UI with `SignedIn` / `SignedOut` / `UserButton` (`@/lib/auth/gates`).
-- Sign-in is **real even in the live preview** — it federates via a baked shared
-  preview client — so a visitor is signed out until they sign in. Build real
-  sign-in; do **NOT** scaffold demo/mock/hardcoded users.
+- Sign-in is **real even in the live preview** when `GROK_PREVIEW_CLIENT_SECRET`
+  is set on the host — it federates via the shared preview client. If that
+  secret is unset, preview sign-in is disabled (no hardcoded fallback). A
+  visitor is signed out until they sign in. Build real sign-in; do **NOT**
+  scaffold demo/mock/hardcoded users or commit client secrets.
 - **Authorize every server function** with `authMiddleware`
   (`@/lib/auth/middleware`): `createServerFn().middleware([authMiddleware])`
   hands the handler a **verified** `context.userId` (resolved from the
@@ -75,8 +77,9 @@ flag (exit 0 agree, 1 diverged, 2 could not observe).
 
 ## Env
 
-On deploy the platform injects `DATABASE_URL` + per-app auth creds; live preview
-needs neither (baked preview client, PGLite fallback). Deployed behind the gate,
+On deploy the platform injects `DATABASE_URL` + per-app auth creds
+(`GROK_AUTH_CLIENT_SECRET`). Live preview still uses PGLite, but preview
+sign-in also needs `GROK_PREVIEW_CLIENT_SECRET` in the environment. Deployed behind the gate,
 signed-in Grok viewers get the app session automatically from `x-grok-identity`
 (see the `auth` skill — `references/grok-identity.md`); the broker federation
 covers anonymous viewers and no-gate contexts.
