@@ -18,9 +18,13 @@
 
 - **Live preview** (`*.grok-sandbox.com`): the app is an embedded iframe, so
   sign-in opens a **popup** (a top-level redirect to the broker can't work inside
-  the iframe) and federates via a baked shared **preview client**
-  (`src/lib/auth/preview.ts`). The handler 302s straight to the broker/upstream
-  login; on return the popup posts the session bearer back in a tiny HTML page.
+  the iframe) and federates via the shared **preview client**
+  (`src/lib/auth/preview.ts`). The client id is public (`grok_preview`); the
+  secret is read only from `GROK_PREVIEW_CLIENT_SECRET`. If that var is unset
+  and `GROK_AUTH_CLIENT_SECRET` is also unset, preview sign-in is disabled and
+  the server logs that fact without printing a secret. The handler 302s straight
+  to the broker/upstream login; on return the popup posts the session bearer
+  back in a tiny HTML page.
   Sessions (and email/password users) persist in the app's embedded PGLite DB —
   the SAME DB as app data — and, since the iframe's cookies are partitioned,
   ride that bearer token; all of it lives in `src/lib/auth`.
@@ -30,13 +34,15 @@
 
 ## Env vars — do **not** create a `.env` file
 
-**Never write a `.env` / `.env.local` / `.env.example` for auth (or anything
-else) in this sandbox.** Live preview sign-in works out of the box with **zero**
-env configuration: the server falls back to the baked preview client in
-`src/lib/auth/preview.ts`, derives the `*.grok-sandbox.com` origin per-request,
-mints a process-stable session secret, and persists sessions in embedded
-PGLite. Deployed apps get `GROK_AUTH_*` / `BETTER_AUTH_*` / `DATABASE_URL`
-injected by the platform — still not something you write into a file.
+**Never write a `.env` / `.env.local` with real secrets.** Names live in
+`.env.example` with empty values. Live preview sign-in needs
+`GROK_PREVIEW_CLIENT_SECRET` in the host environment (Vercel). There is no
+secret baked into `src/lib/auth/preview.ts`. If it is unset, preview sign-in
+is disabled (fail closed) and a log line names the variable only. The server
+still derives the `*.grok-sandbox.com` origin per-request, mints a
+process-stable session secret, and persists sessions in embedded PGLite.
+Deployed apps get `GROK_AUTH_*` / `BETTER_AUTH_*` / `DATABASE_URL` injected by
+the platform — `GROK_AUTH_CLIENT_SECRET` overrides the preview secret.
 
 Optional process-env knobs (platform / rare overrides only — **do not** put
 these in a file you create):
@@ -47,8 +53,10 @@ these in a file you create):
 | `BETTER_AUTH_URL` | server | app's own public origin; unset in preview (origin is derived per-request) |
 | `BETTER_AUTH_SECRET` | server | signs this app's own sessions (process-stable fallback in preview; survives HMR) |
 | `GROK_AUTH_ISSUER` | server | the shared broker (defaults to `https://auth.grok.me`) |
-| `GROK_AUTH_CLIENT_ID` / `GROK_AUTH_CLIENT_SECRET` | server | per-app client (falls back to the preview client) |
+| `GROK_AUTH_CLIENT_ID` / `GROK_AUTH_CLIENT_SECRET` | server | per-app client injected on deploy. The secret, when set, takes precedence over the preview secret |
+| `GROK_PREVIEW_CLIENT_SECRET` | server | shared preview client secret. Required for live-preview sign-in when `GROK_AUTH_CLIENT_SECRET` is unset. Empty in `.env.example`; set it on Vercel. If both secrets are unset, preview sign-in is disabled |
 | `DATABASE_URL` | server | when deployed, Better Auth persists here (preview persists to the embedded PGLite — same DB as app data) |
 
-Never expose a non-`VITE_` var to the client. The preview client id/secret live
-server-only in `src/lib/auth/preview.ts`.
+Never expose a non-`VITE_` var to the client. The preview client id is public
+and server-only in `src/lib/auth/preview.ts`. The preview client secret is
+never committed; it comes from `GROK_PREVIEW_CLIENT_SECRET`.

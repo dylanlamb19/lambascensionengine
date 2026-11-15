@@ -31,7 +31,8 @@ no Google/X buttons**: `references/grok-identity.md`.
 them (AGENTS.md §0.5). Switching it on is "Turning sign-in on" below.
 
 **Once on, sign-in is REAL — including in the sandbox live preview.** Do **NOT**
-scaffold demo/mock/hardcoded users. Preview: popup + baked preview client;
+scaffold demo/mock/hardcoded users or client secrets. Preview: popup +
+`GROK_PREVIEW_CLIENT_SECRET` (sign-in stays off if unset);
 deployed: per-app client + `DATABASE_URL` + zero-click gate sign-in
 (`references/prewired-and-env.md`).
 
