@@ -29,6 +29,7 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
       ...row,
       onboarding: onboardingStep(row),
       subscriptionStatus: row.subscriptionStatus || "trial",
+      leadFollowUpKillSwitch: row.leadFollowUpKillSwitch === true,
     })),
     clients: (state.clients || []).filter((row) => row.tenantId === tenantId),
     enrollments: (state.enrollments || []).filter((row) => row.tenantId === tenantId),
@@ -39,6 +40,8 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     invites: (state.invites || []).filter((row) => row.tenantId === tenantId),
     memberships: (state.memberships || []).filter((row) => row.tenantId === tenantId),
     usage: (state.usage || []).filter((row) => row.tenantId === tenantId),
+    leads: (state.leads || []).filter((row) => row.tenantId === tenantId),
+    leadSteps: (state.leadSteps || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -59,6 +62,8 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     invites: [...(state.invites || []).filter((row) => row.tenantId !== tenantId), ...safe.invites],
     memberships: [...(state.memberships || []).filter((row) => row.tenantId !== tenantId), ...safe.memberships],
     usage: [...(state.usage || []).filter((row) => row.tenantId !== tenantId), ...safe.usage],
+    leads: [...(state.leads || []).filter((row) => row.tenantId !== tenantId), ...safe.leads],
+    leadSteps: [...(state.leadSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.leadSteps],
   };
 }
 
@@ -99,6 +104,7 @@ export function startMarketerOnboarding(state: FulfillmentState, input: Onboardi
     planStatus: "test_inactive",
     subscriptionStatus: "trial",
     billingMode: "test",
+    leadFollowUpKillSwitch: false,
   };
   return {
     ok: true,
