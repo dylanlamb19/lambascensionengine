@@ -87,6 +87,16 @@ import {
 import { ImageDock } from "@/components/image-dock";
 import { DesignDirectorBar } from "@/components/design-director";
 import { FLAGS } from "@/lib/flags";
+import { scopePackageTenantFn } from "@/lib/packages/scope-action";
+import { PackageFulfillmentPanel } from "@/components/package-fulfillment";
+import { packageFulfillmentNav } from "@/lib/packages/nav";
+import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/storage";
+import { fakeBilling } from "@/lib/packages/billing";
+import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
+import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
+import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
+import { confirmWorkspace, finishOnboarding, startMarketerOnboarding, workspaceIdForUser } from "@/lib/packages/tenancy";
+import { EMPTY_FULFILLMENT, type FulfillmentState, type RecordPurchaseInput } from "@/lib/packages/types";
 import {
   araRecommend,
   listingPhone,
@@ -235,6 +245,13 @@ export function OwnerDesk() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<OwnerView>("home");
+  const [packagesOpen, setPackagesOpen] = useState(false);
+  const [pkgState, setPkgState] = useState<FulfillmentState>(EMPTY_FULFILLMENT);
+  const pkgRef = useRef(pkgState);
+  pkgRef.current = pkgState;
+  const [pkgClientId, setPkgClientId] = useState<string | null>(null);
+  const [pkgEnrollmentId, setPkgEnrollmentId] = useState<string | null>(null);
+  const packageNav = packageFulfillmentNav();
   const [rows, setRows] = useState<Prospect[]>(SEED);
   const [taskIx, setTaskIx] = useState<number | null>(null);
   const [explain, setExplain] = useState<string | null>(null);
@@ -341,6 +358,32 @@ export function OwnerDesk() {
       : light === "yellow"
         ? `${tasks.filter((t) => t.severity === "yellow").length} thing(s) only you can decide. Press Start My Tasks.`
         : "Nothing waiting on you.";
+
+  useEffect(() => {
+    if (!FLAGS.PACKAGE_FULFILLMENT || !userId) return;
+    const tenantId = workspaceIdForUser(userId);
+    if (!tenantId) return;
+    const loaded = loadFulfillmentLocal(tenantId);
+    const opened = startMarketerOnboarding(loaded, {
+      userId,
+      workspaceName: user?.displayName || user?.primaryEmail || "My workspace",
+      now: new Date().toISOString(),
+    });
+    const initial = opened.ok ? opened.state : loaded;
+    pkgRef.current = initial;
+    setPkgState(initial);
+    if (opened.ok) saveFulfillmentLocal(tenantId, initial);
+    void scopePackageTenantFn().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      setPkgState((prev) => {
+        const ticked = tickFulfillment(prev, tenantId, new Date().toISOString(), { enabled: true, credentials: credentialsFor(prev, tenantId) });
+        if (ticked.advanced === 0) return prev;
+        saveFulfillmentLocal(tenantId, ticked.state);
+        return ticked.state;
+      });
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [userId, user?.displayName, user?.primaryEmail]);
 
   useEffect(() => {
     if (!userId) return;
@@ -2145,6 +2188,28 @@ export function OwnerDesk() {
   }
 
   const open = findByUid(rows, openUid);
+  const packageTenantId = userId ? workspaceIdForUser(userId) : null;
+
+  function recordPackage(input: RecordPurchaseInput) {
+    if (!FLAGS.PACKAGE_FULFILLMENT || !packageTenantId) return { ok: false as const, reason: "Package fulfillment is off." };
+    const now = new Date().toISOString();
+    const recorded = recordPurchase(pkgRef.current, packageTenantId, input, now);
+    if (!recorded.ok) return { ok: false as const, reason: recorded.reason };
+    const ticked = tickFulfillment(recorded.state, packageTenantId, now, { enabled: true, credentials: credentialsFor(recorded.state, packageTenantId) });
+    pkgRef.current = ticked.state;
+    saveFulfillmentLocal(packageTenantId, ticked.state);
+    setPkgState(ticked.state);
+    setPkgClientId(recorded.clientId);
+    setPkgEnrollmentId(recorded.enrollmentId);
+    return { ok: true as const };
+  }
+
+  function mutatePackage(next: FulfillmentState) {
+    if (!packageTenantId || !FLAGS.PACKAGE_FULFILLMENT) return;
+    pkgRef.current = next;
+    saveFulfillmentLocal(packageTenantId, next);
+    setPkgState(next);
+  }
 
   if (isPending) {
     return null;
@@ -2373,11 +2438,22 @@ export function OwnerDesk() {
             </div>
           </div>
           <nav className="la-nav">
-            <button className="la-nav-btn la-nav-quiet" data-on={view === "home" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_HOME" })}>Home</button>
-            <button className="la-nav-btn la-nav-quiet" data-on={view === "add" ? "1" : "0"} onClick={() => dispatchAction({ name: "OPEN_ADD_CLIENT" })}>Add Client</button>
-            <button className="la-nav-btn la-nav-quiet" data-on={view === "pipe" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_PIPELINE" })}>Pipeline</button>
-            <button className="la-nav-btn la-nav-quiet" data-on={view === "calendar" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_CALENDAR" })}>Calendar</button>
-            <button className="la-nav-btn la-nav-quiet" data-on={view === "settings" ? "1" : "0"} onClick={() => dispatchAction({ name: "NAVIGATE_SETTINGS" })}>Settings</button>
+            <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "home" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_HOME" }); }}>Home</button>
+            <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "add" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "OPEN_ADD_CLIENT" }); }}>Add Client</button>
+            <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "pipe" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_PIPELINE" }); }}>Pipeline</button>
+            <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "calendar" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_CALENDAR" }); }}>Calendar</button>
+            {packageNav.visible ? (
+              <button
+                type="button"
+                className="la-nav-btn la-nav-quiet"
+                data-fulfillment-tab="1"
+                data-on={packagesOpen ? "1" : "0"}
+                onClick={() => setPackagesOpen(true)}
+              >
+                {packageNav.label}
+              </button>
+            ) : null}
+            <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "settings" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_SETTINGS" }); }}>Settings</button>
             <button
               className="la-nav-btn"
               disabled={busy}
@@ -2490,13 +2566,93 @@ export function OwnerDesk() {
             ) : null}
           </div>
         ) : null}
-        {nextCall && view === "home" ? (
+        {!packagesOpen && nextCall && view === "home" ? (
           <div className="la-ribbon la-ribbon-call mb-3">
             <b>Next sales call:</b> {new Date(nextCall.start_at).toLocaleString()} — {rows.find((p) => p.uid === nextCall.prospect_uid)?.name || nextCall.title}
             <button className="la-btn la-btn-quiet" onClick={() => dispatchAction({ name: "NAVIGATE_CALENDAR" })}>Open Calendar</button>
           </div>
         ) : null}
-        {view === "settings" ? (
+        {packagesOpen && packageTenantId ? (
+          <PackageFulfillmentPanel
+            tenantId={packageTenantId}
+            state={pkgState}
+            selectedClientId={pkgClientId}
+            selectedEnrollmentId={pkgEnrollmentId}
+            onSelectClient={(id) => {
+              setPkgClientId(id);
+              const first = pkgState.enrollments.find((row) => row.tenantId === packageTenantId && row.clientId === id);
+              setPkgEnrollmentId(first?.id || null);
+            }}
+            onSelectEnrollment={setPkgEnrollmentId}
+            onBack={() => {
+              setPkgClientId(null);
+              setPkgEnrollmentId(null);
+            }}
+            onRecord={recordPackage}
+            onStatus={(enrollmentId, status) => mutatePackage(setEnrollmentStatus(pkgRef.current, packageTenantId, enrollmentId, status))}
+            onKill={(enrollmentId, on) => mutatePackage(setKillSwitch(pkgRef.current, packageTenantId, enrollmentId, on, new Date().toISOString()))}
+            onPayment={(enrollmentId, which, value) => mutatePackage(setPayment(pkgRef.current, packageTenantId, enrollmentId, which, value))}
+            onPlan={(planId) => {
+              const chosen = fakeBilling.selectPlan(pkgRef.current, packageTenantId, planId, new Date().toISOString());
+              if (chosen.ok) mutatePackage(chosen.state);
+            }}
+            onConfirmWorkspace={(name) => {
+              const named = confirmWorkspace(pkgRef.current, packageTenantId, name, new Date().toISOString());
+              if (named.ok) mutatePackage(named.state);
+              return named.ok ? { ok: true } : { ok: false, reason: named.reason };
+            }}
+            onAddClient={(name) => {
+              const added = addPackageClient(pkgRef.current, packageTenantId, name, new Date().toISOString());
+              if (!added.ok) return { ok: false, reason: added.reason };
+              mutatePackage(added.state);
+              setPkgClientId(added.clientId);
+              return { ok: true };
+            }}
+            onConnect={(kind) => {
+              const connected = stubConnect(pkgRef.current, packageTenantId, kind, new Date().toISOString());
+              if (connected.ok) mutatePackage(connected.state);
+            }}
+            onDisconnect={(kind) => {
+              const disconnected = stubDisconnect(pkgRef.current, packageTenantId, kind);
+              if (disconnected.ok) mutatePackage(disconnected.state);
+            }}
+            onFinish={() => {
+              const finished = finishOnboarding(pkgRef.current, packageTenantId);
+              if (finished.ok) mutatePackage(finished.state);
+              return finished.ok ? { ok: true } : { ok: false, reason: finished.reason };
+            }}
+            sessionUserId={userId || ""}
+            sessionEmail={user?.primaryEmail || ""}
+            onInvite={(email) => {
+              const invited = inviteMarketer(pkgRef.current, packageTenantId, userId || "", email, new Date().toISOString(), FLAGS.PACKAGE_FULFILLMENT);
+              if (invited.ok) mutatePackage(invited.state);
+              return invited.ok ? { ok: true } : { ok: false, reason: invited.reason };
+            }}
+            onAccept={(inviteId) => {
+              const accepted = acceptInvite(pkgRef.current, inviteId, userId || "", user?.primaryEmail || "", new Date().toISOString(), FLAGS.PACKAGE_FULFILLMENT);
+              if (accepted.ok) mutatePackage(accepted.state);
+              return accepted.ok ? { ok: true } : { ok: false, reason: accepted.reason };
+            }}
+            onTransition={(to) => {
+              const moved = fakeBilling.transitionSubscription(pkgRef.current, packageTenantId, to, new Date().toISOString());
+              if (moved.ok) mutatePackage(moved.state);
+            }}
+            onIssueInvoice={() => {
+              const issued = fakeBilling.issueInvoice(pkgRef.current, packageTenantId, new Date().toISOString());
+              if (issued.ok) mutatePackage(issued.state);
+            }}
+            onPayInvoice={(invoiceId) => {
+              const paid = fakeBilling.payInvoice(pkgRef.current, packageTenantId, invoiceId, new Date().toISOString());
+              if (paid.ok) mutatePackage(paid.state);
+            }}
+            onCheckout={(planId) => {
+              const checked = fakeBilling.checkout(pkgRef.current, packageTenantId, planId, new Date().toISOString());
+              if (checked.ok) mutatePackage(checked.state);
+              return checked.ok ? { ok: true } : { ok: false, reason: checked.reason };
+            }}
+          />
+        ) : null}
+        {!packagesOpen && view === "settings" ? (
           <TestDesk
             onBack={() => setView("home")}
             onTestModeChange={(on, list) => {
@@ -2507,7 +2663,7 @@ export function OwnerDesk() {
             onTestLoop={setTestLoop}
           />
         ) : null}
-        {view === "home" ? (
+        {!packagesOpen && view === "home" ? (
           <>
             {nsfwLocked(visual, adultUnlocked) ? (
               <div className="la-scene-lock la-card">
@@ -2545,7 +2701,7 @@ export function OwnerDesk() {
           </>
         ) : null}
 
-        {view === "find" ? (
+        {!packagesOpen && view === "find" ? (
           <form
             className="la-card"
             onSubmit={(e) => { e.preventDefault(); void runFind(); }}
@@ -2579,7 +2735,7 @@ export function OwnerDesk() {
           </form>
         ) : null}
 
-        {view === "add" ? (
+        {!packagesOpen && view === "add" ? (
           <form onSubmit={addClient} className="la-card">
             <p className="la-kicker">Acquisition</p>
             <h2 className="font-display mt-2 text-2xl">Add Client</h2>
@@ -2602,7 +2758,7 @@ export function OwnerDesk() {
           </form>
         ) : null}
 
-        {view === "pipe" ? (
+        {!packagesOpen && view === "pipe" ? (
           <section className="la-card">
             <p className="la-kicker">Pipeline</p>
             <h2 className="font-display mb-3 mt-2 text-2xl">Pipeline</h2>
@@ -2618,7 +2774,7 @@ export function OwnerDesk() {
           </section>
         ) : null}
 
-        {view === "calendar" ? (
+        {!packagesOpen && view === "calendar" ? (
           <CalendarDesk
             calView={calView}
             calAnchor={calAnchor}
@@ -2638,7 +2794,7 @@ export function OwnerDesk() {
           />
         ) : null}
 
-        {view === "outreach" && open ? (
+        {!packagesOpen && view === "outreach" && open ? (
           <OutreachDesk
             company={open}
             onSave={patchCompany}
@@ -2650,11 +2806,11 @@ export function OwnerDesk() {
             gmailConnected={google.gmail === "connected"}
           />
         ) : null}
-        {view === "call" && open ? <CallCard company={open} onBack={() => setView("outreach")} /> : null}
-        {view === "prep" && open ? (
+        {!packagesOpen && view === "call" && open ? <CallCard company={open} onBack={() => setView("outreach")} /> : null}
+        {!packagesOpen && view === "prep" && open ? (
           <PrepCard company={open} onSave={patchCompany} onBack={() => setView("home")} />
         ) : null}
-        {view === "detail" && open ? (
+        {!packagesOpen && view === "detail" && open ? (
           <ReviewPage
             company={open}
             evidence={evidence}
@@ -2675,7 +2831,7 @@ export function OwnerDesk() {
             onBack={() => dispatchAction({ name: "GO_BACK" })}
           />
         ) : null}
-        {view !== "home" ? (
+        {!packagesOpen && view !== "home" ? (
           <ImageDock
             gallery={gallery}
             onToggle={() => setGallery((g) => ({ ...g, libraryOpen: !g.libraryOpen }))}
@@ -2685,7 +2841,7 @@ export function OwnerDesk() {
           />
         ) : null}
       </main>
-      {view === "home" ? (
+      {!packagesOpen && view === "home" ? (
         <section className="la-scenery" data-scenery-view="1" aria-label="Scenery view">
           <button
             type="button"

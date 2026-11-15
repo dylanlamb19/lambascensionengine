@@ -10,6 +10,8 @@ export const FLAGS = {
   ARA_DEVELOPER_MODE: false,
   EXPERIMENTAL_VOICE_FEATURES: false,
   DESIGN_DIRECTOR: false,
+  /** Client package tracker, fulfillment tab, and pipelines. Off until explicitly enabled. */
+  PACKAGE_FULFILLMENT: false,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;
