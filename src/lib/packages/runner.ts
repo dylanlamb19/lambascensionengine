@@ -1,9 +1,9 @@
+import { fakeBilling } from "./billing.ts";
 import { getPackage, isPackageId, type PackageId } from "./catalog.ts";
-import { getTestPlan } from "./plans.ts";
+import { connectionForIntegration, connectionLabel, missingConnectionLine } from "./connections.ts";
 import { stepTemplates } from "./steps.ts";
 import { workspaceFor } from "./tenancy.ts";
 import {
-  EMPTY_FULFILLMENT,
   NO_CREDENTIALS,
   type CredentialPort,
   type Enrollment,
@@ -84,9 +84,13 @@ function followingRun(schedule: StepRun["schedule"], now: string): string | null
 
 export function defaultRunStep(step: StepRun, credentials: CredentialPort): StepOutcome {
   if (step.mode === "bookkeeping") return { status: "done", output: step.doneOutput };
-  const integration = step.integration || "integration";
-  if (!credentials.has(integration)) return { status: "needs_human", output: step.missingOutput };
-  return { status: "needs_human", output: step.unwiredOutput };
+  const kind = step.integration ? connectionForIntegration(step.integration) : null;
+  if (!kind) return { status: "needs_human", output: step.missingOutput || "Needs a person. Nothing was sent." };
+  const label = connectionLabel(kind);
+  if (!step.integration || !credentials.has(step.integration)) {
+    return { status: "needs_human", output: missingConnectionLine(kind, step.missingOutput) };
+  }
+  return { status: "needs_human", output: `${label} is marked connected in test mode, but the adapter is not wired. Nothing was sent.` };
 }
 
 function sameClient(tenantId: string, clientName: string, state: FulfillmentState) {
@@ -112,11 +116,9 @@ export function recordPurchase(
   const startedOn = input.startedOn && /^\d{4}-\d{2}-\d{2}$/.test(input.startedOn) ? input.startedOn : dateOnly(now);
   let client = sameClient(tenantId, clientName, state);
   if (!client) {
-    const limit = getTestPlan(workspace.planId).clientLimit;
-    const owned = state.clients.filter((row) => row.tenantId === tenantId).length;
-    if (limit != null && owned >= limit) {
-      return { ok: false, state, reason: `This test plan records up to ${limit} clients. No charge was attempted.` };
-    }
+    const gate = fakeBilling.assertCanAddClient(state, tenantId, now);
+    if (!gate.ok) return { ok: false, state: gate.state, reason: gate.reason };
+    state = gate.state;
   }
   if (pkg.addonOf) {
     const parent = client
@@ -187,11 +189,44 @@ export function recordPurchase(
     logs: [{ at: now, message: "Scheduled." }],
   }));
   const clients = state.clients.some((row) => row.id === client?.id) ? state.clients : [...state.clients, client];
+  const withRows: FulfillmentState = { ...state, clients, enrollments: [...state.enrollments, enrollment], steps: [...state.steps, ...steps] };
+  const opened = withRows.workspaces.map((row) =>
+    row.id === tenantId && row.onboarding === "packages" ? { ...row, onboarding: "connections" as const } : row,
+  );
+  return { ok: true, clientId: client.id, enrollmentId: enrollment.id, state: { ...withRows, workspaces: opened } };
+}
+
+export function addClient(
+  state: FulfillmentState,
+  tenantId: string,
+  clientName: string,
+  now: string,
+  ids: IdFactory = defaultIdFactory(),
+): RecordResult {
+  const workspace = workspaceFor(state, tenantId);
+  if (!workspace || workspace.billingMode !== "test") {
+    return { ok: false, state, reason: "Open this marketer's workspace before adding a client." };
+  }
+  const name = clientName.trim().replace(/\s+/g, " ");
+  if (!name) return { ok: false, state, reason: "The client needs a name." };
+  const existing = sameClient(tenantId, name, state);
+  if (existing) {
+    const advanced = state.workspaces.map((row) =>
+      row.id === tenantId && row.onboarding === "client" ? { ...row, onboarding: "packages" as const } : row,
+    );
+    return { ok: true, state: { ...state, workspaces: advanced }, clientId: existing.id, enrollmentId: "" };
+  }
+  const gate = fakeBilling.assertCanAddClient(state, tenantId, now);
+  if (!gate.ok) return { ok: false, state: gate.state, reason: gate.reason };
+  const client = { id: ids(), tenantId, name, createdAt: now };
+  const workspaces = gate.state.workspaces.map((row) =>
+    row.id === tenantId && row.onboarding === "client" ? { ...row, onboarding: "packages" as const } : row,
+  );
   return {
     ok: true,
     clientId: client.id,
-    enrollmentId: enrollment.id,
-    state: { ...state, clients, enrollments: [...state.enrollments, enrollment], steps: [...state.steps, ...steps] },
+    enrollmentId: "",
+    state: { ...gate.state, workspaces, clients: [...gate.state.clients, client] },
   };
 }
 
@@ -323,7 +358,14 @@ export function setPayment(
 }
 
 export function emptyFulfillment(): FulfillmentState {
-  return { ...EMPTY_FULFILLMENT, workspaces: [], clients: [], enrollments: [], steps: [] };
+  return {
+    workspaces: [],
+    clients: [],
+    enrollments: [],
+    steps: [],
+    connections: [],
+    billingEvents: [],
+  };
 }
 
 export type { PackageId };

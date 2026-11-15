@@ -8,7 +8,7 @@ export type DeliverableStatus = "not_started" | "in_progress" | "fulfilled" | "b
 export type StepSchedule = "immediate" | "weekly" | "monthly";
 export type StepMode = "bookkeeping" | "external";
 
-export type OnboardingStatus = "workspace_ready" | "test_plan_selected";
+export type OnboardingStep = "workspace" | "plan" | "client" | "packages" | "connections" | "desk";
 export type PlanStatus = "test_inactive" | "test_trial" | "test_active";
 
 /** One marketer workspace. `id` is the tenant key. Billing is test-mode only. */
@@ -17,7 +17,7 @@ export type Workspace = {
   ownerUserId: string;
   name: string;
   createdAt: string;
-  onboarding: OnboardingStatus;
+  onboarding: OnboardingStep;
   planId: TestPlanId;
   planStatus: PlanStatus;
   billingMode: "test";
@@ -74,11 +74,46 @@ export type StepRun = {
   logs: { at: string; message: string }[];
 };
 
+export type ConnectionKind =
+  | "mailbox"
+  | "google_ads"
+  | "meta"
+  | "gbp"
+  | "cms"
+  | "booking_calendar"
+  | "job_feed"
+  | "estimate_feed"
+  | "tracking";
+
+export type ConnectionStatus = "missing" | "stub_connected";
+
+/** A workspace connection. Status only. No tokens, keys, or secrets. */
+export type WorkspaceConnection = {
+  tenantId: string;
+  kind: ConnectionKind;
+  label: string;
+  status: ConnectionStatus;
+  connectedAt: string | null;
+};
+
+/** A test-mode billing notice. amountCents is always 0. */
+export type BillingEvent = {
+  id: string;
+  tenantId: string;
+  type: string;
+  planId: string | null;
+  amountCents: 0;
+  billingMode: "test";
+  at: string;
+};
+
 export type FulfillmentState = {
   workspaces: Workspace[];
   clients: ServiceClient[];
   enrollments: Enrollment[];
   steps: StepRun[];
+  connections: WorkspaceConnection[];
+  billingEvents: BillingEvent[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -86,6 +121,8 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   clients: [],
   enrollments: [],
   steps: [],
+  connections: [],
+  billingEvents: [],
 };
 
 export type RecordPurchaseInput = {

@@ -90,8 +90,10 @@ import { FLAGS } from "@/lib/flags";
 import { PackageFulfillmentPanel } from "@/components/package-fulfillment";
 import { packageFulfillmentNav } from "@/lib/packages/nav";
 import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/storage";
-import { recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
-import { startMarketerOnboarding, selectTestPlan, workspaceIdForUser } from "@/lib/packages/tenancy";
+import { fakeBilling } from "@/lib/packages/billing";
+import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
+import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
+import { confirmWorkspace, finishOnboarding, startMarketerOnboarding, workspaceIdForUser } from "@/lib/packages/tenancy";
 import { EMPTY_FULFILLMENT, type FulfillmentState, type RecordPurchaseInput } from "@/lib/packages/types";
 import {
   araRecommend,
@@ -371,7 +373,7 @@ export function OwnerDesk() {
     if (opened.ok) saveFulfillmentLocal(tenantId, initial);
     const timer = window.setInterval(() => {
       setPkgState((prev) => {
-        const ticked = tickFulfillment(prev, tenantId, new Date().toISOString(), { enabled: true });
+        const ticked = tickFulfillment(prev, tenantId, new Date().toISOString(), { enabled: true, credentials: credentialsFor(prev, tenantId) });
         if (ticked.advanced === 0) return prev;
         saveFulfillmentLocal(tenantId, ticked.state);
         return ticked.state;
@@ -2190,7 +2192,7 @@ export function OwnerDesk() {
     const now = new Date().toISOString();
     const recorded = recordPurchase(pkgRef.current, packageTenantId, input, now);
     if (!recorded.ok) return { ok: false as const, reason: recorded.reason };
-    const ticked = tickFulfillment(recorded.state, packageTenantId, now, { enabled: true });
+    const ticked = tickFulfillment(recorded.state, packageTenantId, now, { enabled: true, credentials: credentialsFor(recorded.state, packageTenantId) });
     pkgRef.current = ticked.state;
     saveFulfillmentLocal(packageTenantId, ticked.state);
     setPkgState(ticked.state);
@@ -2588,8 +2590,33 @@ export function OwnerDesk() {
             onKill={(enrollmentId, on) => mutatePackage(setKillSwitch(pkgRef.current, packageTenantId, enrollmentId, on, new Date().toISOString()))}
             onPayment={(enrollmentId, which, value) => mutatePackage(setPayment(pkgRef.current, packageTenantId, enrollmentId, which, value))}
             onPlan={(planId) => {
-              const chosen = selectTestPlan(pkgRef.current, packageTenantId, planId, new Date().toISOString());
+              const chosen = fakeBilling.selectPlan(pkgRef.current, packageTenantId, planId, new Date().toISOString());
               if (chosen.ok) mutatePackage(chosen.state);
+            }}
+            onConfirmWorkspace={(name) => {
+              const named = confirmWorkspace(pkgRef.current, packageTenantId, name, new Date().toISOString());
+              if (named.ok) mutatePackage(named.state);
+              return named.ok ? { ok: true } : { ok: false, reason: named.reason };
+            }}
+            onAddClient={(name) => {
+              const added = addPackageClient(pkgRef.current, packageTenantId, name, new Date().toISOString());
+              if (!added.ok) return { ok: false, reason: added.reason };
+              mutatePackage(added.state);
+              setPkgClientId(added.clientId);
+              return { ok: true };
+            }}
+            onConnect={(kind) => {
+              const connected = stubConnect(pkgRef.current, packageTenantId, kind, new Date().toISOString());
+              if (connected.ok) mutatePackage(connected.state);
+            }}
+            onDisconnect={(kind) => {
+              const disconnected = stubDisconnect(pkgRef.current, packageTenantId, kind);
+              if (disconnected.ok) mutatePackage(disconnected.state);
+            }}
+            onFinish={() => {
+              const finished = finishOnboarding(pkgRef.current, packageTenantId);
+              if (finished.ok) mutatePackage(finished.state);
+              return finished.ok ? { ok: true } : { ok: false, reason: finished.reason };
             }}
           />
         ) : null}

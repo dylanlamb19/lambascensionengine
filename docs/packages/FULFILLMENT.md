@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql` and `migrations/0016_workspace_connections.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -40,7 +40,9 @@ The desk passes `user.id` from the session into `startMarketerOnboarding`. That 
 | Test operator | 25 | Same |
 | Test agency | No scaffold cap | Same |
 
-Choosing a plan sets `planStatus` to `test_trial` and `onboarding` to `test_plan_selected`. There is no Stripe id, no secret, and no charge function. The subscription table in the migration file has `billing_mode` constrained to `'test'`.
+`fakeBilling` implements `BillingProvider`. `selectPlan`, `assertCanAddClient`, and `handleWebhook` record a notice with `amountCents: 0` and `billingMode: "test"`. The provider does not read environment variables or keys. A webhook for an unknown workspace or a plan outside the test catalog is rejected. The subscription table and `billing_webhook_events` constrain `billing_mode` to `'test'` and the event amount to 0.
+
+Choosing a plan sets `planStatus` to `test_trial`. There is no live charge.
 
 Client setup fees and monthly payments are **recorded or waived by hand** (`unrecorded`, `recorded`, `waived`). Recording them does not collect money.
 
@@ -63,7 +65,7 @@ Client setup fees and monthly payments are **recorded or waived by hand** (`unre
 | Reporting | `verifiedMrr` from owner-entered fees | Package report steps say spend and conversions are UNKNOWN. |
 | Calendar | Owner Google Calendar | Appointment reminders must not write it. |
 
-## Tracker
+## Enrollment record
 
 For one workspace, an enrollment stores:
 
@@ -75,7 +77,29 @@ For one workspace, an enrollment stores:
 - Start date and renewal date (one month later)
 - Deliverable status, derived from the step: not started, in progress, fulfilled, or blocked
 
-The desk tab is named exactly **Client Package Fulfillment**. It is hidden while the flag is off. When the flag is on:
+## Connections
+
+Each workspace has a registry for Mailbox, Google Ads, Meta, Google Business Profile, CMS, Booking calendar, Job feed, Estimate feed, and Tracking. Connect and disconnect are stubs: they store `missing` or `stub_connected` and a timestamp. They do not accept a token or secret.
+
+A blocked external step says which connection is missing, for example `Missing connection: Mailbox`. Marking that connection connected in test mode does not send anything. The step then says the adapter is not wired. One workspace's stub does not satisfy another workspace.
+
+Job feed and Estimate feed are separate rows so a review request and an estimate reminder name the exact feed that is missing.
+
+## Onboarding
+
+While the flag is on, the fulfillment tab opens a five-step setup for the signed-in marketer:
+
+1. Workspace name
+2. Test plan
+3. First client
+4. One package for that client
+5. Connections checklist
+
+Public signup stays off. The screen does not offer account creation. After the checklist, the client list and live pipelines are the same desk as before.
+
+## Tracker
+
+The desk tab is named exactly **Client Package Fulfillment**. It is hidden while the flag is off. When the flag is on, and onboarding is finished:
 
 1. The landing view lists that workspace's clients and the packages each one purchased.
 2. A client opens their page, with one tab per purchased package under their name.
@@ -91,7 +115,7 @@ There is no production cron. A closed browser does not keep ticking. Registering
 - `enabled: false` (the flag) returns the same state.
 - Jobs are idempotent: the step id is `{enrollment}:{source package}:{step}`, and a finished immediate step is not run again.
 - A throw retries up to 3 times, then the step is `failed`.
-- A missing integration becomes `needs human` and does not call an API.
+- A missing integration becomes `needs human`, names the connection (`Missing connection: Mailbox`, and the same for Google Ads, Meta, Google Business Profile, CMS, Booking calendar, Job feed, Estimate feed, and Tracking), and does not call an API.
 - A credential port that says "present" still escalates, because no provider adapter is wired.
 - Kill switch, pause, and cancel stop that enrollment only.
 - Bookkeeping steps can finish. They write a checklist, a draft slot, or a report shell. They do not invent ad metrics.
@@ -197,7 +221,12 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `package_step_runs` — status, attempts, next run, output
 - `package_step_logs` — append-only notes
 
-Every delivery row is keyed by `workspace_id`. There is no payment-provider column.
+`migrations/0016_workspace_connections.sql`:
+
+- `workspace_connections` — `(workspace_id, kind)`, status `missing` or `stub_connected`, no secret column
+- `billing_webhook_events` — test notices, `amount_cents` constrained to 0, `billing_mode` constrained to `test`
+
+Every delivery row is keyed by `workspace_id`. There is no payment-provider column and no token column.
 
 The running desk uses the in-memory and browser store above. It does not query these tables, so the feature does not depend on the migration having been applied.
 
@@ -206,9 +235,9 @@ The running desk uses the in-memory and browser store above. It does not query t
 1. **Marketer accounts.** Public signup is still disabled on purpose. The onboarding hook must be called only after a verified session exists. Turning on self-serve registration, email verification, and password reset is separate work and must not weaken the current owner-desk signup lock by accident.
 2. **Server-side isolation.** Today isolation is in the library and the browser key. The hosted app still needs repositories that take `workspace_id` from the verified session, reject a client-supplied tenant id, and use Postgres row security or equivalent so one marketer cannot read another workspace by calling SQL.
 3. **Apply the migration on purpose.** This file is not applied here. Production should apply it only when the flag is about to be turned on.
-4. **Real subscription billing.** Test plans do not invoice, tax, prorate, retry a card, or dunning. A provider, keys, and webhooks stay out of this repo until that project exists. Secrets must stay server-side.
+4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
-6. **Per-tenant connections.** Google Ads, Meta, Google Business Profile, a client mailbox, CMS, booking calendar, estimate source, and job feed are all missing. They must be stored per workspace, not in the owner's sales OAuth row.
+6. **Live connections.** The registry can mark a stub connected. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 9. **Sentinel.** The health report is ready for one tenant. Sentinel itself is not in this branch, and nothing here disables it.
@@ -218,8 +247,8 @@ The running desk uses the in-memory and browser store above. It does not query t
 
 ## Blockers
 
-- No per-client Google Ads, Meta, Business Profile, mailbox, CMS, or booking-calendar connection.
-- No job feed and no estimate source.
+- Connection rows are stubs. There is still no live Google Ads, Meta, Business Profile, mailbox, CMS, or booking-calendar adapter.
+- Job and estimate feeds can be marked connected in test mode. They do not read a real feed.
 - No hosted landing pages.
 - Sentinel is absent on this branch; only the health report exists.
 - Signup for marketers is intentionally not turned on.

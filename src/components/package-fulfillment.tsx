@@ -4,6 +4,14 @@ import { listTestPlans } from "@/lib/packages/plans";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus } from "@/lib/packages/types";
 import { clientList, packageTabs, pipelineView, workspaceSummary } from "@/lib/packages/view";
 
+const ONBOARDING_STEPS = [
+  ["workspace", "Workspace"],
+  ["plan", "Test plan"],
+  ["client", "First client"],
+  ["packages", "Packages"],
+  ["connections", "Connections"],
+] as const;
+
 const PAYMENTS: PaymentRecord[] = ["unrecorded", "recorded", "waived"];
 
 function dotClass(status: StepStatus): string {
@@ -27,9 +35,30 @@ export function PackageFulfillmentPanel(props: {
   onKill: (enrollmentId: string, on: boolean) => void;
   onPayment: (enrollmentId: string, which: "setup" | "monthly", value: PaymentRecord) => void;
   onPlan: (planId: string) => void;
+  onConfirmWorkspace: (name: string) => { ok: boolean; reason?: string };
+  onAddClient: (name: string) => { ok: boolean; reason?: string };
+  onConnect: (kind: string) => void;
+  onDisconnect: (kind: string) => void;
+  onFinish: () => { ok: boolean; reason?: string };
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
+  if (workspace && workspace.onboarding !== "desk") {
+    return (
+      <OnboardingWizard
+        tenantId={props.tenantId}
+        workspace={workspace}
+        rows={rows}
+        onConfirmWorkspace={props.onConfirmWorkspace}
+        onPlan={props.onPlan}
+        onAddClient={props.onAddClient}
+        onRecord={props.onRecord}
+        onConnect={props.onConnect}
+        onDisconnect={props.onDisconnect}
+        onFinish={props.onFinish}
+      />
+    );
+  }
   const client = rows.find((row) => row.id === props.selectedClientId) || null;
   const tabs = client ? packageTabs(props.state, props.tenantId, client.id) : [];
   const selectedEnrollment = props.selectedEnrollmentId || tabs[0]?.enrollmentId || null;
@@ -62,19 +91,7 @@ export function PackageFulfillmentPanel(props: {
           ? `${workspace.name} · ${workspace.planName} · test mode. This workspace only. No card and no charge.`
           : "This workspace is not open yet."}
       </p>
-      {workspace ? (
-        <div className="la-card mb-4">
-          <p className="la-kicker">Test plan</p>
-          <p className="mt-2 mb-3 text-sm text-muted">Choosing a plan records it for this workspace. Nothing is billed.</p>
-          <div className="flex flex-wrap gap-2">
-            {listTestPlans().map((plan) => (
-              <button key={plan.id} type="button" className="la-btn la-btn-ghost" onClick={() => props.onPlan(plan.id)}>
-                {plan.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      {workspace ? <ConnectionChecklist workspace={workspace} onConnect={props.onConnect} onDisconnect={props.onDisconnect} /> : null}
       <RecordForm onRecord={props.onRecord} />
       <div className="la-card">
         {rows.length === 0 ? (
@@ -88,6 +105,127 @@ export function PackageFulfillmentPanel(props: {
           ))
         )}
       </div>
+    </section>
+  );
+}
+
+function ConnectionChecklist(props: {
+  workspace: NonNullable<ReturnType<typeof workspaceSummary>>;
+  onConnect: (kind: string) => void;
+  onDisconnect: (kind: string) => void;
+}) {
+  const feeds = props.workspace.connections.filter((row) => row.kind === "job_feed" || row.kind === "estimate_feed");
+  const rest = props.workspace.connections.filter((row) => row.kind !== "job_feed" && row.kind !== "estimate_feed");
+  return (
+    <div className="la-card mb-4" data-connections="1">
+      <p className="la-kicker">Connections</p>
+      <p className="mt-2 mb-3 text-sm text-muted">Connect is a test stub. No secret is stored, and nothing is charged.</p>
+      {[...rest, ...feeds].map((row) => (
+        <div key={row.kind} className="la-list-row" data-connection={row.kind} data-connection-status={row.status}>
+          <span>
+            <span className="la-list-name">{row.label}</span>
+            <span className="ml-2 text-sm text-muted">{row.status === "stub_connected" ? "Connected (test)" : "Missing"}</span>
+          </span>
+          {row.status === "stub_connected" ? (
+            <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onDisconnect(row.kind)}>Disconnect</button>
+          ) : (
+            <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onConnect(row.kind)}>Connect</button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OnboardingWizard(props: {
+  tenantId: string;
+  workspace: NonNullable<ReturnType<typeof workspaceSummary>>;
+  rows: ReturnType<typeof clientList>;
+  onConfirmWorkspace: (name: string) => { ok: boolean; reason?: string };
+  onPlan: (planId: string) => void;
+  onAddClient: (name: string) => { ok: boolean; reason?: string };
+  onRecord: (input: RecordPurchaseInput) => { ok: boolean; reason?: string };
+  onConnect: (kind: string) => void;
+  onDisconnect: (kind: string) => void;
+  onFinish: () => { ok: boolean; reason?: string };
+}) {
+  const step = props.workspace.onboarding;
+  const [name, setName] = useState(props.workspace.name);
+  const [clientName, setClientName] = useState("");
+  const [packageId, setPackageId] = useState<PackageId>("lead-follow-up");
+  const [message, setMessage] = useState("");
+  const firstClient = props.rows[0]?.name || "";
+
+  function fail(result: { ok: boolean; reason?: string }) {
+    setMessage(result.ok ? "" : result.reason || "That step could not be saved.");
+  }
+
+  return (
+    <section data-fulfillment-root="1" data-onboarding={step} data-tenant-id={props.tenantId}>
+      <p className="la-kicker">Client Package Fulfillment</p>
+      <h1 className="font-display mt-2 mb-2 text-3xl">Set up this workspace</h1>
+      <p className="mb-4 text-sm text-muted">Signed-in marketers only. This does not open registration, and it does not charge a card.</p>
+      <ol className="mb-4 flex flex-wrap gap-2">
+        {ONBOARDING_STEPS.map(([id, label]) => (
+          <li key={id} className="la-chip" data-on={id === step ? "1" : "0"}>{label}</li>
+        ))}
+      </ol>
+      {step === "workspace" ? (
+        <form className="la-card" onSubmit={(event) => { event.preventDefault(); fail(props.onConfirmWorkspace(name)); }}>
+          <p className="la-kicker">Workspace</p>
+          <label className="la-label mt-3" htmlFor="ws-name">Workspace name</label>
+          <input id="ws-name" className="la-field mb-3" value={name} onChange={(event) => setName(event.target.value)} />
+          <button className="la-btn la-btn-primary" type="submit">Continue</button>
+        </form>
+      ) : null}
+      {step === "plan" ? (
+        <div className="la-card">
+          <p className="la-kicker">Test plan</p>
+          <p className="mt-2 mb-3 text-sm text-muted">
+            {props.workspace.planName}. Choosing a plan records it. Nothing is billed.
+            {props.workspace.clientLimit == null ? " No client cap on this test plan." : ` Up to ${props.workspace.clientLimit} clients.`}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {listTestPlans().map((plan) => (
+              <button key={plan.id} type="button" className="la-btn la-btn-ghost" onClick={() => props.onPlan(plan.id)}>
+                {plan.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {step === "client" ? (
+        <form className="la-card" onSubmit={(event) => { event.preventDefault(); fail(props.onAddClient(clientName)); }}>
+          <p className="la-kicker">First client</p>
+          <label className="la-label mt-3" htmlFor="first-client">Client</label>
+          <input id="first-client" className="la-field mb-3" value={clientName} onChange={(event) => setClientName(event.target.value)} />
+          <button className="la-btn la-btn-primary" type="submit">Save client</button>
+        </form>
+      ) : null}
+      {step === "packages" ? (
+        <form
+          className="la-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            fail(props.onRecord({ clientName: firstClient, packageId, setupPayment: "unrecorded", monthlyPayment: "unrecorded" }));
+          }}
+        >
+          <p className="la-kicker">Packages</p>
+          <p className="mt-2 mb-3 text-sm text-muted">First package for {firstClient || "this client"}. Payment state stays unrecorded. Nothing is charged.</p>
+          <label className="la-label" htmlFor="first-package">Package</label>
+          <select id="first-package" className="la-field mb-3" value={packageId} onChange={(event) => setPackageId(event.target.value as PackageId)}>
+            {listPackages().map((pkg) => <option key={pkg.id} value={pkg.id}>{pkg.name}</option>)}
+          </select>
+          <button className="la-btn la-btn-primary" type="submit">Record package</button>
+        </form>
+      ) : null}
+      {step === "connections" ? (
+        <div>
+          <ConnectionChecklist workspace={props.workspace} onConnect={props.onConnect} onDisconnect={props.onDisconnect} />
+          <button type="button" className="la-btn la-btn-primary" onClick={() => fail(props.onFinish())}>Go to clients</button>
+        </div>
+      ) : null}
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
     </section>
   );
 }

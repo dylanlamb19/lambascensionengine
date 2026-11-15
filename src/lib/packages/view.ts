@@ -1,6 +1,7 @@
 import { formatMonthly, formatSetup, formatUsd, getPackage } from "./catalog.ts";
 import { getTestPlan } from "./plans.ts";
-import { workspaceFor } from "./tenancy.ts";
+import { listConnections } from "./connections.ts";
+import { onboardingStep, workspaceFor } from "./tenancy.ts";
 import type { DeliverableStatus, EnrollmentStatus, FulfillmentState, PaymentRecord, StepStatus } from "./types.ts";
 
 export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
@@ -130,6 +131,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
   planStatus: string;
   billingMode: "test";
   onboarding: string;
+  clientLimit: number | null;
+  connections: { kind: string; label: string; status: "missing" | "stub_connected" }[];
 } | null {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace) return null;
@@ -138,7 +141,9 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
     planName: getTestPlan(workspace.planId).name,
     planStatus: workspace.planStatus,
     billingMode: "test",
-    onboarding: workspace.onboarding,
+    onboarding: onboardingStep(workspace),
+    clientLimit: getTestPlan(workspace.planId).clientLimit,
+    connections: listConnections(state, tenantId).map((row) => ({ kind: row.kind, label: row.label, status: row.status })),
   };
 }
 
