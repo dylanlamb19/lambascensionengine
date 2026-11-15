@@ -1,6 +1,13 @@
 import { getTestPlan, isTestPlanId, type TestPlanId } from "./plans.ts";
 import { selectTestPlan, workspaceFor } from "./tenancy.ts";
-import type { BillingEvent, FulfillmentState } from "./types.ts";
+import type { BillingEvent, FulfillmentState, SubscriptionLifecycle, TestInvoice } from "./types.ts";
+
+export const SUBSCRIPTION_EDGES: Record<SubscriptionLifecycle, readonly SubscriptionLifecycle[]> = {
+  trial: ["active", "canceled"],
+  active: ["past_due", "canceled"],
+  past_due: ["active", "canceled"],
+  canceled: [],
+};
 
 export type TestWebhook = {
   type: string;
@@ -19,6 +26,9 @@ export interface BillingProvider {
   selectPlan(state: FulfillmentState, tenantId: string, planId: string, now: string, id?: string): BillingOk | BillingNo;
   assertCanAddClient(state: FulfillmentState, tenantId: string, now: string, id?: string): { ok: true; state: FulfillmentState } | BillingNo;
   handleWebhook(state: FulfillmentState, tenantId: string, body: TestWebhook, now: string, id?: string): BillingOk | BillingNo;
+  transitionSubscription(state: FulfillmentState, tenantId: string, to: SubscriptionLifecycle, now: string, id?: string): BillingOk | BillingNo;
+  issueInvoice(state: FulfillmentState, tenantId: string, now: string, id?: string): BillingOk | BillingNo;
+  payInvoice(state: FulfillmentState, tenantId: string, invoiceId: string, now: string, id?: string): BillingOk | BillingNo;
 }
 
 function event(id: string, tenantId: string, type: string, planId: string | null, now: string): BillingEvent {
@@ -73,4 +83,63 @@ export const fakeBilling: BillingProvider = {
     const row = event(id, tenantId, body.type || "webhook", planId, now);
     return { ok: true, event: row, state: append(next, row) };
   },
+  transitionSubscription(state, tenantId, to, now, id = `life_${now}`) {
+    const workspace = workspaceFor(state, tenantId);
+    if (!workspace) return { ok: false, state, reason: "That workspace is not open." };
+    const from = workspace.subscriptionStatus || "trial";
+    if (!SUBSCRIPTION_EDGES[from].includes(to)) {
+      return { ok: false, state, reason: `A test subscription cannot move from ${from} to ${to}.` };
+    }
+    let next = setLifecycle(state, tenantId, to);
+    if (to === "past_due" && !openInvoice(next, tenantId)) {
+      next = { ...next, invoices: [...(next.invoices || []), zeroInvoice(`inv_${id}`, tenantId, "open", now)] };
+    }
+    if (to === "canceled") {
+      next = {
+        ...next,
+        invoices: (next.invoices || []).map((row) =>
+          row.tenantId === tenantId && row.status === "open" ? { ...row, status: "void" as const, amountCents: 0 as const } : row,
+        ),
+      };
+    }
+    const row = event(id, tenantId, `subscription_${to}`, workspace.planId, now);
+    return { ok: true, event: row, state: append(next, row) };
+  },
+  issueInvoice(state, tenantId, now, id = `inv_${now}`) {
+    if (!workspaceFor(state, tenantId)) return { ok: false, state, reason: "That workspace is not open." };
+    const invoice = zeroInvoice(id, tenantId, "open", now);
+    const row = event(`evt_${id}`, tenantId, "invoice_issued", workspaceFor(state, tenantId)?.planId || null, now);
+    return { ok: true, event: row, state: append({ ...state, invoices: [...(state.invoices || []), invoice] }, row) };
+  },
+  payInvoice(state, tenantId, invoiceId, now, id = `pay_${now}`) {
+    const invoice = (state.invoices || []).find((row) => row.id === invoiceId && row.tenantId === tenantId);
+    if (!invoice) return { ok: false, state, reason: "That invoice is not in this workspace." };
+    if (invoice.amountCents !== 0 || invoice.billingMode !== "test") {
+      return { ok: false, state, reason: "Only a zero-amount test invoice can be recorded." };
+    }
+    if (invoice.status !== "open") return { ok: false, state, reason: "That invoice is not open." };
+    let next: FulfillmentState = {
+      ...state,
+      invoices: state.invoices.map((row) => (row.id === invoiceId && row.tenantId === tenantId ? { ...row, status: "paid" as const, amountCents: 0 as const } : row)),
+    };
+    const workspace = workspaceFor(next, tenantId);
+    if (workspace?.subscriptionStatus === "past_due") next = setLifecycle(next, tenantId, "active");
+    const row = event(id, tenantId, "invoice_paid", workspace?.planId || null, now);
+    return { ok: true, event: row, state: append(next, row) };
+  },
 };
+
+function setLifecycle(state: FulfillmentState, tenantId: string, to: SubscriptionLifecycle): FulfillmentState {
+  return {
+    ...state,
+    workspaces: state.workspaces.map((row) => (row.id === tenantId ? { ...row, subscriptionStatus: to } : row)),
+  };
+}
+
+function openInvoice(state: FulfillmentState, tenantId: string): TestInvoice | undefined {
+  return (state.invoices || []).find((row) => row.tenantId === tenantId && row.status === "open");
+}
+
+function zeroInvoice(id: string, tenantId: string, status: TestInvoice["status"], now: string): TestInvoice {
+  return { id, tenantId, status, amountCents: 0, billingMode: "test", createdAt: now };
+}

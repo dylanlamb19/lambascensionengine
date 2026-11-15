@@ -1,7 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { SUBSCRIPTION_EDGES } from "@/lib/packages/billing";
 import { listPackages, type PackageId } from "@/lib/packages/catalog";
 import { listTestPlans } from "@/lib/packages/plans";
-import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus } from "@/lib/packages/types";
+import { workspaceFor } from "@/lib/packages/tenancy";
+import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
 import { clientList, packageTabs, pipelineView, workspaceSummary } from "@/lib/packages/view";
 
 const ONBOARDING_STEPS = [
@@ -40,6 +42,13 @@ export function PackageFulfillmentPanel(props: {
   onConnect: (kind: string) => void;
   onDisconnect: (kind: string) => void;
   onFinish: () => { ok: boolean; reason?: string };
+  sessionUserId: string;
+  sessionEmail: string;
+  onInvite: (email: string) => { ok: boolean; reason?: string };
+  onAccept: (inviteId: string) => { ok: boolean; reason?: string };
+  onTransition: (to: SubscriptionLifecycle) => void;
+  onIssueInvoice: () => void;
+  onPayInvoice: (invoiceId: string) => void;
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
@@ -56,6 +65,7 @@ export function PackageFulfillmentPanel(props: {
         onConnect={props.onConnect}
         onDisconnect={props.onDisconnect}
         onFinish={props.onFinish}
+        billing={<WorkspaceBilling {...props} />}
       />
     );
   }
@@ -78,6 +88,7 @@ export function PackageFulfillmentPanel(props: {
         onStatus={props.onStatus}
         onKill={props.onKill}
         onPayment={props.onPayment}
+        billing={<WorkspaceBilling {...props} />}
       />
     );
   }
@@ -86,6 +97,7 @@ export function PackageFulfillmentPanel(props: {
     <section data-fulfillment-root="1" data-tenant-id={props.tenantId}>
       <p className="la-kicker">Client Package Fulfillment</p>
       <h1 className="font-display mt-2 mb-2 text-3xl">Clients and packages</h1>
+      <WorkspaceBilling {...props} />
       <p className="mb-4 text-sm text-muted">
         {workspace
           ? `${workspace.name} · ${workspace.planName} · test mode. This workspace only. No card and no charge.`
@@ -106,6 +118,75 @@ export function PackageFulfillmentPanel(props: {
         )}
       </div>
     </section>
+  );
+}
+
+function WorkspaceBilling(props: {
+  tenantId: string;
+  state: FulfillmentState;
+  sessionUserId: string;
+  sessionEmail: string;
+  onInvite: (email: string) => { ok: boolean; reason?: string };
+  onAccept: (inviteId: string) => { ok: boolean; reason?: string };
+  onTransition: (to: SubscriptionLifecycle) => void;
+  onIssueInvoice: () => void;
+  onPayInvoice: (invoiceId: string) => void;
+}) {
+  const workspace = workspaceFor(props.state, props.tenantId);
+  const status = workspace?.subscriptionStatus || "trial";
+  const invoices = (props.state.invoices || []).filter((row) => row.tenantId === props.tenantId);
+  const invites = (props.state.invites || []).filter((row) => row.tenantId === props.tenantId);
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  const next = SUBSCRIPTION_EDGES[status];
+  return (
+    <div className="la-card mb-4" data-billing-status={status} data-session-user={props.sessionUserId}>
+      <p className="la-kicker">Billing</p>
+      <p className="mt-2 text-sm">Subscription {status} · {workspace?.planId || "test_trial"} · $0</p>
+      <p className="mt-1 mb-3 text-sm text-muted">Test mode. Invoices are $0. Nothing is charged.</p>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {next.map((to) => (
+          <button key={to} type="button" className="la-btn la-btn-ghost" onClick={() => props.onTransition(to)}>
+            {to === "past_due" ? "Mark past due" : to === "canceled" ? "Cancel subscription" : "Mark active"}
+          </button>
+        ))}
+        <button type="button" className="la-btn la-btn-quiet" onClick={props.onIssueInvoice}>Issue $0 invoice</button>
+      </div>
+      {invoices.length === 0 ? <p className="text-sm text-muted">No invoices yet.</p> : invoices.map((invoice) => (
+        <div key={invoice.id} className="la-list-row" data-invoice={invoice.id} data-invoice-status={invoice.status}>
+          <span className="text-sm">$0 · {invoice.status}</span>
+          {invoice.status === "open" ? (
+            <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onPayInvoice(invoice.id)}>Record $0 payment</button>
+          ) : null}
+        </div>
+      ))}
+      <form className="mt-4" onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onInvite(email);
+        setNote(result.ok ? "Invite recorded. No login was created." : result.reason || "Could not invite.");
+        if (result.ok) setEmail("");
+      }}>
+        <p className="la-kicker">Invite a marketer</p>
+        <p className="mt-2 mb-2 text-sm text-muted">Public registration stays closed. The person must already be able to sign in.</p>
+        <label className="la-label" htmlFor="invite-email">Email</label>
+        <div className="flex flex-wrap gap-2">
+          <input id="invite-email" className="la-field" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <button className="la-btn la-btn-ghost" type="submit">Send invite</button>
+        </div>
+      </form>
+      {invites.map((invite) => (
+        <div key={invite.id} className="la-list-row" data-invite={invite.id} data-invite-status={invite.status}>
+          <span className="text-sm">{invite.email} · {invite.status}</span>
+          {invite.status === "pending" && invite.email === props.sessionEmail.trim().toLowerCase() ? (
+            <button type="button" className="la-btn la-btn-quiet" onClick={() => {
+              const result = props.onAccept(invite.id);
+              setNote(result.ok ? "Invite accepted for this signed-in user." : result.reason || "Could not accept.");
+            }}>Accept invite</button>
+          ) : null}
+        </div>
+      ))}
+      {note ? <p className="mt-2 text-sm text-muted">{note}</p> : null}
+    </div>
   );
 }
 
@@ -148,6 +229,7 @@ function OnboardingWizard(props: {
   onConnect: (kind: string) => void;
   onDisconnect: (kind: string) => void;
   onFinish: () => { ok: boolean; reason?: string };
+  billing: ReactNode;
 }) {
   const step = props.workspace.onboarding;
   const [name, setName] = useState(props.workspace.name);
@@ -164,6 +246,7 @@ function OnboardingWizard(props: {
     <section data-fulfillment-root="1" data-onboarding={step} data-tenant-id={props.tenantId}>
       <p className="la-kicker">Client Package Fulfillment</p>
       <h1 className="font-display mt-2 mb-2 text-3xl">Set up this workspace</h1>
+      {props.billing}
       <p className="mb-4 text-sm text-muted">Signed-in marketers only. This does not open registration, and it does not charge a card.</p>
       <ol className="mb-4 flex flex-wrap gap-2">
         {ONBOARDING_STEPS.map(([id, label]) => (
@@ -304,11 +387,13 @@ function PackagePipeline(props: {
   onStatus: (enrollmentId: string, status: EnrollmentStatus) => void;
   onKill: (enrollmentId: string, on: boolean) => void;
   onPayment: (enrollmentId: string, which: "setup" | "monthly", value: PaymentRecord) => void;
+  billing: ReactNode;
 }) {
   const pipeline = props.pipeline;
   let lastGroup = "";
   return (
     <section data-fulfillment-root="1" data-pipeline="1">
+      {props.billing}
       <button type="button" className="la-btn la-btn-quiet mb-3" onClick={props.onBack}>All clients</button>
       <p className="la-kicker">{props.workspaceName} · {props.planName}</p>
       <h1 className="font-display mt-2 mb-3 text-3xl">{props.clientName}</h1>

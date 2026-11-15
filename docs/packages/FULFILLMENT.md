@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql` and `migrations/0016_workspace_connections.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, and `migrations/0017_tenant_rls.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -26,6 +26,8 @@ Every client, enrollment, and step carries `tenantId`. Reads, ticks, kill switch
 - Marketer A cannot list, open, tick, or stop Marketer B's clients.
 - Estimate Follow-Ups on A's client does not satisfy the add-on rule for B, even if the client name matches.
 - `replaceTenant` drops any row in a write that claims a different tenant.
+- `readTenant` and `writeTenant` refuse a session that does not own or belong to the workspace. A cross-tenant read returns no rows. A cross-tenant write leaves the state unchanged.
+- `migrations/0017_tenant_rls.sql` turns on forced row-level security. Each policy compares the row's workspace id to `app.tenant_id`. The file is not applied to a hosted database. An ephemeral test runs it only inside that test.
 - Browser storage is keyed `la_package_fulfillment_v1:<tenantId>`, then sliced again on load.
 
 The desk passes `user.id` from the session into `startMarketerOnboarding`. That function is the self-serve onboarding hook: idempotent per user id, opens a workspace, and records a test plan. It does **not** create a login. Public signup stays disabled (`disableSignUp` is unchanged, and the desk still has no account-creation form).
@@ -40,7 +42,9 @@ The desk passes `user.id` from the session into `startMarketerOnboarding`. That 
 | Test operator | 25 | Same |
 | Test agency | No scaffold cap | Same |
 
-`fakeBilling` implements `BillingProvider`. `selectPlan`, `assertCanAddClient`, and `handleWebhook` record a notice with `amountCents: 0` and `billingMode: "test"`. The provider does not read environment variables or keys. A webhook for an unknown workspace or a plan outside the test catalog is rejected. The subscription table and `billing_webhook_events` constrain `billing_mode` to `'test'` and the event amount to 0.
+`fakeBilling` implements `BillingProvider`. `selectPlan`, `assertCanAddClient`, `handleWebhook`, `transitionSubscription`, `issueInvoice`, and `payInvoice` record notices with `amountCents: 0` and `billingMode: "test"`. The lifecycle is `trial`, then `active`, then `past_due`, then `canceled`. Skipping a step is rejected. Moving to past due opens a $0 invoice. Recording that $0 payment returns the subscription to active. Canceling voids an open invoice. A payment for another workspace's invoice is rejected. The provider does not read environment variables or keys.
+
+The Client Package Fulfillment tab shows this status, the $0 invoices, and the allowed next step.
 
 Choosing a plan sets `planStatus` to `test_trial`. There is no live charge.
 
@@ -95,7 +99,7 @@ While the flag is on, the fulfillment tab opens a five-step setup for the signed
 4. One package for that client
 5. Connections checklist
 
-Public signup stays off. The screen does not offer account creation. After the checklist, the client list and live pipelines are the same desk as before.
+Public signup stays off (`disableSignUp` is unchanged). The screen does not offer account creation. `beginMarketerSignup` opens a workspace only for a user id that already signed in, and only when the fulfillment flag is on. `inviteMarketer` records an email on that workspace and does not send mail or create a login. Accepting the invite requires the signed-in email to match. After the checklist, the client list and live pipelines are the same desk as before.
 
 ## Tracker
 
@@ -226,6 +230,12 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `workspace_connections` — `(workspace_id, kind)`, status `missing` or `stub_connected`, no secret column
 - `billing_webhook_events` — test notices, `amount_cents` constrained to 0, `billing_mode` constrained to `test`
 
+`migrations/0017_tenant_rls.sql`:
+
+- `workspace_memberships`, `workspace_invites`, and `test_invoices` (`amount_cents` constrained to 0)
+- `lifecycle` on `marketer_subscriptions`: `trial`, `active`, `past_due`, `canceled`
+- Forced row-level security on every workspace table, using `app.tenant_id`
+
 Every delivery row is keyed by `workspace_id`. There is no payment-provider column and no token column.
 
 The running desk uses the in-memory and browser store above. It does not query these tables, so the feature does not depend on the migration having been applied.
@@ -233,8 +243,8 @@ The running desk uses the in-memory and browser store above. It does not query t
 ## What is left before this is a sellable multi-tenant SaaS
 
 1. **Marketer accounts.** Public signup is still disabled on purpose. The onboarding hook must be called only after a verified session exists. Turning on self-serve registration, email verification, and password reset is separate work and must not weaken the current owner-desk signup lock by accident.
-2. **Server-side isolation.** Today isolation is in the library and the browser key. The hosted app still needs repositories that take `workspace_id` from the verified session, reject a client-supplied tenant id, and use Postgres row security or equivalent so one marketer cannot read another workspace by calling SQL.
-3. **Apply the migration on purpose.** This file is not applied here. Production should apply it only when the flag is about to be turned on.
+2. **Server-side isolation in production.** The library guard and the RLS file exist. Production still needs the migration applied on purpose, the app role to set `app.tenant_id` from the verified session, and no client-supplied tenant id.
+3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
 4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
 6. **Live connections.** The registry can mark a stub connected. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.

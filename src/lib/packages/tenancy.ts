@@ -25,12 +25,19 @@ export function workspaceFor(state: FulfillmentState, tenantId: string): Workspa
 /** Rows for one marketer. Other workspaces are dropped. */
 export function sliceTenant(state: FulfillmentState, tenantId: string): FulfillmentState {
   return {
-    workspaces: (state.workspaces || []).filter((row) => row.id === tenantId).map((row) => ({ ...row, onboarding: onboardingStep(row) })),
+    workspaces: (state.workspaces || []).filter((row) => row.id === tenantId).map((row) => ({
+      ...row,
+      onboarding: onboardingStep(row),
+      subscriptionStatus: row.subscriptionStatus || "trial",
+    })),
     clients: (state.clients || []).filter((row) => row.tenantId === tenantId),
     enrollments: (state.enrollments || []).filter((row) => row.tenantId === tenantId),
     steps: (state.steps || []).filter((row) => row.tenantId === tenantId),
     connections: (state.connections || []).filter((row) => row.tenantId === tenantId),
     billingEvents: (state.billingEvents || []).filter((row) => row.tenantId === tenantId),
+    invoices: (state.invoices || []).filter((row) => row.tenantId === tenantId),
+    invites: (state.invites || []).filter((row) => row.tenantId === tenantId),
+    memberships: (state.memberships || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -47,6 +54,9 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     steps: [...(state.steps || []).filter((row) => row.tenantId !== tenantId), ...safe.steps],
     connections: [...(state.connections || []).filter((row) => row.tenantId !== tenantId), ...safe.connections],
     billingEvents: [...(state.billingEvents || []).filter((row) => row.tenantId !== tenantId), ...safe.billingEvents],
+    invoices: [...(state.invoices || []).filter((row) => row.tenantId !== tenantId), ...safe.invoices],
+    invites: [...(state.invites || []).filter((row) => row.tenantId !== tenantId), ...safe.invites],
+    memberships: [...(state.memberships || []).filter((row) => row.tenantId !== tenantId), ...safe.memberships],
   };
 }
 
@@ -85,6 +95,7 @@ export function startMarketerOnboarding(state: FulfillmentState, input: Onboardi
     onboarding: "workspace",
     planId: "test_trial",
     planStatus: "test_inactive",
+    subscriptionStatus: "trial",
     billingMode: "test",
   };
   return {

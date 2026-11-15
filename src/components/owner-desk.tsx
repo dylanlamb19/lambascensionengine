@@ -92,6 +92,7 @@ import { packageFulfillmentNav } from "@/lib/packages/nav";
 import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/storage";
 import { fakeBilling } from "@/lib/packages/billing";
 import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
+import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
 import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
 import { confirmWorkspace, finishOnboarding, startMarketerOnboarding, workspaceIdForUser } from "@/lib/packages/tenancy";
 import { EMPTY_FULFILLMENT, type FulfillmentState, type RecordPurchaseInput } from "@/lib/packages/types";
@@ -2617,6 +2618,30 @@ export function OwnerDesk() {
               const finished = finishOnboarding(pkgRef.current, packageTenantId);
               if (finished.ok) mutatePackage(finished.state);
               return finished.ok ? { ok: true } : { ok: false, reason: finished.reason };
+            }}
+            sessionUserId={userId || ""}
+            sessionEmail={user?.primaryEmail || ""}
+            onInvite={(email) => {
+              const invited = inviteMarketer(pkgRef.current, packageTenantId, userId || "", email, new Date().toISOString(), FLAGS.PACKAGE_FULFILLMENT);
+              if (invited.ok) mutatePackage(invited.state);
+              return invited.ok ? { ok: true } : { ok: false, reason: invited.reason };
+            }}
+            onAccept={(inviteId) => {
+              const accepted = acceptInvite(pkgRef.current, inviteId, userId || "", user?.primaryEmail || "", new Date().toISOString(), FLAGS.PACKAGE_FULFILLMENT);
+              if (accepted.ok) mutatePackage(accepted.state);
+              return accepted.ok ? { ok: true } : { ok: false, reason: accepted.reason };
+            }}
+            onTransition={(to) => {
+              const moved = fakeBilling.transitionSubscription(pkgRef.current, packageTenantId, to, new Date().toISOString());
+              if (moved.ok) mutatePackage(moved.state);
+            }}
+            onIssueInvoice={() => {
+              const issued = fakeBilling.issueInvoice(pkgRef.current, packageTenantId, new Date().toISOString());
+              if (issued.ok) mutatePackage(issued.state);
+            }}
+            onPayInvoice={(invoiceId) => {
+              const paid = fakeBilling.payInvoice(pkgRef.current, packageTenantId, invoiceId, new Date().toISOString());
+              if (paid.ok) mutatePackage(paid.state);
             }}
           />
         ) : null}

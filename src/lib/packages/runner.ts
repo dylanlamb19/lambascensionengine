@@ -365,6 +365,9 @@ export function emptyFulfillment(): FulfillmentState {
     steps: [],
     connections: [],
     billingEvents: [],
+    invoices: [],
+    invites: [],
+    memberships: [],
   };
 }
 

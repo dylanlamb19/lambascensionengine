@@ -10,6 +10,7 @@ export type StepMode = "bookkeeping" | "external";
 
 export type OnboardingStep = "workspace" | "plan" | "client" | "packages" | "connections" | "desk";
 export type PlanStatus = "test_inactive" | "test_trial" | "test_active";
+export type SubscriptionLifecycle = "trial" | "active" | "past_due" | "canceled";
 
 /** One marketer workspace. `id` is the tenant key. Billing is test-mode only. */
 export type Workspace = {
@@ -20,6 +21,7 @@ export type Workspace = {
   onboarding: OnboardingStep;
   planId: TestPlanId;
   planStatus: PlanStatus;
+  subscriptionStatus: SubscriptionLifecycle;
   billingMode: "test";
 };
 
@@ -107,6 +109,32 @@ export type BillingEvent = {
   at: string;
 };
 
+export type TestInvoice = {
+  id: string;
+  tenantId: string;
+  status: "open" | "paid" | "void";
+  amountCents: 0;
+  billingMode: "test";
+  createdAt: string;
+};
+
+export type MarketerInvite = {
+  id: string;
+  tenantId: string;
+  email: string;
+  status: "pending" | "accepted" | "revoked";
+  invitedByUserId: string;
+  createdAt: string;
+};
+
+export type WorkspaceMembership = {
+  tenantId: string;
+  userId: string;
+  email: string;
+  role: "owner" | "marketer";
+  status: "accepted";
+};
+
 export type FulfillmentState = {
   workspaces: Workspace[];
   clients: ServiceClient[];
@@ -114,6 +142,9 @@ export type FulfillmentState = {
   steps: StepRun[];
   connections: WorkspaceConnection[];
   billingEvents: BillingEvent[];
+  invoices: TestInvoice[];
+  invites: MarketerInvite[];
+  memberships: WorkspaceMembership[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -123,6 +154,9 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   steps: [],
   connections: [],
   billingEvents: [],
+  invoices: [],
+  invites: [],
+  memberships: [],
 };
 
 export type RecordPurchaseInput = {
