@@ -127,6 +127,12 @@ export type MarketerInvite = {
   createdAt: string;
 };
 
+export type TenantUsage = {
+  tenantId: string;
+  pipelineRuns: number;
+  enrollments: number;
+};
+
 export type WorkspaceMembership = {
   tenantId: string;
   userId: string;
@@ -145,6 +151,7 @@ export type FulfillmentState = {
   invoices: TestInvoice[];
   invites: MarketerInvite[];
   memberships: WorkspaceMembership[];
+  usage: TenantUsage[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -157,6 +164,7 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   invoices: [],
   invites: [],
   memberships: [],
+  usage: [],
 };
 
 export type RecordPurchaseInput = {

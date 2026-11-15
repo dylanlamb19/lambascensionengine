@@ -29,6 +29,7 @@ export interface BillingProvider {
   transitionSubscription(state: FulfillmentState, tenantId: string, to: SubscriptionLifecycle, now: string, id?: string): BillingOk | BillingNo;
   issueInvoice(state: FulfillmentState, tenantId: string, now: string, id?: string): BillingOk | BillingNo;
   payInvoice(state: FulfillmentState, tenantId: string, invoiceId: string, now: string, id?: string): BillingOk | BillingNo;
+  checkout(state: FulfillmentState, tenantId: string, planId: string, now: string, id?: string): BillingOk | BillingNo;
 }
 
 function event(id: string, tenantId: string, type: string, planId: string | null, now: string): BillingEvent {
@@ -126,6 +127,29 @@ export const fakeBilling: BillingProvider = {
     if (workspace?.subscriptionStatus === "past_due") next = setLifecycle(next, tenantId, "active");
     const row = event(id, tenantId, "invoice_paid", workspace?.planId || null, now);
     return { ok: true, event: row, state: append(next, row) };
+  },
+  checkout(state, tenantId, planId, now, id = `chk_${now}`) {
+    const workspace = workspaceFor(state, tenantId);
+    if (!workspace) return { ok: false, state, reason: "Open this marketer's workspace before checkout." };
+    if (workspace.subscriptionStatus === "canceled") {
+      return { ok: false, state, reason: "This test subscription is canceled. No charge was attempted." };
+    }
+    if (!isTestPlanId(planId)) return { ok: false, state, reason: "That plan is not in the test catalog." };
+    const selected = this.selectPlan(state, tenantId, planId, now, `${id}-plan`);
+    if (!selected.ok) return selected;
+    let next = selected.state;
+    const current = workspaceFor(next, tenantId);
+    if (current?.subscriptionStatus === "trial") {
+      const moved = this.transitionSubscription(next, tenantId, "active", now, `${id}-life`);
+      if (!moved.ok) return moved;
+      next = moved.state;
+    }
+    const issued = this.issueInvoice(next, tenantId, now, `${id}-inv`);
+    if (!issued.ok) return issued;
+    const paid = this.payInvoice(issued.state, tenantId, `${id}-inv`, now, `${id}-pay`);
+    if (!paid.ok) return paid;
+    const row = event(id, tenantId, "checkout", planId, now);
+    return { ok: true, event: row, state: append(paid.state, row) };
   },
 };
 

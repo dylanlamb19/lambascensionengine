@@ -3,6 +3,7 @@ import { getPackage, isPackageId, type PackageId } from "./catalog.ts";
 import { connectionForIntegration, connectionLabel, missingConnectionLine } from "./connections.ts";
 import { stepTemplates } from "./steps.ts";
 import { workspaceFor } from "./tenancy.ts";
+import { assertEnrollmentAllowed, assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
 import {
   NO_CREDENTIALS,
   type CredentialPort,
@@ -145,6 +146,8 @@ export function recordPurchase(
     (row) => row.tenantId === tenantId && row.clientId === client?.id && row.packageId === pkg.id && row.status !== "cancelled",
   );
   if (existing) return { ok: true, state, clientId: client.id, enrollmentId: existing.id };
+  const enrollmentGate = assertEnrollmentAllowed(state, tenantId);
+  if (!enrollmentGate.ok) return { ok: false, state, reason: enrollmentGate.reason };
 
   const enrollment: Enrollment = {
     id: ids(),
@@ -193,7 +196,13 @@ export function recordPurchase(
   const opened = withRows.workspaces.map((row) =>
     row.id === tenantId && row.onboarding === "packages" ? { ...row, onboarding: "connections" as const } : row,
   );
-  return { ok: true, clientId: client.id, enrollmentId: enrollment.id, state: { ...withRows, workspaces: opened } };
+  const before = usageFor(state, tenantId);
+  return {
+    ok: true,
+    clientId: client.id,
+    enrollmentId: enrollment.id,
+    state: writeUsage({ ...withRows, workspaces: opened }, { tenantId, pipelineRuns: before.pipelineRuns, enrollments: before.enrollments + 1 }),
+  };
 }
 
 export function addClient(
@@ -295,19 +304,44 @@ export function tickFulfillment(
   opts: TickOptions,
 ): { state: FulfillmentState; advanced: number } {
   if (!opts.enabled) return { state, advanced: 0 };
-  if (!workspaceFor(state, tenantId)) return { state, advanced: 0 };
+  const workspace = workspaceFor(state, tenantId);
+  if (!workspace) return { state, advanced: 0 };
+  let runs = usageFor(state, tenantId).pipelineRuns;
   let advanced = 0;
+  let blocked: string | null = null;
   const steps = state.steps.map((step) => {
     if (step.tenantId !== tenantId) return step;
     const enrollment = state.enrollments.find((row) => row.id === step.enrollmentId && row.tenantId === tenantId);
     if (!enrollment) return step;
+    const gate = assertPipelineRunAllowed(state, tenantId, runs);
+    if (!gate.ok) {
+      blocked = gate.reason;
+      return step;
+    }
     const next = advanceStep(step, enrollment, now, opts);
     if (!next) return step;
+    runs += 1;
     advanced += 1;
     return next;
   });
-  if (advanced === 0) return { state, advanced: 0 };
-  return { state: { ...state, steps }, advanced };
+  if (advanced === 0 && !blocked) return { state, advanced: 0 };
+  let next = writeUsage({ ...state, steps }, { ...usageFor(state, tenantId), pipelineRuns: runs });
+  const blockType = workspace.subscriptionStatus === "canceled" ? "subscription_canceled" : "pipeline_limit";
+  if (blocked && !(next.billingEvents || []).some((row) => row.tenantId === tenantId && row.type === blockType)) {
+    next = {
+      ...next,
+      billingEvents: [...(next.billingEvents || []), {
+        id: `run_${now}`,
+        tenantId,
+        type: blockType,
+        planId: workspace.planId,
+        amountCents: 0 as const,
+        billingMode: "test" as const,
+        at: now,
+      }],
+    };
+  }
+  return { state: next, advanced };
 }
 
 function enrollmentInTenant(state: FulfillmentState, tenantId: string, enrollmentId: string): Enrollment | null {
@@ -368,6 +402,7 @@ export function emptyFulfillment(): FulfillmentState {
     invoices: [],
     invites: [],
     memberships: [],
+    usage: [],
   };
 }
 

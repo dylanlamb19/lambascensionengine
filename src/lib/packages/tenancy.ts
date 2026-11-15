@@ -38,6 +38,7 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     invoices: (state.invoices || []).filter((row) => row.tenantId === tenantId),
     invites: (state.invites || []).filter((row) => row.tenantId === tenantId),
     memberships: (state.memberships || []).filter((row) => row.tenantId === tenantId),
+    usage: (state.usage || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -57,6 +58,7 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     invoices: [...(state.invoices || []).filter((row) => row.tenantId !== tenantId), ...safe.invoices],
     invites: [...(state.invites || []).filter((row) => row.tenantId !== tenantId), ...safe.invites],
     memberships: [...(state.memberships || []).filter((row) => row.tenantId !== tenantId), ...safe.memberships],
+    usage: [...(state.usage || []).filter((row) => row.tenantId !== tenantId), ...safe.usage],
   };
 }
 

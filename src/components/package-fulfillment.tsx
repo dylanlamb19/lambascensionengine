@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { SUBSCRIPTION_EDGES } from "@/lib/packages/billing";
-import { listPackages, type PackageId } from "@/lib/packages/catalog";
-import { listTestPlans } from "@/lib/packages/plans";
+import { formatUsd, listPackages, type PackageId } from "@/lib/packages/catalog";
+import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
+import { usageFor } from "@/lib/packages/usage";
 import { workspaceFor } from "@/lib/packages/tenancy";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
 import { clientList, packageTabs, pipelineView, workspaceSummary } from "@/lib/packages/view";
@@ -49,9 +50,14 @@ export function PackageFulfillmentPanel(props: {
   onTransition: (to: SubscriptionLifecycle) => void;
   onIssueInvoice: () => void;
   onPayInvoice: (invoiceId: string) => void;
+  onCheckout: (planId: string) => { ok: boolean; reason?: string };
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
+  const [pricing, setPricing] = useState(false);
+  if (pricing) {
+    return <PricingPage state={props.state} tenantId={props.tenantId} onCheckout={props.onCheckout} onBack={() => setPricing(false)} />;
+  }
   if (workspace && workspace.onboarding !== "desk") {
     return (
       <OnboardingWizard
@@ -66,6 +72,7 @@ export function PackageFulfillmentPanel(props: {
         onDisconnect={props.onDisconnect}
         onFinish={props.onFinish}
         billing={<WorkspaceBilling {...props} />}
+        onPricing={() => setPricing(true)}
       />
     );
   }
@@ -96,7 +103,10 @@ export function PackageFulfillmentPanel(props: {
   return (
     <section data-fulfillment-root="1" data-tenant-id={props.tenantId}>
       <p className="la-kicker">Client Package Fulfillment</p>
-      <h1 className="font-display mt-2 mb-2 text-3xl">Clients and packages</h1>
+      <div className="mt-2 mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h1 className="font-display text-3xl">Clients and packages</h1>
+        <button type="button" className="la-btn la-btn-ghost" onClick={() => setPricing(true)}>Pricing</button>
+      </div>
       <WorkspaceBilling {...props} />
       <p className="mb-4 text-sm text-muted">
         {workspace
@@ -117,6 +127,57 @@ export function PackageFulfillmentPanel(props: {
           ))
         )}
       </div>
+    </section>
+  );
+}
+
+function PricingPage(props: {
+  state: FulfillmentState;
+  tenantId: string;
+  onCheckout: (planId: string) => { ok: boolean; reason?: string };
+  onBack: () => void;
+}) {
+  const usage = usageFor(props.state, props.tenantId);
+  const workspace = workspaceFor(props.state, props.tenantId);
+  const [note, setNote] = useState("");
+  return (
+    <section data-fulfillment-root="1" data-pricing="1" data-tenant-id={props.tenantId}>
+      <button type="button" className="la-btn la-btn-quiet mb-3" onClick={props.onBack}>Back</button>
+      <p className="la-kicker">Client Package Fulfillment</p>
+      <h1 className="font-display mt-2 mb-2 text-3xl">Pricing</h1>
+      <p className="mb-4 text-sm text-muted">
+        Test checkout is {formatUsd(0)}. Nothing is charged. This workspace has used {usage.enrollments} packages and {usage.pipelineRuns} pipeline runs.
+      </p>
+      <div className="grid gap-3 md:grid-cols-3">
+        {listTestPlans().map((plan) => {
+          const limits = getTestPlan(plan.id);
+          const current = workspace?.planId === plan.id;
+          return (
+            <article key={plan.id} className="la-card" data-plan={plan.id}>
+              <p className="la-kicker">{plan.name}</p>
+              <p className="mt-2 font-display text-3xl">{formatUsd(0)}</p>
+              <p className="mt-2 text-sm text-muted">{plan.summary}</p>
+              <ul className="mt-3 text-sm text-muted">
+                <li>{limits.clientLimit == null ? "No client cap" : `${limits.clientLimit} clients`}</li>
+                <li>{limits.enrollmentLimit == null ? "No package cap" : `${limits.enrollmentLimit} packages`}</li>
+                <li>{limits.pipelineRunLimit == null ? "No pipeline-run cap" : `${limits.pipelineRunLimit} pipeline runs`}</li>
+              </ul>
+              <button
+                type="button"
+                className="la-btn la-btn-primary mt-4"
+                disabled={current}
+                onClick={() => {
+                  const result = props.onCheckout(plan.id);
+                  setNote(result.ok ? `${plan.name} recorded at $0.` : result.reason || "Checkout was not recorded.");
+                }}
+              >
+                {current ? "Current plan" : "Checkout · $0"}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      {note ? <p className="mt-3 text-sm text-muted">{note}</p> : null}
     </section>
   );
 }
@@ -230,6 +291,7 @@ function OnboardingWizard(props: {
   onDisconnect: (kind: string) => void;
   onFinish: () => { ok: boolean; reason?: string };
   billing: ReactNode;
+  onPricing: () => void;
 }) {
   const step = props.workspace.onboarding;
   const [name, setName] = useState(props.workspace.name);
@@ -245,7 +307,10 @@ function OnboardingWizard(props: {
   return (
     <section data-fulfillment-root="1" data-onboarding={step} data-tenant-id={props.tenantId}>
       <p className="la-kicker">Client Package Fulfillment</p>
-      <h1 className="font-display mt-2 mb-2 text-3xl">Set up this workspace</h1>
+      <div className="mt-2 mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h1 className="font-display text-3xl">Set up this workspace</h1>
+        <button type="button" className="la-btn la-btn-ghost" onClick={props.onPricing}>Pricing</button>
+      </div>
       {props.billing}
       <p className="mb-4 text-sm text-muted">Signed-in marketers only. This does not open registration, and it does not charge a card.</p>
       <ol className="mb-4 flex flex-wrap gap-2">

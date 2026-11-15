@@ -28,6 +28,7 @@ Every client, enrollment, and step carries `tenantId`. Reads, ticks, kill switch
 - `replaceTenant` drops any row in a write that claims a different tenant.
 - `readTenant` and `writeTenant` refuse a session that does not own or belong to the workspace. A cross-tenant read returns no rows. A cross-tenant write leaves the state unchanged.
 - `migrations/0017_tenant_rls.sql` turns on forced row-level security. Each policy compares the row's workspace id to `app.tenant_id`. The file is not applied to a hosted database. An ephemeral test runs it only inside that test.
+- The package request path (`scopePackageTenantFn`) takes the user id from the verified session and runs `set_config('app.tenant_id', tenant, true)` inside one transaction. The `true` makes the setting local to that transaction, so the next request on the same connection does not keep it. A tenant id supplied by the caller is ignored unless it is exactly the id derived from that session. The call is skipped while the flag is off, and auth config is unchanged.
 - Browser storage is keyed `la_package_fulfillment_v1:<tenantId>`, then sliced again on load.
 
 The desk passes `user.id` from the session into `startMarketerOnboarding`. That function is the self-serve onboarding hook: idempotent per user id, opens a workspace, and records a test plan. It does **not** create a login. Public signup stays disabled (`disableSignUp` is unchanged, and the desk still has no account-creation form).
@@ -36,15 +37,17 @@ The desk passes `user.id` from the session into `startMarketerOnboarding`. That 
 
 `src/lib/packages/plans.ts` is scaffolding only.
 
-| Plan | Client cap in the scaffold | Billing |
-| --- | --- | --- |
-| Test trial | 3 | `billingMode: "test"`. No card. |
-| Test operator | 25 | Same |
-| Test agency | No scaffold cap | Same |
+| Plan | Clients | Packages | Pipeline runs | Checkout |
+| --- | --- | --- | --- | --- |
+| Test trial | 3 | 5 | 40 | $0 test checkout |
+| Test operator | 25 | 100 | 500 | $0 test checkout |
+| Test agency | No cap | No cap | No cap | $0 test checkout |
 
 `fakeBilling` implements `BillingProvider`. `selectPlan`, `assertCanAddClient`, `handleWebhook`, `transitionSubscription`, `issueInvoice`, and `payInvoice` record notices with `amountCents: 0` and `billingMode: "test"`. The lifecycle is `trial`, then `active`, then `past_due`, then `canceled`. Skipping a step is rejected. Moving to past due opens a $0 invoice. Recording that $0 payment returns the subscription to active. Canceling voids an open invoice. A payment for another workspace's invoice is rejected. The provider does not read environment variables or keys.
 
-The Client Package Fulfillment tab shows this status, the $0 invoices, and the allowed next step.
+The Client Package Fulfillment tab shows this status, the $0 invoices, and the allowed next step. Its Pricing page lists the three test plans and checks out through `fakeBilling.checkout` at $0. That records the plan, moves a trial to active, and pays a $0 invoice. It does not read keys.
+
+Usage is counted per workspace. A new package enrollment increments that workspace's package meter, and each pipeline step that advances increments its run meter. The other workspace's meters do not move. A canceled subscription cannot add a package or run a pipeline. Crossing a cap records a zero-cent notice and does not charge.
 
 Choosing a plan sets `planStatus` to `test_trial`. There is no live charge.
 
@@ -243,7 +246,7 @@ The running desk uses the in-memory and browser store above. It does not query t
 ## What is left before this is a sellable multi-tenant SaaS
 
 1. **Marketer accounts.** Public signup is still disabled on purpose. The onboarding hook must be called only after a verified session exists. Turning on self-serve registration, email verification, and password reset is separate work and must not weaken the current owner-desk signup lock by accident.
-2. **Server-side isolation in production.** The library guard and the RLS file exist. Production still needs the migration applied on purpose, the app role to set `app.tenant_id` from the verified session, and no client-supplied tenant id.
+2. **Server-side isolation in production.** The request path sets `app.tenant_id` from the verified session for a package transaction, and the RLS file exists. Production still needs that migration applied on purpose before the policies are in force.
 3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
 4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.

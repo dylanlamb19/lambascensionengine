@@ -87,6 +87,7 @@ import {
 import { ImageDock } from "@/components/image-dock";
 import { DesignDirectorBar } from "@/components/design-director";
 import { FLAGS } from "@/lib/flags";
+import { scopePackageTenantFn } from "@/lib/packages/scope-action";
 import { PackageFulfillmentPanel } from "@/components/package-fulfillment";
 import { packageFulfillmentNav } from "@/lib/packages/nav";
 import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/storage";
@@ -372,6 +373,7 @@ export function OwnerDesk() {
     pkgRef.current = initial;
     setPkgState(initial);
     if (opened.ok) saveFulfillmentLocal(tenantId, initial);
+    void scopePackageTenantFn().catch(() => undefined);
     const timer = window.setInterval(() => {
       setPkgState((prev) => {
         const ticked = tickFulfillment(prev, tenantId, new Date().toISOString(), { enabled: true, credentials: credentialsFor(prev, tenantId) });
@@ -2642,6 +2644,11 @@ export function OwnerDesk() {
             onPayInvoice={(invoiceId) => {
               const paid = fakeBilling.payInvoice(pkgRef.current, packageTenantId, invoiceId, new Date().toISOString());
               if (paid.ok) mutatePackage(paid.state);
+            }}
+            onCheckout={(planId) => {
+              const checked = fakeBilling.checkout(pkgRef.current, packageTenantId, planId, new Date().toISOString());
+              if (checked.ok) mutatePackage(checked.state);
+              return checked.ok ? { ok: true } : { ok: false, reason: checked.reason };
             }}
           />
         ) : null}

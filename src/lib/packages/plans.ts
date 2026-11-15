@@ -14,6 +14,8 @@ export type TestPlan = {
   summary: string;
   /** Null means no scaffold cap. This is not a billed quantity. */
   clientLimit: number | null;
+  enrollmentLimit: number | null;
+  pipelineRunLimit: number | null;
 };
 
 export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
@@ -23,6 +25,8 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     billingMode: "test",
     summary: "Scaffold plan. No card and no charge.",
     clientLimit: 3,
+    enrollmentLimit: 5,
+    pipelineRunLimit: 40,
   },
   test_operator: {
     id: "test_operator",
@@ -30,6 +34,8 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     billingMode: "test",
     summary: "Recorded plan for one marketer workspace. No charge.",
     clientLimit: 25,
+    enrollmentLimit: 100,
+    pipelineRunLimit: 500,
   },
   test_agency: {
     id: "test_agency",
@@ -37,6 +43,8 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     billingMode: "test",
     summary: "Recorded plan for a larger workspace. No charge.",
     clientLimit: null,
+    enrollmentLimit: null,
+    pipelineRunLimit: null,
   },
 };
 
