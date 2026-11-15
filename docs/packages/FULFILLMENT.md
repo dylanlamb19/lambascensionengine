@@ -243,6 +243,10 @@ Every delivery row is keyed by `workspace_id`. There is no payment-provider colu
 
 The running desk uses the in-memory and browser store above. It does not query these tables, so the feature does not depend on the migration having been applied.
 
+## Demo seed
+
+`buildDemoSeed` makes two local workspaces, Harbor Marketing and Prairie Studio, each with clients, packages, and pipeline steps that have already advanced. `loadDemoSeed` returns that data only when `VERCEL_ENV` is not `production`. It does not write to the database. The fulfillment tab can show it from "Load sample workspaces" while the flag is on. Leave the sample before using a real workspace. The go-live list is `docs/packages/GO_LIVE.md`.
+
 ## What is left before this is a sellable multi-tenant SaaS
 
 1. **Marketer accounts.** Public signup is still disabled on purpose. The onboarding hook must be called only after a verified session exists. Turning on self-serve registration, email verification, and password reset is separate work and must not weaken the current owner-desk signup lock by accident.

@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { SUBSCRIPTION_EDGES } from "@/lib/packages/billing";
+import { demoSeedAllowed, loadDemoSeed } from "@/lib/packages/demo-seed";
 import { formatUsd, listPackages, type PackageId } from "@/lib/packages/catalog";
 import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
 import { usageFor } from "@/lib/packages/usage";
@@ -55,6 +56,20 @@ export function PackageFulfillmentPanel(props: {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
   const [pricing, setPricing] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [demo, setDemo] = useState<FulfillmentState | null>(null);
+  const [demoTenant, setDemoTenant] = useState<string | null>(null);
+  const allowDemo = demoSeedAllowed({ VERCEL_ENV: typeof process !== "undefined" ? process.env?.VERCEL_ENV : undefined });
+  function loadSample() {
+    const loaded = loadDemoSeed({ VERCEL_ENV: typeof process !== "undefined" ? process.env?.VERCEL_ENV : undefined });
+    if (!loaded.ok) return;
+    setDemo(loaded.state);
+    setDemoTenant(loaded.state.workspaces[0]?.id || null);
+    setPricing(false);
+  }
+  if (demo && demoTenant) {
+    return <DemoSample state={demo} tenantId={demoTenant} onTenant={setDemoTenant} onClose={() => { setDemo(null); setDemoTenant(null); }} />;
+  }
   if (pricing) {
     return <PricingPage state={props.state} tenantId={props.tenantId} onCheckout={props.onCheckout} onBack={() => setPricing(false)} />;
   }
@@ -73,6 +88,7 @@ export function PackageFulfillmentPanel(props: {
         onFinish={props.onFinish}
         billing={<WorkspaceBilling {...props} />}
         onPricing={() => setPricing(true)}
+        guide={<FulfillmentGuide allowDemo={allowDemo} onLoadSample={loadSample} />}
       />
     );
   }
@@ -105,7 +121,10 @@ export function PackageFulfillmentPanel(props: {
       <p className="la-kicker">Client Package Fulfillment</p>
       <div className="mt-2 mb-2 flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-3xl">Clients and packages</h1>
-        <button type="button" className="la-btn la-btn-ghost" onClick={() => setPricing(true)}>Pricing</button>
+        <span className="flex flex-wrap gap-2">
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => setHelp((open) => !open)}>How this works</button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => setPricing(true)}>Pricing</button>
+        </span>
       </div>
       <WorkspaceBilling {...props} />
       <p className="mb-4 text-sm text-muted">
@@ -115,10 +134,9 @@ export function PackageFulfillmentPanel(props: {
       </p>
       {workspace ? <ConnectionChecklist workspace={workspace} onConnect={props.onConnect} onDisconnect={props.onDisconnect} /> : null}
       <RecordForm onRecord={props.onRecord} />
+      {rows.length === 0 || help ? <FulfillmentGuide allowDemo={allowDemo} onLoadSample={loadSample} /> : null}
       <div className="la-card">
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted">No clients recorded in this workspace yet.</p>
-        ) : (
+        {rows.length === 0 ? null : (
           rows.map((row) => (
             <button key={row.id} type="button" className="la-list-row" data-client-row={row.id} onClick={() => props.onSelectClient(row.id)}>
               <span className="la-list-name">{row.name}</span>
@@ -127,6 +145,70 @@ export function PackageFulfillmentPanel(props: {
           ))
         )}
       </div>
+    </section>
+  );
+}
+
+function FulfillmentGuide(props: { allowDemo: boolean; onLoadSample: () => void }) {
+  return (
+    <div className="la-card mb-4" data-walkthrough="1">
+      <p className="la-kicker">How this works</p>
+      <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-muted">
+        <li>Name this workspace. You only see your own clients.</li>
+        <li>Choose a test plan on Pricing. Checkout is $0 and does not charge a card.</li>
+        <li>Add the first client, then record one package. That starts its pipeline.</li>
+        <li>Connect the mailbox, ads, profile, or calendar the package asks for. Until then the step says which connection is missing.</li>
+        <li>Open a package tab to watch each step: pending, running, done, failed, or needs human.</li>
+      </ol>
+      {props.allowDemo ? (
+        <button type="button" className="la-btn la-btn-ghost mt-4" onClick={props.onLoadSample}>Load sample workspaces</button>
+      ) : (
+        <p className="mt-3 text-sm text-muted">Sample workspaces are not loaded in production.</p>
+      )}
+    </div>
+  );
+}
+
+function DemoSample(props: { state: FulfillmentState; tenantId: string; onTenant: (id: string) => void; onClose: () => void }) {
+  const rows = clientList(props.state, props.tenantId);
+  const [clientId, setClientId] = useState<string | null>(null);
+  const client = rows.find((row) => row.id === clientId) || null;
+  const tabs = client ? packageTabs(props.state, props.tenantId, client.id) : [];
+  const pipeline = tabs[0] ? pipelineView(props.state, props.tenantId, tabs[0].enrollmentId) : null;
+  return (
+    <section data-fulfillment-root="1" data-demo="1" data-tenant-id={props.tenantId}>
+      <p className="la-kicker">Sample data · local demo only</p>
+      <div className="mt-2 mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h1 className="font-display text-3xl">Client Package Fulfillment</h1>
+        <button type="button" className="la-btn la-btn-quiet" onClick={props.onClose}>Leave sample</button>
+      </div>
+      <p className="mb-3 text-sm text-muted">Two sample marketers. Switching workspaces does not show the other marketer's clients. Nothing is saved and nothing is charged.</p>
+      <div className="mb-4 flex flex-wrap gap-2">
+        {props.state.workspaces.map((row) => (
+          <button key={row.id} type="button" className="la-nav-btn la-nav-quiet" data-on={row.id === props.tenantId ? "1" : "0"} onClick={() => { props.onTenant(row.id); setClientId(null); }}>
+            {row.name}
+          </button>
+        ))}
+      </div>
+      {client && pipeline ? (
+        <div className="la-card">
+          <button type="button" className="la-btn la-btn-quiet mb-3" onClick={() => setClientId(null)}>All clients</button>
+          <h2 className="font-display text-2xl">{client.name}</h2>
+          <p className="mt-1 text-sm text-muted">{pipeline.packageName} · {pipeline.status}</p>
+          {pipeline.steps.map((step) => (
+            <p key={step.id} className="mt-2 text-sm" data-step-status={step.status}>{step.title} · {step.statusLabel}</p>
+          ))}
+        </div>
+      ) : (
+        <div className="la-card">
+          {rows.map((row) => (
+            <button key={row.id} type="button" className="la-list-row" data-client-row={row.id} onClick={() => setClientId(row.id)}>
+              <span className="la-list-name">{row.name}</span>
+              <span className="text-sm text-muted">{row.packages.map((pkg) => pkg.name).join(" · ")}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -292,6 +374,7 @@ function OnboardingWizard(props: {
   onFinish: () => { ok: boolean; reason?: string };
   billing: ReactNode;
   onPricing: () => void;
+  guide: ReactNode;
 }) {
   const step = props.workspace.onboarding;
   const [name, setName] = useState(props.workspace.name);
@@ -312,6 +395,7 @@ function OnboardingWizard(props: {
         <button type="button" className="la-btn la-btn-ghost" onClick={props.onPricing}>Pricing</button>
       </div>
       {props.billing}
+      {props.guide}
       <p className="mb-4 text-sm text-muted">Signed-in marketers only. This does not open registration, and it does not charge a card.</p>
       <ol className="mb-4 flex flex-wrap gap-2">
         {ONBOARDING_STEPS.map(([id, label]) => (
