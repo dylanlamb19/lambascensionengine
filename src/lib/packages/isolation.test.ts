@@ -105,7 +105,7 @@ test("subscription lifecycle and invoices stay at zero cents", () => {
 
 test("row security policies hide and reject the other tenant", async () => {
   const pg = new PGlite();
-  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql"]) {
+  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql"]) {
     await pg.exec(readFileSync(join(root, "migrations", name), "utf8"));
   }
   await pg.exec(`
@@ -114,6 +114,9 @@ test("row security policies hide and reject the other tenant", async () => {
     insert into test_invoices (id, workspace_id, status, amount_cents, billing_mode) values
       ('i1', 'ws_a', 'open', 0, 'test'),
       ('i2', 'ws_b', 'open', 0, 'test');
+    insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at)
+      values ('lead-a', 'ws_a', 'c1', 'enr-a', 'Sam', 'active', '2026-11-15T15:00:00Z'),
+             ('lead-b', 'ws_b', 'c2', 'enr-b', 'Pat', 'active', '2026-11-15T15:00:00Z');
   `);
   await pg.exec(`
     do $$ begin
@@ -132,5 +135,8 @@ test("row security policies hide and reject the other tenant", async () => {
   await assert.rejects(() => pg.exec(`insert into service_clients (id, workspace_id, name) values ('c3', 'ws_b', 'Smuggle')`));
   const still = await pg.query<{ id: string }>(`select id from service_clients where id = 'c2'`);
   assert.equal(still.rows.length, 0);
+  const leads = await pg.query<{ id: string }>(`select id from follow_up_leads order by id`);
+  assert.deepEqual(leads.rows.map((row) => row.id), ["lead-a"]);
+  await assert.rejects(() => pg.exec(`insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at) values ('lead-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'active', '2026-11-15T15:00:00Z')`));
   await pg.close();
 });

@@ -6,7 +6,7 @@ import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
 import { usageFor } from "@/lib/packages/usage";
 import { workspaceFor } from "@/lib/packages/tenancy";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
-import { clientList, packageTabs, pipelineView, workspaceSummary } from "@/lib/packages/view";
+import { clientList, leadFollowUpView, packageTabs, pipelineView, workspaceSummary, type LeadView } from "@/lib/packages/view";
 
 const ONBOARDING_STEPS = [
   ["workspace", "Workspace"],
@@ -17,6 +17,96 @@ const ONBOARDING_STEPS = [
 ] as const;
 
 const PAYMENTS: PaymentRecord[] = ["unrecorded", "recorded", "waived"];
+
+function StepFacts(props: { statusLabel: string; attempts: number; lastError: string | null; nextRunAt: string | null }) {
+  return (
+    <>
+      <p className="mt-1 text-sm">{props.statusLabel}</p>
+      <p className="mt-1 text-sm text-muted" data-step-facts="1">
+        Attempts {props.attempts} · Last error {props.lastError || "—"} · Next {props.nextRunAt || "—"}
+      </p>
+    </>
+  );
+}
+
+function LeadCaptureForm(props: {
+  enrollmentId: string;
+  onCapture: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onCapture({ enrollmentId: props.enrollmentId, contactName: name, contactEmail: email });
+        if (!result.ok) {
+          setMessage(result.reason || "That lead was not captured.");
+          return;
+        }
+        setName("");
+        setEmail("");
+        setMessage("Lead captured. The draft stays in the log. Nothing was sent.");
+      }}
+    >
+      <p className="la-kicker">New lead</p>
+      <label className="la-label mt-3" htmlFor="lead-name">Name</label>
+      <input id="lead-name" className="la-field mb-3" value={name} onChange={(event) => setName(event.target.value)} />
+      <label className="la-label" htmlFor="lead-email">Email</label>
+      <input id="lead-email" className="la-field mb-3" value={email} onChange={(event) => setEmail(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Capture lead</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function LeadCadence(props: {
+  leads: LeadView[] | null;
+  workspaceKill: boolean;
+  enrollmentId: string;
+  onCaptureLead?: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
+  onLeadReply?: (leadId: string) => void;
+  onWorkspaceKill?: (on: boolean) => void;
+}) {
+  if (!props.leads) return null;
+  return (
+    <div data-lead-cadence="1">
+      <h2 className="font-display mt-4 mb-2 text-2xl">Lead follow-up</h2>
+      <p className="mb-3 text-sm text-muted">
+        Speed-to-lead, then day 1, day 3, and day 7. Each draft is written here. Nothing is sent.
+        {props.workspaceKill ? " The workspace kill switch is on." : ""}
+      </p>
+      {props.onWorkspaceKill ? (
+        <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onWorkspaceKill?.(!props.workspaceKill)}>
+          {props.workspaceKill ? "Clear workspace kill switch" : "Stop lead follow-up for this workspace"}
+        </button>
+      ) : null}
+      {props.onCaptureLead ? <LeadCaptureForm enrollmentId={props.enrollmentId} onCapture={props.onCaptureLead} /> : null}
+      {props.leads.length === 0 ? <p className="text-sm text-muted">No leads captured yet.</p> : null}
+      {props.leads.map((lead) => (
+        <section key={lead.id} data-lead={lead.id} className="mb-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-display text-xl">{lead.contactName}</h3>
+            <span className="text-sm text-muted">{lead.status}{lead.repliedAt ? " · replied" : ""}</span>
+          </div>
+          {props.onLeadReply && !lead.repliedAt ? (
+            <button type="button" className="la-btn la-btn-quiet mb-3" onClick={() => props.onLeadReply?.(lead.id)}>Lead replied</button>
+          ) : null}
+          {lead.steps.map((step) => (
+            <article key={step.id} className="la-card" data-lead-step={step.id} data-step-status={step.status}>
+              <h4 className="text-lg font-display">{step.title}</h4>
+              <StepFacts statusLabel={step.statusLabel} attempts={step.attempts} lastError={step.lastError} nextRunAt={step.nextRunAt} />
+              {step.draftedMessage ? <p className="mt-2 text-sm">Draft: {step.draftedMessage}</p> : null}
+              {step.output ? <p className="mt-2 text-sm">{step.output}</p> : null}
+            </article>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
 
 function dotClass(status: StepStatus): string {
   if (status === "done") return "la-dot la-dot-good";
@@ -52,6 +142,9 @@ export function PackageFulfillmentPanel(props: {
   onIssueInvoice: () => void;
   onPayInvoice: (invoiceId: string) => void;
   onCheckout: (planId: string) => { ok: boolean; reason?: string };
+  onCaptureLead: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
+  onLeadReply: (leadId: string) => void;
+  onWorkspaceKill: (on: boolean) => void;
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
@@ -96,6 +189,7 @@ export function PackageFulfillmentPanel(props: {
   const tabs = client ? packageTabs(props.state, props.tenantId, client.id) : [];
   const selectedEnrollment = props.selectedEnrollmentId || tabs[0]?.enrollmentId || null;
   const pipeline = selectedEnrollment ? pipelineView(props.state, props.tenantId, selectedEnrollment) : null;
+  const leads = selectedEnrollment ? leadFollowUpView(props.state, props.tenantId, selectedEnrollment) : null;
 
   if (client && pipeline) {
     return (
@@ -106,11 +200,16 @@ export function PackageFulfillmentPanel(props: {
         tabs={tabs}
         selectedEnrollmentId={pipeline.enrollmentId}
         pipeline={pipeline}
+        leads={leads}
+        workspaceKill={workspace?.leadFollowUpKillSwitch === true}
         onBack={props.onBack}
         onSelectEnrollment={props.onSelectEnrollment}
         onStatus={props.onStatus}
         onKill={props.onKill}
         onPayment={props.onPayment}
+        onCaptureLead={props.onCaptureLead}
+        onLeadReply={props.onLeadReply}
+        onWorkspaceKill={props.onWorkspaceKill}
         billing={<WorkspaceBilling {...props} />}
       />
     );
@@ -131,7 +230,15 @@ export function PackageFulfillmentPanel(props: {
         {workspace
           ? `${workspace.name} · ${workspace.planName} · test mode. This workspace only. No card and no charge.`
           : "This workspace is not open yet."}
+        {workspace?.leadFollowUpKillSwitch ? " Lead follow-up is stopped for this workspace." : ""}
       </p>
+      {workspace ? (
+        <div className="mb-4">
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onWorkspaceKill(!workspace.leadFollowUpKillSwitch)}>
+            {workspace.leadFollowUpKillSwitch ? "Clear workspace kill switch" : "Stop lead follow-up for this workspace"}
+          </button>
+        </div>
+      ) : null}
       {workspace ? <ConnectionChecklist workspace={workspace} onConnect={props.onConnect} onDisconnect={props.onDisconnect} /> : null}
       <RecordForm onRecord={props.onRecord} />
       {rows.length === 0 || help ? <FulfillmentGuide allowDemo={allowDemo} onLoadSample={loadSample} /> : null}
@@ -158,7 +265,7 @@ function FulfillmentGuide(props: { allowDemo: boolean; onLoadSample: () => void 
         <li>Choose a test plan on Pricing. Checkout is $0 and does not charge a card.</li>
         <li>Add the first client, then record one package. That starts its pipeline.</li>
         <li>Connect the mailbox, ads, profile, or calendar the package asks for. Until then the step says which connection is missing.</li>
-        <li>Open a package tab to watch each step: pending, running, done, failed, or needs human.</li>
+        <li>Open a client, then a package, to watch each step: status, attempts, last error, and the next run.</li>
       </ol>
       {props.allowDemo ? (
         <button type="button" className="la-btn la-btn-ghost mt-4" onClick={props.onLoadSample}>Load sample workspaces</button>
@@ -191,13 +298,21 @@ function DemoSample(props: { state: FulfillmentState; tenantId: string; onTenant
         ))}
       </div>
       {client && pipeline ? (
-        <div className="la-card">
+        <div>
           <button type="button" className="la-btn la-btn-quiet mb-3" onClick={() => setClientId(null)}>All clients</button>
           <h2 className="font-display text-2xl">{client.name}</h2>
-          <p className="mt-1 text-sm text-muted">{pipeline.packageName} · {pipeline.status}</p>
+          <p className="mt-1 mb-3 text-sm text-muted">{pipeline.packageName} · {pipeline.status}</p>
           {pipeline.steps.map((step) => (
-            <p key={step.id} className="mt-2 text-sm" data-step-status={step.status}>{step.title} · {step.statusLabel}</p>
+            <article key={step.id} className="la-card" data-step-status={step.status}>
+              <h3 className="text-lg font-display">{step.title}</h3>
+              <StepFacts statusLabel={step.statusLabel} attempts={step.attempts} lastError={step.lastError} nextRunAt={step.nextRunAt} />
+            </article>
           ))}
+          <LeadCadence
+            leads={leadFollowUpView(props.state, props.tenantId, pipeline.enrollmentId)}
+            workspaceKill={workspaceSummary(props.state, props.tenantId)?.leadFollowUpKillSwitch === true}
+            enrollmentId={pipeline.enrollmentId}
+          />
         </div>
       ) : (
         <div className="la-card">
@@ -531,6 +646,11 @@ function PackagePipeline(props: {
   tabs: { enrollmentId: string; name: string; status: EnrollmentStatus }[];
   selectedEnrollmentId: string;
   pipeline: NonNullable<ReturnType<typeof pipelineView>>;
+  leads: LeadView[] | null;
+  workspaceKill: boolean;
+  onCaptureLead: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
+  onLeadReply: (leadId: string) => void;
+  onWorkspaceKill: (on: boolean) => void;
   onBack: () => void;
   onSelectEnrollment: (id: string) => void;
   onStatus: (enrollmentId: string, status: EnrollmentStatus) => void;
@@ -594,9 +714,9 @@ function PackagePipeline(props: {
               <span className={dotClass(step.status)} />
               {step.title}
             </h2>
-            <p className="mt-1 text-sm">{step.statusLabel}</p>
+            <StepFacts statusLabel={step.statusLabel} attempts={step.attempts} lastError={step.lastError} nextRunAt={step.nextRunAt} />
             <p className="mt-1 text-sm text-muted">
-              Started {step.startedAt || "—"} · Finished {step.finishedAt || "—"} · Next {step.nextRunAt || "—"}
+              Started {step.startedAt || "—"} · Finished {step.finishedAt || "—"}
             </p>
             {step.output ? <p className="mt-2 text-sm">{step.output}</p> : null}
             {step.logs.length ? (
@@ -609,6 +729,14 @@ function PackagePipeline(props: {
           </article>
         );
       })}
+      <LeadCadence
+        leads={props.leads}
+        workspaceKill={props.workspaceKill}
+        enrollmentId={pipeline.enrollmentId}
+        onCaptureLead={props.onCaptureLead}
+        onLeadReply={props.onLeadReply}
+        onWorkspaceKill={props.onWorkspaceKill}
+      />
     </section>
   );
 }

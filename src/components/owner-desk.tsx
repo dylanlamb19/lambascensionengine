@@ -94,6 +94,7 @@ import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/stora
 import { fakeBilling } from "@/lib/packages/billing";
 import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
 import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
+import { captureLead, recordLeadReply, setLeadFollowUpKillSwitch, tickPackagePipelines } from "@/lib/packages/lead-follow-up";
 import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
 import { confirmWorkspace, finishOnboarding, startMarketerOnboarding, workspaceIdForUser } from "@/lib/packages/tenancy";
 import { EMPTY_FULFILLMENT, type FulfillmentState, type RecordPurchaseInput } from "@/lib/packages/types";
@@ -376,7 +377,7 @@ export function OwnerDesk() {
     void scopePackageTenantFn().catch(() => undefined);
     const timer = window.setInterval(() => {
       setPkgState((prev) => {
-        const ticked = tickFulfillment(prev, tenantId, new Date().toISOString(), { enabled: true, credentials: credentialsFor(prev, tenantId) });
+        const ticked = tickPackagePipelines(prev, tenantId, new Date().toISOString(), { credentials: credentialsFor(prev, tenantId) });
         if (ticked.advanced === 0) return prev;
         saveFulfillmentLocal(tenantId, ticked.state);
         return ticked.state;
@@ -2650,6 +2651,18 @@ export function OwnerDesk() {
               if (checked.ok) mutatePackage(checked.state);
               return checked.ok ? { ok: true } : { ok: false, reason: checked.reason };
             }}
+            onCaptureLead={(input) => {
+              const now = new Date().toISOString();
+              const captured = captureLead(pkgRef.current, packageTenantId, input, now);
+              if (!captured.ok) return { ok: false, reason: captured.reason };
+              const ticked = tickPackagePipelines(captured.state, packageTenantId, now, {
+                credentials: credentialsFor(captured.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onLeadReply={(leadId) => mutatePackage(recordLeadReply(pkgRef.current, packageTenantId, leadId, new Date().toISOString()))}
+            onWorkspaceKill={(on) => mutatePackage(setLeadFollowUpKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
           />
         ) : null}
         {!packagesOpen && view === "settings" ? (

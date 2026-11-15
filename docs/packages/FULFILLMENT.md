@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, and `migrations/0017_tenant_rls.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, and `migrations/0018_lead_follow_up.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -110,7 +110,7 @@ The desk tab is named exactly **Client Package Fulfillment**. It is hidden while
 
 1. The landing view lists that workspace's clients and the packages each one purchased.
 2. A client opens their page, with one tab per purchased package under their name.
-3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), timestamps, log lines, output, and the next scheduled run.
+3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence.
 4. The desk ticks every 2 seconds while it is open and the flag is on. A step moves to `running`, then to `done` or `needs human`, without a separate start button.
 
 There is no production cron. A closed browser does not keep ticking. Registering a cron is leftover work, and it must stay disabled until the flag is on and the send path is a separate, gated client mailbox.
@@ -129,13 +129,17 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 1. Lead Follow-Up — $350/mo + $500 setup
 
-**Trigger.** A purchase is recorded for this workspace.
+**Trigger.** A purchase is recorded for this workspace. A captured inquiry then opens its own cadence.
 
-**Steps.** Record the inquiry route (bookkeeping). Acknowledge, then notify the team (client mailbox). Record the unresponsive cadence (bookkeeping; sales sequences are not started). Weekly summary draft (bookkeeping, not emailed).
+**Enrollment steps.** Record the inquiry route (bookkeeping). Acknowledge, then notify the team (client mailbox). Record the unresponsive cadence (bookkeeping; sales sequences are not started). Weekly summary draft (bookkeeping, not emailed).
+
+**Lead cadence.** New lead captured, then a speed-to-lead reply draft, then day 1, day 3, and day 7 follow-up drafts. A reply, or a step that is still failing after retries, escalates the rest to needs human. Retries wait 60 seconds, then 120 seconds. The workspace kill switch stops every lead in that workspace and leaves the other workspace running. Each advance counts toward the workspace pipeline-run cap. Crossing the cap records a zero-cent notice and does not run the step.
+
+**Sender.** Dry-run only. The intended message is written on the step log. The step does not call a mailbox, a text provider, or the sales outreach sender. A missing mailbox, and a mailbox marked Connected (test), both stay needs human and name Mailbox.
 
 **Needs.** A client mailbox that is not the owner's sales Gmail.
 
-**Autonomy.** Needs integration. Orchestration runs; sends do not.
+**Autonomy.** Needs integration. Orchestration runs; sends do not. `tickPackagePipelines` returns the same state while `PACKAGE_FULFILLMENT` is false. No cron was added, and `.github/workflows/outreach-worker.yml` stays retired.
 
 ### 2. AI Visibility Optimization — $600/mo
 
@@ -227,6 +231,14 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `package_enrollments` — status, kill switch, fees, manual payment state, dates, included package ids
 - `package_step_runs` — status, attempts, next run, output
 - `package_step_logs` — append-only notes
+
+`migrations/0018_lead_follow_up.sql` (file only, not applied):
+
+- `follow_up_leads` — one captured inquiry per workspace
+- `follow_up_lead_steps` — status, attempts, last error, next run, and the unsent draft
+- `follow_up_lead_step_logs` — append-only notes
+- `lead_follow_up_kill_switch` on the workspace
+- Forced row-level security, same `app.tenant_id` rule, and no secret column
 
 `migrations/0016_workspace_connections.sql`:
 

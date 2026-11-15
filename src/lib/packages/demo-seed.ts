@@ -1,5 +1,6 @@
 import { fakeBilling } from "./billing.ts";
 import { stubConnect } from "./connections.ts";
+import { captureLead, tickLeadFollowUp } from "./lead-follow-up.ts";
 import { recordPurchase, tickFulfillment } from "./runner.ts";
 import { startMarketerOnboarding, workspaceIdForUser } from "./tenancy.ts";
 import { EMPTY_FULFILLMENT, type FulfillmentState } from "./types.ts";
@@ -52,6 +53,22 @@ export function buildDemoSeed(now = DEMO_NOW): FulfillmentState {
     const first = tickFulfillment(state, tenantId, now, { enabled: true, credentials: credentialsFor(state, tenantId) });
     const second = tickFulfillment(first.state, tenantId, now, { enabled: true, credentials: credentialsFor(first.state, tenantId) });
     state = second.state;
+    const followUp = state.enrollments.find((row) => row.tenantId === tenantId && row.packageId === "lead-follow-up" && row.status === "active");
+    if (followUp) {
+      const captured = captureLead(state, tenantId, {
+        enrollmentId: followUp.id,
+        contactName: "Sam Ellis",
+        contactEmail: "sam.ellis@northroofing.example",
+        source: "website form",
+      }, "2026-11-13T15:00:00.000Z", { enabled: true, ids: factory });
+      if (captured.ok) {
+        let next = captured.state;
+        for (let i = 0; i < 8; i += 1) {
+          next = tickLeadFollowUp(next, tenantId, now, { enabled: true }).state;
+        }
+        state = next;
+      }
+    }
   }
   return {
     ...state,

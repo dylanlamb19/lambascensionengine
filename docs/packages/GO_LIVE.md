@@ -5,6 +5,7 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 ## Already built, still off
 
 - Package catalog, pipelines, and the Client Package Fulfillment tab (`PACKAGE_FULFILLMENT: false`).
+- Lead Follow-Up cadence (capture, speed-to-lead draft, day 1/3/7). The sender is dry-run only. `tickPackagePipelines` does nothing while the flag is off. No cron was added.
 - Workspace isolation in the library, plus forced row-level security in `migrations/0017_tenant_rls.sql` (file only).
 - Request path that sets `app.tenant_id` from the verified session for one transaction (`scopePackageTenantFn`). It does not run while the flag is off.
 - Test plans, $0 checkout, and $0 invoices through `fakeBilling`.
@@ -13,7 +14,7 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 
 ## Owner actions before the first real customer
 
-**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows. Do not apply them from a laptop against production by accident.
+**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows. Do not apply them from a laptop against production by accident.
 
 **Owner action.** Confirm production sets `app.tenant_id` from the verified session inside each fulfillment transaction (`set_config` with the local flag). A tenant id typed by the browser must not be trusted. This stays scoped to the package request, not to sales outreach.
 
@@ -31,8 +32,8 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 
 ## Not owner-only, still required
 
-- Per-workspace adapters so a stub "Connected (test)" can actually send, publish, or read ads. Until then, steps stay on "needs human" and name the missing connection.
-- A cron for pipeline ticks when the desk is closed. It must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
+- Per-workspace adapters so a stub "Connected (test)" can actually send, publish, or read ads. Until then, steps stay on "needs human" and name the missing connection. The Lead Follow-Up dry-run already does this for Mailbox.
+- A cron for pipeline ticks when the desk is closed. `tickPackagePipelines` already no-ops while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 - Sentinel, if you want it to page you. The per-tenant health report is `sentinelPackageHealth`. Sentinel itself is not in this branch.
 - Tax, proration, card retry, and dunning. The test lifecycle (trial, active, past due, canceled) does not collect money.
 - Seats beyond a single owner, custom domains, and exporting a workspace when a marketer leaves.
