@@ -94,8 +94,11 @@ import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/stora
 import { fakeBilling } from "@/lib/packages/billing";
 import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
 import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
-import { captureLead, recordLeadReply, setLeadFollowUpKillSwitch, tickPackagePipelines } from "@/lib/packages/lead-follow-up";
-import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment, tickFulfillment } from "@/lib/packages/runner";
+import { setAiVisibilityKillSwitch } from "@/lib/packages/ai-visibility";
+import { captureGeneratedLead, saveClientIntake, setLeadGenerationKillSwitch } from "@/lib/packages/lead-generation";
+import { captureLead, recordLeadReply, setLeadFollowUpKillSwitch } from "@/lib/packages/lead-follow-up";
+import { tickPackagePipelines } from "@/lib/packages/pipelines";
+import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment } from "@/lib/packages/runner";
 import { confirmWorkspace, finishOnboarding, startMarketerOnboarding, workspaceIdForUser } from "@/lib/packages/tenancy";
 import { EMPTY_FULFILLMENT, type FulfillmentState, type RecordPurchaseInput } from "@/lib/packages/types";
 import {
@@ -378,7 +381,8 @@ export function OwnerDesk() {
     const timer = window.setInterval(() => {
       setPkgState((prev) => {
         const ticked = tickPackagePipelines(prev, tenantId, new Date().toISOString(), { credentials: credentialsFor(prev, tenantId) });
-        if (ticked.advanced === 0) return prev;
+        if (ticked.advanced === 0 && ticked.state === prev) return prev;
+        pkgRef.current = ticked.state;
         saveFulfillmentLocal(tenantId, ticked.state);
         return ticked.state;
       });
@@ -2196,7 +2200,7 @@ export function OwnerDesk() {
     const now = new Date().toISOString();
     const recorded = recordPurchase(pkgRef.current, packageTenantId, input, now);
     if (!recorded.ok) return { ok: false as const, reason: recorded.reason };
-    const ticked = tickFulfillment(recorded.state, packageTenantId, now, { enabled: true, credentials: credentialsFor(recorded.state, packageTenantId) });
+    const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, { credentials: credentialsFor(recorded.state, packageTenantId) });
     pkgRef.current = ticked.state;
     saveFulfillmentLocal(packageTenantId, ticked.state);
     setPkgState(ticked.state);
@@ -2663,6 +2667,24 @@ export function OwnerDesk() {
             }}
             onLeadReply={(leadId) => mutatePackage(recordLeadReply(pkgRef.current, packageTenantId, leadId, new Date().toISOString()))}
             onWorkspaceKill={(on) => mutatePackage(setLeadFollowUpKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onSaveIntake={(input) => {
+              const saved = saveClientIntake(pkgRef.current, packageTenantId, input, new Date().toISOString());
+              if (!saved.ok) return { ok: false, reason: saved.reason };
+              mutatePackage(saved.state);
+              return { ok: true };
+            }}
+            onCaptureGeneratedLead={(input) => {
+              const now = new Date().toISOString();
+              const captured = captureGeneratedLead(pkgRef.current, packageTenantId, input, now);
+              if (!captured.ok) return { ok: false, reason: captured.reason };
+              const ticked = tickPackagePipelines(captured.state, packageTenantId, now, {
+                credentials: credentialsFor(captured.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onLeadGenKill={(on) => mutatePackage(setLeadGenerationKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onAiKill={(on) => mutatePackage(setAiVisibilityKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
           />
         ) : null}
         {!packagesOpen && view === "settings" ? (

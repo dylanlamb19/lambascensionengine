@@ -105,7 +105,7 @@ test("subscription lifecycle and invoices stay at zero cents", () => {
 
 test("row security policies hide and reject the other tenant", async () => {
   const pg = new PGlite();
-  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql"]) {
+  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql"]) {
     await pg.exec(readFileSync(join(root, "migrations", name), "utf8"));
   }
   await pg.exec(`
@@ -117,6 +117,12 @@ test("row security policies hide and reject the other tenant", async () => {
     insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at)
       values ('lead-a', 'ws_a', 'c1', 'enr-a', 'Sam', 'active', '2026-11-15T15:00:00Z'),
              ('lead-b', 'ws_b', 'c2', 'enr-b', 'Pat', 'active', '2026-11-15T15:00:00Z');
+    insert into package_runs (id, workspace_id, client_id, enrollment_id, package_id, status, opened_at)
+      values ('run-a', 'ws_a', 'c1', 'enr-a', 'lead-generation', 'active', '2026-11-15T15:00:00Z'),
+             ('run-b', 'ws_b', 'c2', 'enr-b', 'ai-visibility', 'active', '2026-11-15T15:00:00Z');
+    insert into generated_leads (id, workspace_id, client_id, enrollment_id, contact_name, captured_at)
+      values ('gen-a', 'ws_a', 'c1', 'enr-a', 'Sam', '2026-11-15T15:00:00Z'),
+             ('gen-b', 'ws_b', 'c2', 'enr-b', 'Pat', '2026-11-15T15:00:00Z');
   `);
   await pg.exec(`
     do $$ begin
@@ -138,5 +144,10 @@ test("row security policies hide and reject the other tenant", async () => {
   const leads = await pg.query<{ id: string }>(`select id from follow_up_leads order by id`);
   assert.deepEqual(leads.rows.map((row) => row.id), ["lead-a"]);
   await assert.rejects(() => pg.exec(`insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at) values ('lead-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'active', '2026-11-15T15:00:00Z')`));
+  const runs = await pg.query<{ id: string }>(`select id from package_runs order by id`);
+  assert.deepEqual(runs.rows.map((row) => row.id), ["run-a"]);
+  const generated = await pg.query<{ id: string }>(`select id from generated_leads order by id`);
+  assert.deepEqual(generated.rows.map((row) => row.id), ["gen-a"]);
+  await assert.rejects(() => pg.exec(`insert into generated_leads (id, workspace_id, client_id, enrollment_id, contact_name, captured_at) values ('gen-c', 'ws_b', 'c2', 'enr-b', 'Hidden', '2026-11-15T15:00:00Z')`));
   await pg.close();
 });

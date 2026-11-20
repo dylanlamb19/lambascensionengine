@@ -14,8 +14,8 @@ import {
   recordLeadReply,
   setLeadFollowUpKillSwitch,
   tickLeadFollowUp,
-  tickPackagePipelines,
 } from "./lead-follow-up.ts";
+import { tickPackagePipelines } from "./pipelines.ts";
 import { getTestPlan } from "./plans.ts";
 import { addDays, recordPurchase } from "./runner.ts";
 import { replaceTenant, sliceTenant, startMarketerOnboarding } from "./tenancy.ts";

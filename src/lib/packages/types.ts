@@ -25,6 +25,10 @@ export type Workspace = {
   billingMode: "test";
   /** Stops every Lead Follow-Up lead in this workspace. Other workspaces are untouched. */
   leadFollowUpKillSwitch: boolean;
+  /** Stops every Lead Generation run in this workspace. Other workspaces are untouched. */
+  leadGenerationKillSwitch: boolean;
+  /** Stops every AI Visibility run in this workspace. Other workspaces are untouched. */
+  aiVisibilityKillSwitch: boolean;
 };
 
 export type ServiceClient = {
@@ -184,6 +188,69 @@ export type LeadStepRun = {
   logs: { at: string; message: string }[];
 };
 
+/** Stored intake for one client. Campaign briefs and profile audits read only this. */
+export type ClientIntake = {
+  tenantId: string;
+  clientId: string;
+  businessName: string;
+  phone: string;
+  address: string;
+  website: string;
+  offer: string;
+  serviceArea: string;
+  updatedAt: string;
+};
+
+export type PackageRunId = "lead-generation" | "ai-visibility";
+export type PackageRunStatus = "active" | "needs_human" | "stopped";
+
+/** One Lead Generation or AI Visibility run on a client's package. */
+export type PackageRun = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  packageId: PackageRunId;
+  status: PackageRunStatus;
+  openedAt: string;
+};
+
+export type PackageRunStep = {
+  id: string;
+  tenantId: string;
+  runId: string;
+  enrollmentId: string;
+  clientId: string;
+  packageId: PackageRunId;
+  stepId: string;
+  title: string;
+  status: StepStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draft: string | null;
+  logs: { at: string; message: string }[];
+};
+
+/** A lead captured by Lead Generation. Not a sales prospect. */
+export type GeneratedLead = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  source: string;
+  capturedAt: string;
+  followUpLeadId: string | null;
+  handoffNote: string;
+};
+
 export type FulfillmentState = {
   workspaces: Workspace[];
   clients: ServiceClient[];
@@ -197,6 +264,10 @@ export type FulfillmentState = {
   usage: TenantUsage[];
   leads: FollowUpLead[];
   leadSteps: LeadStepRun[];
+  intakes: ClientIntake[];
+  packageRuns: PackageRun[];
+  packageRunSteps: PackageRunStep[];
+  generatedLeads: GeneratedLead[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -212,6 +283,10 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   usage: [],
   leads: [],
   leadSteps: [],
+  intakes: [],
+  packageRuns: [],
+  packageRunSteps: [],
+  generatedLeads: [],
 };
 
 export type RecordPurchaseInput = {

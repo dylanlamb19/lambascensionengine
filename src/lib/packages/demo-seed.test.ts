@@ -50,6 +50,13 @@ test("the demo seed is two isolated workspaces and refuses production", () => {
   const day3 = harborLeads.leadSteps.find((row) => row.stepId === "day-3");
   assert.equal(day3?.status, "pending");
   assert.equal(day3?.nextRunAt, "2026-11-16T15:00:00.000Z");
+  assert.equal(harborLeads.packageRuns.map((row) => row.packageId).sort().join(), "ai-visibility,lead-generation");
+  assert.equal(harborLeads.packageRunSteps.find((row) => row.stepId === "launch")?.status, "needs_human");
+  assert.match(harborLeads.packageRunSteps.find((row) => row.stepId === "ad-copy")?.draft || "", /Google/);
+  assert.match(harborLeads.packageRunSteps.find((row) => row.stepId === "ad-copy")?.draft || "", /Meta/);
+  assert.equal(harborLeads.packageRunSteps.find((row) => row.stepId === "ai-recommendation")?.status, "needs_human");
+  assert.equal(sliceTenant(seed, prairie).packageRuns.length, 0);
+  assert.equal(sliceTenant(seed, prairie).generatedLeads.length, 0);
   const session = { userId: "demo-harbor", tenantId: harbor };
   const seen = readTenant(seed, session, seed.clients);
   assert.equal(seen.ok, true);

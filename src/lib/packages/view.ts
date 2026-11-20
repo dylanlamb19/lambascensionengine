@@ -1,8 +1,10 @@
+import { formatStepReportLine } from "./cadence.ts";
 import { formatMonthly, formatSetup, formatUsd, getPackage } from "./catalog.ts";
 import { getTestPlan } from "./plans.ts";
 import { listConnections } from "./connections.ts";
+import { intakeFor } from "./package-runs.ts";
 import { onboardingStep, workspaceFor } from "./tenancy.ts";
-import type { DeliverableStatus, EnrollmentStatus, FulfillmentState, LeadStatus, PaymentRecord, StepStatus } from "./types.ts";
+import type { DeliverableStatus, EnrollmentStatus, FulfillmentState, LeadStatus, PackageRunId, PaymentRecord, StepStatus } from "./types.ts";
 
 export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
   pending: "pending",
@@ -134,6 +136,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
   billingMode: "test";
   onboarding: string;
   leadFollowUpKillSwitch: boolean;
+  leadGenerationKillSwitch: boolean;
+  aiVisibilityKillSwitch: boolean;
   clientLimit: number | null;
   connections: { kind: string; label: string; status: "missing" | "stub_connected" }[];
 } | null {
@@ -146,6 +150,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
     billingMode: "test",
     onboarding: onboardingStep(workspace),
     leadFollowUpKillSwitch: workspace.leadFollowUpKillSwitch === true,
+    leadGenerationKillSwitch: workspace.leadGenerationKillSwitch === true,
+    aiVisibilityKillSwitch: workspace.aiVisibilityKillSwitch === true,
     clientLimit: getTestPlan(workspace.planId).clientLimit,
     connections: listConnections(state, tenantId).map((row) => ({ kind: row.kind, label: row.label, status: row.status })),
   };
@@ -206,24 +212,125 @@ export function leadFollowUpView(state: FulfillmentState, tenantId: string, enro
     }));
 }
 
+export type PackageRunStepView = {
+  id: string;
+  title: string;
+  status: StepStatus;
+  statusLabel: string;
+  attempts: number;
+  lastError: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draft: string | null;
+  logs: { at: string; message: string }[];
+};
+
+export type GeneratedLeadView = {
+  id: string;
+  contactName: string;
+  contactEmail: string;
+  capturedAt: string;
+  followUpLeadId: string | null;
+  handoffNote: string;
+};
+
+export type PackageRunView = {
+  runId: string;
+  packageId: PackageRunId;
+  packageName: string;
+  status: string;
+  steps: PackageRunStepView[];
+  leads: GeneratedLeadView[];
+  intake: {
+    businessName: string;
+    phone: string;
+    address: string;
+    website: string;
+    offer: string;
+    serviceArea: string;
+  } | null;
+};
+
+/** Lead Generation and AI Visibility runs on one enrollment. Null when that enrollment is not in this workspace. */
+export function packageRunViews(state: FulfillmentState, tenantId: string, enrollmentId: string): PackageRunView[] | null {
+  const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
+  if (!enrollment) return null;
+  const owned = state.clients.some((row) => row.id === enrollment.clientId && row.tenantId === tenantId);
+  if (!owned) return null;
+  const runs = (state.packageRuns || []).filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id);
+  if (runs.length === 0) return [];
+  const intake = intakeFor(state, tenantId, enrollment.clientId);
+  return runs.map((run) => ({
+    runId: run.id,
+    packageId: run.packageId,
+    packageName: getPackage(run.packageId).name,
+    status: run.status,
+    intake: intake
+      ? {
+          businessName: intake.businessName,
+          phone: intake.phone,
+          address: intake.address,
+          website: intake.website,
+          offer: intake.offer,
+          serviceArea: intake.serviceArea,
+        }
+      : null,
+    leads: run.packageId === "lead-generation"
+      ? (state.generatedLeads || [])
+          .filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id)
+          .map((row) => ({
+            id: row.id,
+            contactName: row.contactName,
+            contactEmail: row.contactEmail,
+            capturedAt: row.capturedAt,
+            followUpLeadId: row.followUpLeadId,
+            handoffNote: row.handoffNote,
+          }))
+      : [],
+    steps: (state.packageRunSteps || [])
+      .filter((step) => step.tenantId === tenantId && step.runId === run.id)
+      .map((step) => ({
+        id: step.id,
+        title: step.title,
+        status: step.status,
+        statusLabel: STEP_STATUS_LABEL[step.status],
+        attempts: step.attempts,
+        lastError: step.lastError,
+        nextRunAt: step.nextRunAt,
+        output: step.output,
+        draft: step.draft,
+        logs: step.logs,
+      })),
+  }));
+}
+
 /** Plain-text client → package → step list for one workspace. */
 export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: string): string {
   const summary = workspaceSummary(state, tenantId);
   const lines: string[] = [];
-  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"}`);
+  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"}`);
   for (const client of clientList(state, tenantId)) {
     lines.push(`Client: ${client.name}`);
     for (const pkg of client.packages) {
       lines.push(`  Package: ${pkg.name} (${pkg.status})`);
       const pipeline = pipelineView(state, tenantId, pkg.enrollmentId);
       for (const step of pipeline?.steps || []) {
-        lines.push(`    ${step.title} · ${step.statusLabel} · attempts ${step.attempts} · last error ${step.lastError || "—"} · next ${step.nextRunAt || "—"}`);
+        lines.push(formatStepReportLine("    ", step.title, step.statusLabel, step.attempts, step.lastError, step.nextRunAt));
       }
       const leads = leadFollowUpView(state, tenantId, pkg.enrollmentId);
       for (const lead of leads || []) {
         lines.push(`    Lead: ${lead.contactName} · ${lead.status}`);
         for (const step of lead.steps) {
-          lines.push(`      ${step.title} · ${step.statusLabel} · attempts ${step.attempts} · last error ${step.lastError || "—"} · next ${step.nextRunAt || "—"}`);
+          lines.push(formatStepReportLine("      ", step.title, step.statusLabel, step.attempts, step.lastError, step.nextRunAt));
+        }
+      }
+      for (const run of packageRunViews(state, tenantId, pkg.enrollmentId) || []) {
+        lines.push(`    ${run.packageName} run · ${run.status}`);
+        for (const step of run.steps) {
+          lines.push(formatStepReportLine("      ", step.title, step.statusLabel, step.attempts, step.lastError, step.nextRunAt));
+        }
+        for (const lead of run.leads) {
+          lines.push(`      Captured lead: ${lead.contactName} · ${lead.handoffNote}`);
         }
       }
     }
