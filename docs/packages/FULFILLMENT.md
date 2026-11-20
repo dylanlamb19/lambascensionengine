@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, and `migrations/0019_lead_gen_ai_visibility.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, and `migrations/0020_reviews_appointments.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -110,7 +110,7 @@ The desk tab is named exactly **Client Package Fulfillment**. It is hidden while
 
 1. The landing view lists that workspace's clients and the packages each one purchased.
 2. A client opens their page, with one tab per purchased package under their name.
-3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence.
+3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence. A Reviews tab lists each completed job and its review request. An Appointment Reminders tab lists each booking and the 24-hour, 2-hour, and no-show steps.
 4. The desk ticks every 2 seconds while it is open and the flag is on. A step moves to `running`, then to `done` or `needs human`, without a separate start button.
 
 There is no production cron. A closed browser does not keep ticking. Registering a cron is leftover work, and it must stay disabled until the flag is on and the send path is a separate, gated client mailbox.
@@ -187,23 +187,23 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 7. Review Requests and Google Business Profile Care — $150/mo
 
-**Trigger.** Purchase, then a completed job. Cap of 2 profile updates in a month.
+**Trigger.** Purchase, then a real recorded completed job for that client. A job that is not completed does not open a request. A rating, sentiment, or "only happy customers" field is refused.
 
-**Steps.** Wait for a job feed. Request a review. Check profile info. Publish up to 2 updates.
+**Review request.** One dry-run draft per completed job. The wording is the same for every customer. Nothing is sent by email or text. The sales outreach sender is not used. The older enrollment checklist (job feed, mailbox) still runs and still needs a person before a live send.
 
-**Rules in the step text.** Reviews are not purchased and are not filtered. Nothing is published without the Google Business Profile API.
+**Google Business Profile.** The profile audit, up to two post drafts, and reply drafts read stored intake and stored reviews only. No Google API is called. Reply drafts stay needs human until a person approves them. Nothing is published. The monthly review report is a draft and is not emailed.
 
-**Autonomy.** Needs a job feed, a mailbox, and the Google Business Profile API.
+**Autonomy.** Orchestration runs. Sends and publishing do not.
 
 ### 8. Appointment Reminders — $100/mo + $150 setup
 
-**Trigger.** Purchase. One booking calendar.
+**Trigger.** Purchase. One booking on this workspace's booking calendar connection.
 
-**Steps.** Bind that calendar, then confirmations and reminders.
+**Steps.** Confirmation, a reminder 24 hours before, a reminder 2 hours before, then a no-show follow-up draft. Confirm and reschedule are dry runs. A time that falls before 8:00 or after 21:00 America/Chicago waits until 8:00. An attended visit does not get a no-show draft.
 
-**Rule.** The owner sales calendar is not changed.
+**Rule.** The calendar value has to be `booking_calendar` for this workspace. The owner sales calendar is not read and is not written. Another workspace's booking-calendar stub does not count. A missing connection becomes needs human and names Booking calendar. A Connected (test) stub still does not call a calendar API.
 
-**Autonomy.** Needs the client's booking calendar.
+**Autonomy.** Needs the client's booking calendar connection before reminders run. The older enrollment checklist still says the adapter is not wired.
 
 ### 9. Office Automation — from $400/mo + $500 setup
 
@@ -251,6 +251,16 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `generated_leads` — a captured lead and, when handed off, the Lead Follow-Up id
 - `lead_generation_kill_switch` and `ai_visibility_kill_switch` on the workspace
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
+
+`migrations/0020_reviews_appointments.sql` (file only, not applied):
+
+- `completed_jobs` — status is constrained to `completed`. There is no rating column
+- `review_request_steps` and `review_request_step_logs` — the unsent review request
+- `stored_reviews` — reviewer name and text only
+- `client_appointments` — `calendar` is constrained to `booking_calendar`
+- `appointment_steps` and `appointment_step_logs` — confirm, 24h, 2h, and no-show drafts
+- `reviews_kill_switch` and `appointment_reminders_kill_switch` on the workspace
+- `package_runs.package_id` also allows `reviews-gbp`
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
 
 `migrations/0016_workspace_connections.sql`:
@@ -279,7 +289,7 @@ The running desk uses the in-memory and browser store above. It does not query t
 3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
 4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
-6. **Live connections.** The registry can mark a stub connected. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
+6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 9. **Sentinel.** The health report is ready for one tenant. Sentinel itself is not in this branch, and nothing here disables it.

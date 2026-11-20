@@ -1,14 +1,16 @@
+import { tickAppointments } from "./appointment-reminders.ts";
 import { tickAiVisibility } from "./ai-visibility.ts";
 import { packagePipelineEnabled } from "./cadence.ts";
 import { tickLeadFollowUp, type LeadFlag } from "./lead-follow-up.ts";
 import { tickLeadGeneration } from "./lead-generation.ts";
+import { tickReviews } from "./reviews-gbp.ts";
 import { tickFulfillment, type TickOptions } from "./runner.ts";
-import type { CredentialPort, FollowUpLead, FulfillmentState, LeadStepRun, PackageRunStep } from "./types.ts";
+import type { AppointmentStep, CredentialPort, FollowUpLead, FulfillmentState, LeadStepRun, PackageRunStep, ReviewRequestStep } from "./types.ts";
 
 /**
  * Tick every package pipeline for one workspace.
  * Returns the same state while PACKAGE_FULFILLMENT is off, unless a test passes enabled.
- * This is not a cron. No mailbox, ad account, model, or sales outreach sender is called.
+ * This is not a cron. No mailbox, ad account, model, Google API, booking API, or sales outreach sender is called.
  */
 export function tickPackagePipelines(
   state: FulfillmentState,
@@ -19,6 +21,9 @@ export function tickPackagePipelines(
     runLeadStep?: (step: LeadStepRun, lead: FollowUpLead) => void;
     runLeadGenStep?: (step: PackageRunStep) => void;
     runVisibilityStep?: (step: PackageRunStep) => void;
+    runReviewStep?: (step: ReviewRequestStep) => void;
+    runReviewsCareStep?: (step: PackageRunStep) => void;
+    runAppointmentStep?: (step: AppointmentStep) => void;
   } = {},
 ): { state: FulfillmentState; advanced: number } {
   if (!packagePipelineEnabled(opts.enabled)) return { state, advanced: 0 };
@@ -38,8 +43,17 @@ export function tickPackagePipelines(
     enabled: true,
     runStep: opts.runVisibilityStep,
   });
+  const reviewsTick = tickReviews(visibilityTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runReviewStep,
+    runCareStep: opts.runReviewsCareStep,
+  });
+  const appointmentTick = tickAppointments(reviewsTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runAppointmentStep,
+  });
   return {
-    state: visibilityTick.state,
-    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced,
+    state: appointmentTick.state,
+    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced + reviewsTick.advanced + appointmentTick.advanced,
   };
 }

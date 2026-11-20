@@ -336,6 +336,8 @@ export function tickFulfillment(
   return { state: next, advanced };
 }
 
+const CLIENT_STOP = "Kill switch is on. This client's pipeline is stopped. Nothing was sent. Sales outreach was not changed.";
+
 function enrollmentInTenant(state: FulfillmentState, tenantId: string, enrollmentId: string): Enrollment | null {
   return state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId) || null;
 }
@@ -354,8 +356,18 @@ export function setKillSwitch(state: FulfillmentState, tenantId: string, enrollm
       step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
         ? {
             ...step,
-            logs: [...step.logs, { at: now, message: "Kill switch is on. This client's pipeline is stopped. Nothing was sent. Sales outreach was not changed." }].slice(-30),
+            logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30),
           }
+        : step,
+    ),
+    reviewRequestSteps: (state.reviewRequestSteps || []).map((step) =>
+      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+        ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
+        : step,
+    ),
+    appointmentSteps: (state.appointmentSteps || []).map((step) =>
+      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+        ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
         : step,
     ),
   };
@@ -409,6 +421,11 @@ export function emptyFulfillment(): FulfillmentState {
     packageRuns: [],
     packageRunSteps: [],
     generatedLeads: [],
+    completedJobs: [],
+    reviewRequestSteps: [],
+    storedReviews: [],
+    appointments: [],
+    appointmentSteps: [],
   };
 }
 

@@ -138,6 +138,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
   leadFollowUpKillSwitch: boolean;
   leadGenerationKillSwitch: boolean;
   aiVisibilityKillSwitch: boolean;
+  reviewsKillSwitch: boolean;
+  appointmentRemindersKillSwitch: boolean;
   clientLimit: number | null;
   connections: { kind: string; label: string; status: "missing" | "stub_connected" }[];
 } | null {
@@ -152,6 +154,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
     leadFollowUpKillSwitch: workspace.leadFollowUpKillSwitch === true,
     leadGenerationKillSwitch: workspace.leadGenerationKillSwitch === true,
     aiVisibilityKillSwitch: workspace.aiVisibilityKillSwitch === true,
+    reviewsKillSwitch: workspace.reviewsKillSwitch === true,
+    appointmentRemindersKillSwitch: workspace.appointmentRemindersKillSwitch === true,
     clientLimit: getTestPlan(workspace.planId).clientLimit,
     connections: listConnections(state, tenantId).map((row) => ({ kind: row.kind, label: row.label, status: row.status })),
   };
@@ -304,11 +308,104 @@ export function packageRunViews(state: FulfillmentState, tenantId: string, enrol
   }));
 }
 
+export type ReviewJobView = {
+  jobId: string;
+  customerName: string;
+  jobLabel: string;
+  completedAt: string;
+  step: PackageRunStepView & { draftedMessage: string | null };
+};
+
+export type ReviewsView = {
+  jobs: ReviewJobView[];
+  storedReviews: { id: string; reviewerName: string; body: string }[];
+};
+
+/** Completed jobs and review requests on one Reviews package. Null when that enrollment is not in this workspace. */
+export function reviewsView(state: FulfillmentState, tenantId: string, enrollmentId: string): ReviewsView | null {
+  const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
+  if (!enrollment || enrollment.packageId !== "reviews-gbp") return null;
+  const owned = state.clients.some((row) => row.id === enrollment.clientId && row.tenantId === tenantId);
+  if (!owned) return null;
+  const jobs = (state.completedJobs || []).filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id && row.status === "completed");
+  return {
+    storedReviews: (state.storedReviews || [])
+      .filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id)
+      .map((row) => ({ id: row.id, reviewerName: row.reviewerName, body: row.body })),
+    jobs: jobs.map((job) => {
+      const step = (state.reviewRequestSteps || []).find((row) => row.tenantId === tenantId && row.jobId === job.id);
+      return {
+        jobId: job.id,
+        customerName: job.customerName,
+        jobLabel: job.jobLabel,
+        completedAt: job.completedAt,
+        step: {
+          id: step?.id || job.id,
+          title: step?.title || "Review request",
+          status: step?.status || "pending",
+          statusLabel: STEP_STATUS_LABEL[step?.status || "pending"],
+          attempts: step?.attempts || 0,
+          lastError: step?.lastError || null,
+          nextRunAt: step?.nextRunAt || null,
+          output: step?.output || "",
+          draft: step?.draftedMessage || null,
+          draftedMessage: step?.draftedMessage || null,
+          logs: step?.logs || [],
+        },
+      };
+    }),
+  };
+}
+
+export type AppointmentItemView = {
+  id: string;
+  customerName: string;
+  startsAt: string;
+  response: string;
+  outcome: string;
+  status: string;
+  lastNote: string;
+  steps: PackageRunStepView[];
+};
+
+/** Appointments on one Appointment Reminders package. Null when that enrollment is not in this workspace. */
+export function appointmentViews(state: FulfillmentState, tenantId: string, enrollmentId: string): AppointmentItemView[] | null {
+  const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
+  if (!enrollment || enrollment.packageId !== "appointment-reminders") return null;
+  const owned = state.clients.some((row) => row.id === enrollment.clientId && row.tenantId === tenantId);
+  if (!owned) return null;
+  return (state.appointments || [])
+    .filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id && row.calendar === "booking_calendar")
+    .map((appointment) => ({
+      id: appointment.id,
+      customerName: appointment.customerName,
+      startsAt: appointment.startsAt,
+      response: appointment.response,
+      outcome: appointment.outcome,
+      status: appointment.status,
+      lastNote: appointment.lastNote,
+      steps: (state.appointmentSteps || [])
+        .filter((step) => step.tenantId === tenantId && step.appointmentId === appointment.id)
+        .map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+          statusLabel: STEP_STATUS_LABEL[step.status],
+          attempts: step.attempts,
+          lastError: step.lastError,
+          nextRunAt: step.nextRunAt,
+          output: step.output,
+          draft: step.draftedMessage,
+          logs: step.logs,
+        })),
+    }));
+}
+
 /** Plain-text client → package → step list for one workspace. */
 export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: string): string {
   const summary = workspaceSummary(state, tenantId);
   const lines: string[] = [];
-  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"}`);
+  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"} · reviews kill switch ${summary?.reviewsKillSwitch ? "on" : "off"} · appointment reminders kill switch ${summary?.appointmentRemindersKillSwitch ? "on" : "off"}`);
   for (const client of clientList(state, tenantId)) {
     lines.push(`Client: ${client.name}`);
     for (const pkg of client.packages) {
@@ -331,6 +428,17 @@ export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: s
         }
         for (const lead of run.leads) {
           lines.push(`      Captured lead: ${lead.contactName} · ${lead.handoffNote}`);
+        }
+      }
+      const reviews = reviewsView(state, tenantId, pkg.enrollmentId);
+      for (const job of reviews?.jobs || []) {
+        lines.push(`    Completed job: ${job.customerName} · ${job.jobLabel}`);
+        lines.push(formatStepReportLine("      ", job.step.title, job.step.statusLabel, job.step.attempts, job.step.lastError, job.step.nextRunAt));
+      }
+      for (const appointment of appointmentViews(state, tenantId, pkg.enrollmentId) || []) {
+        lines.push(`    Appointment: ${appointment.customerName} · ${appointment.startsAt} · ${appointment.status}`);
+        for (const step of appointment.steps) {
+          lines.push(formatStepReportLine("      ", step.title, step.statusLabel, step.attempts, step.lastError, step.nextRunAt));
         }
       }
     }

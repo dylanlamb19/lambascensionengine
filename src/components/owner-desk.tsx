@@ -94,8 +94,10 @@ import { loadFulfillmentLocal, saveFulfillmentLocal } from "@/lib/packages/stora
 import { fakeBilling } from "@/lib/packages/billing";
 import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
 import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
+import { handleAppointmentReply, recordAppointment, setAppointmentRemindersKillSwitch } from "@/lib/packages/appointment-reminders";
 import { setAiVisibilityKillSwitch } from "@/lib/packages/ai-visibility";
 import { captureGeneratedLead, saveClientIntake, setLeadGenerationKillSwitch } from "@/lib/packages/lead-generation";
+import { recordCompletedJob, recordStoredReview, setReviewsKillSwitch } from "@/lib/packages/reviews-gbp";
 import { captureLead, recordLeadReply, setLeadFollowUpKillSwitch } from "@/lib/packages/lead-follow-up";
 import { tickPackagePipelines } from "@/lib/packages/pipelines";
 import { addClient as addPackageClient, recordPurchase, setEnrollmentStatus, setKillSwitch, setPayment } from "@/lib/packages/runner";
@@ -2685,6 +2687,48 @@ export function OwnerDesk() {
             }}
             onLeadGenKill={(on) => mutatePackage(setLeadGenerationKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onAiKill={(on) => mutatePackage(setAiVisibilityKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onReviewsKill={(on) => mutatePackage(setReviewsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onAppointmentsKill={(on) => mutatePackage(setAppointmentRemindersKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onRecordJob={(input) => {
+              const now = new Date().toISOString();
+              const recorded = recordCompletedJob(pkgRef.current, packageTenantId, input, now);
+              if (!recorded.ok) return { ok: false, reason: recorded.reason };
+              const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, {
+                credentials: credentialsFor(recorded.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onRecordStoredReview={(input) => {
+              const now = new Date().toISOString();
+              const recorded = recordStoredReview(pkgRef.current, packageTenantId, input, now);
+              if (!recorded.ok) return { ok: false, reason: recorded.reason };
+              const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, {
+                credentials: credentialsFor(recorded.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onRecordAppointment={(input) => {
+              const now = new Date().toISOString();
+              const recorded = recordAppointment(pkgRef.current, packageTenantId, input, now);
+              if (!recorded.ok) return { ok: false, reason: recorded.reason };
+              const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, {
+                credentials: credentialsFor(recorded.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onAppointmentReply={(input) => {
+              const now = new Date().toISOString();
+              const noted = handleAppointmentReply(pkgRef.current, packageTenantId, input, now);
+              if (!noted.ok) return { ok: false, reason: noted.reason };
+              const ticked = tickPackagePipelines(noted.state, packageTenantId, now, {
+                credentials: credentialsFor(noted.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
           />
         ) : null}
         {!packagesOpen && view === "settings" ? (

@@ -41,6 +41,25 @@ function bodyFor(input: DraftInput): string {
   return `Hi ${name}, last note from ${client} about your inquiry. A person can take it from here if you reply.`;
 }
 
+export type ReviewDraftInput = {
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  clientName: string;
+  jobLabel: string;
+};
+
+export type AppointmentDraftKind = "confirm" | "reminder-24h" | "reminder-2h" | "reschedule" | "no-show";
+
+export type AppointmentDraftInput = {
+  kind: AppointmentDraftKind;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  clientName: string;
+  whenLabel: string;
+};
+
 /** Record the intended message. The return value is a log line, not a delivery. */
 export function draftFollowUp(input: DraftInput): DryRunDraft {
   const email = input.contactEmail.trim();
@@ -50,5 +69,51 @@ export function draftFollowUp(input: DraftInput): DryRunDraft {
   const subject = SUBJECTS[input.stepId];
   const body = bodyFor(input);
   const logLine = `Dry run. Intended message was not sent. To ${to}. Subject: ${subject}. ${body} ${channel} Nothing was sent. Sales outreach was not used.`;
+  return { to, subject, body, logLine };
+}
+
+const REVIEW_EQUAL = "Reviews are not purchased, gated, or filtered. Every completed-job customer is asked the same way.";
+
+/**
+ * The same request for every completed job. No rating, no gate, and no send.
+ */
+export function draftReviewRequest(input: ReviewDraftInput): DryRunDraft {
+  const name = input.customerName.trim() || "there";
+  const client = input.clientName.trim() || "the team";
+  const job = input.jobLabel.trim() || "the completed job";
+  const email = input.customerEmail.trim();
+  const phone = input.customerPhone.trim();
+  const to = email || phone || name;
+  const channel = email ? "Not sent by email." : phone ? "Not sent by text." : "Not sent.";
+  const subject = "How did the job go?";
+  const body = `Hi ${name}, this is ${client}. Your job (${job}) is complete. If you have a minute, a public review helps other customers. Say whatever you think. We ask every customer the same way.`;
+  const logLine = `Dry run. Intended review request was not sent. To ${to}. Subject: ${subject}. ${body} ${channel} Nothing was sent. ${REVIEW_EQUAL} Sales outreach was not used.`;
+  return { to, subject, body, logLine };
+}
+
+const APPOINTMENT_SUBJECTS: Record<AppointmentDraftKind, string> = {
+  confirm: "Your appointment is booked",
+  "reminder-24h": "Appointment tomorrow",
+  "reminder-2h": "Appointment soon",
+  reschedule: "Your appointment time changed",
+  "no-show": "We missed you",
+};
+
+/** A confirmation, reminder, reschedule note, or no-show note. Nothing is sent. */
+export function draftAppointmentMessage(input: AppointmentDraftInput): DryRunDraft {
+  const name = input.customerName.trim() || "there";
+  const client = input.clientName.trim() || "the team";
+  const when = input.whenLabel.trim() || "the booked time";
+  const email = input.customerEmail.trim();
+  const phone = input.customerPhone.trim();
+  const to = email || phone || name;
+  const channel = email ? "Not sent by email." : phone ? "Not sent by text." : "Not sent.";
+  const subject = APPOINTMENT_SUBJECTS[input.kind];
+  const body = input.kind === "no-show"
+    ? `Hi ${name}, this is ${client}. We missed you at ${when}. Reply if you want another time.`
+    : input.kind === "reschedule"
+      ? `Hi ${name}, this is ${client}. The booking is now ${when}. Reply if that time does not work.`
+      : `Hi ${name}, this is ${client}. You are booked for ${when}. Reply to confirm or to ask for a new time.`;
+  const logLine = `Dry run. Intended ${subject.toLowerCase()} was not sent. To ${to}. Subject: ${subject}. ${body} ${channel} Nothing was sent. The owner sales calendar was not read. Sales outreach was not used.`;
   return { to, subject, body, logLine };
 }

@@ -164,7 +164,7 @@ const REVIEWS_GBP: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "Needs a job-complete feed, a client mailbox, and the Google Business Profile API. Reviews are never purchased or filtered.",
+  autonomyNote: "A review request is drafted only after a recorded completed job, and every customer is asked the same way. Nothing is sent. Profile, post, and reply drafts use stored data only. Replies wait for a person. No Google API is called.",
 };
 
 const APPOINTMENTS: ServicePackage = {
@@ -182,7 +182,7 @@ const APPOINTMENTS: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "Needs the client's booking calendar. The owner sales calendar is not written.",
+  autonomyNote: "Reminders use this workspace's booking calendar connection. Confirm, reschedule, 24h, 2h, and no-show notes are dry runs. Quiet hours hold a send until morning. The owner sales calendar is not read.",
 };
 
 const OFFICE: ServicePackage = {
