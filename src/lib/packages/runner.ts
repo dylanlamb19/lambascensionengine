@@ -403,6 +403,8 @@ export function emptyFulfillment(): FulfillmentState {
     invites: [],
     memberships: [],
     usage: [],
+    leads: [],
+    leadSteps: [],
   };
 }
 

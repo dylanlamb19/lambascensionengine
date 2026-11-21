@@ -35,9 +35,10 @@ const LEAD_FOLLOW_UP: ServicePackage = {
   monthlyCents: 35000,
   setupCents: 50000,
   pricingKind: "fixed",
-  summary: "Website inquiry capture, acknowledgments, team notices, follow-ups, and a weekly activity summary.",
+  summary: "Website inquiry capture, a speed-to-lead draft, day 1, day 3, and day 7 follow-up drafts, team notices, and a weekly activity summary.",
   features: [
     "Website inquiry capture",
+    "Speed-to-lead draft, then day 1, day 3, and day 7 follow-ups",
     "Automatic acknowledgments",
     "Team notifications",
     "Follow-ups for unresponsive leads",
@@ -46,7 +47,7 @@ const LEAD_FOLLOW_UP: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "Cadence bookkeeping runs on its own. Acknowledgments and follow-up sends need a client mailbox and do not use the sales outreach worker.",
+  autonomyNote: "The cadence drafts a speed-to-lead reply and day 1, day 3, and day 7 follow-ups into the step log. Nothing is sent, and the sales outreach worker is not used. A Connected (test) mailbox stays needs human.",
 };
 
 const AI_VISIBILITY: ServicePackage = {

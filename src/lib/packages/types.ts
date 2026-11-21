@@ -23,6 +23,8 @@ export type Workspace = {
   planStatus: PlanStatus;
   subscriptionStatus: SubscriptionLifecycle;
   billingMode: "test";
+  /** Stops every Lead Follow-Up lead in this workspace. Other workspaces are untouched. */
+  leadFollowUpKillSwitch: boolean;
 };
 
 export type ServiceClient = {
@@ -141,6 +143,47 @@ export type WorkspaceMembership = {
   status: "accepted";
 };
 
+export type LeadStatus = "active" | "needs_human" | "stopped";
+
+export type LeadStepId = "captured" | "speed-to-lead" | "day-1" | "day-3" | "day-7";
+
+/** One inquiry inside a workspace's Lead Follow-Up enrollment. Not a sales prospect. */
+export type FollowUpLead = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  source: string;
+  status: LeadStatus;
+  capturedAt: string;
+  repliedAt: string | null;
+};
+
+/** One cadence step for a captured lead. Drafts stay on the step. Nothing is sent. */
+export type LeadStepRun = {
+  id: string;
+  tenantId: string;
+  leadId: string;
+  enrollmentId: string;
+  clientId: string;
+  stepId: LeadStepId;
+  title: string;
+  sends: boolean;
+  status: StepStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draftedMessage: string | null;
+  logs: { at: string; message: string }[];
+};
+
 export type FulfillmentState = {
   workspaces: Workspace[];
   clients: ServiceClient[];
@@ -152,6 +195,8 @@ export type FulfillmentState = {
   invites: MarketerInvite[];
   memberships: WorkspaceMembership[];
   usage: TenantUsage[];
+  leads: FollowUpLead[];
+  leadSteps: LeadStepRun[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -165,6 +210,8 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   invites: [],
   memberships: [],
   usage: [],
+  leads: [],
+  leadSteps: [],
 };
 
 export type RecordPurchaseInput = {
