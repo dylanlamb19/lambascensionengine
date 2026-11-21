@@ -156,7 +156,7 @@ export function recordPurchase(
       && row.includedPackageIds.includes(pkg.id),
   );
   if (covered) return { ok: true, state, clientId: client.id, enrollmentId: covered.id };
-  const enrollmentGate = assertEnrollmentAllowed(state, tenantId);
+  const enrollmentGate = assertEnrollmentAllowed(state, tenantId, now);
   if (!enrollmentGate.ok) return { ok: false, state, reason: enrollmentGate.reason };
 
   const enrollment: Enrollment = {
@@ -324,7 +324,7 @@ export function tickFulfillment(
     if (step.tenantId !== tenantId) return step;
     const enrollment = state.enrollments.find((row) => row.id === step.enrollmentId && row.tenantId === tenantId);
     if (!enrollment) return step;
-    const gate = assertPipelineRunAllowed(state, tenantId, runs);
+    const gate = assertPipelineRunAllowed(state, tenantId, runs, now);
     if (!gate.ok) {
       blocked = gate.reason;
       return step;
@@ -482,6 +482,12 @@ export function emptyFulfillment(): FulfillmentState {
     adsChangeNotes: [],
     metaBudgetNotes: [],
     officeWorkflows: [],
+    scaffoldSubscriptions: [],
+    webhookReceipts: [],
+    checkoutSessions: [],
+    portalSessions: [],
+    seatInvites: [],
+    closures: [],
   };
 }
 

@@ -54,6 +54,21 @@ export type AccountMail = {
   at: string;
 };
 
+export type TransactionalKind = "verify" | "reset" | "invite";
+
+/** A row written by the transactional dry-run sender. Nothing was sent. */
+export type TransactionalMail = {
+  id: string;
+  channel: "transactional";
+  kind: TransactionalKind;
+  to: string;
+  subject: string;
+  body: string;
+  mode: "dry_run";
+  tenantId: string | null;
+  at: string;
+};
+
 export type LogoContentType = "image/png" | "image/jpeg" | "image/webp";
 
 export type StoredLogo = {
@@ -71,6 +86,7 @@ export type AccountState = {
   attempts: Attempt[];
   challenges: CsrfChallenge[];
   mail: AccountMail[];
+  transactional: TransactionalMail[];
   logos: StoredLogo[];
 };
 
@@ -89,6 +105,7 @@ export function emptyAccounts(): AccountState {
     attempts: [],
     challenges: [],
     mail: [],
+    transactional: [],
     logos: [],
   };
 }

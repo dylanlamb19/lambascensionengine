@@ -26,6 +26,7 @@ import {
   verifySignup,
 } from "./flow.ts";
 import type { AccountAction } from "./rbac.ts";
+import { tryLayerRoute, type LayerFlags } from "../subscription/dispatch.ts";
 import type { AccountBundle, AccountSession } from "./types.ts";
 import { emptyBundle } from "./types.ts";
 
@@ -37,6 +38,8 @@ export type AccountCall = {
   enabled: boolean;
   sessionId?: string | null;
   csrfToken?: string | null;
+  signature?: string | null;
+  flags?: Partial<LayerFlags>;
   body?: Record<string, unknown> | null;
 };
 
@@ -125,6 +128,22 @@ export function dispatchAccountRoute(bundle: AccountBundle, call: AccountCall): 
       csrfToken,
     }));
   }
+
+  const layered = tryLayerRoute(bundle, {
+    method,
+    path,
+    now,
+    sessionId: call.sessionId,
+    csrfToken,
+    signature: call.signature,
+    body,
+    flags: {
+      billing: call.flags?.billing === true,
+      team: call.flags?.team === true,
+      lifecycle: call.flags?.lifecycle === true,
+    },
+  });
+  if (layered) return layered;
 
   const map: Record<string, { method: "GET" | "POST"; action: AccountAction }> = {
     "/api/account/settings": { method: method === "POST" ? "POST" : "GET", action: method === "POST" ? "settings:write" : "settings:read" },

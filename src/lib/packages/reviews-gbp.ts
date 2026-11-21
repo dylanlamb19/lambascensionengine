@@ -410,7 +410,7 @@ function tickReviewRequests(
     quietLine: QUIET,
     stopReason: `Stopped because an earlier step failed. Needs a person. ${QUIET}`,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   const next = withPipelineCapNotice(

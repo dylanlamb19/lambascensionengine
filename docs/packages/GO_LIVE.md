@@ -12,19 +12,27 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 - Test plans, $0 checkout, and $0 invoices through `fakeBilling`.
 - Connection stubs. They store a status and do not call Google, Meta, or a mailbox.
 - Public Better Auth registration is still disabled (`disableSignUp` remains true).
-- Marketer self-serve signup, verification, password reset, and workspace branding (`SELF_SERVE_SIGNUP: false`). While it is off, `/signup`, `/workspace`, and `/api/account/*` refuse the request and do not create a user, a session, or a mail row. Verification and reset notes, when the flag is on, are dry-run log rows only. They do not use the sales outreach sender.
+- Marketer self-serve signup, verification, password reset, and workspace branding (`SELF_SERVE_SIGNUP: false`). While it is off, `/signup`, `/workspace`, and `/api/account/*` refuse the request and do not create a user, a session, or a mail row. Verification and reset notes, when the flag is on, are dry-run log rows only. They go through the transactional sender, not the sales outreach sender.
+- Transactional mail for verification, password reset, and workspace invites. The default sender writes a dry-run row and sends nothing. It does not import the sales outreach sender, send caps, or suppression list.
+- Billing scaffold (`BILLING_SCAFFOLD: false`): Starter, Pro, and Agency, with seat and client caps, a test checkout, a portal stub, and a signed webhook. While it is off, the new billing routes refuse the request. Amounts stay at $0. A live payment id is refused. No payment key is read from the environment.
+- Team seats (`TEAM_SEATS: false`): invite by email, accept, admin or member, seat cap, remove (sessions revoked), and transfer ownership. While it is off, the team routes refuse the request. The invite is a dry-run transactional note.
+- Workspace export and close (`WORKSPACE_LIFECYCLE: false`). Export is that workspace's rows only. Close signs that workspace out, stops its pipelines, and can be restored for 30 days. While it is off, those routes refuse the request. Owner only, and the form token is required.
 
 ## Owner actions before the first real customer
 
-**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql` through `migrations/0023_self_serve_signup.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows, including `workspace_branding`, `workspace_logos`, and `account_sessions`. Do not apply them from a laptop against production by accident.
+**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql` through `migrations/0024_subscription_team.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows, including `workspace_branding`, `workspace_logos`, `account_sessions`, `scaffold_subscriptions`, `seat_invites`, `transactional_mail`, and `workspace_closures`. Do not apply them from a laptop against production by accident. `0024` was not applied from this change.
 
 **Owner action.** Confirm production sets `app.tenant_id` from the verified session inside each fulfillment transaction (`set_config` with the local flag). A tenant id typed by the browser must not be trusted. This stays scoped to the package request, not to sales outreach.
 
-**Owner action.** Add Stripe test keys only as server environment variables, then run a $0 or test-mode checkout against Stripe's test mode. After that, and only when you accept live charges, replace them with live keys in the same server environment. Do not commit keys, do not put them in `VITE_` variables, and do not paste them into the repo. `fakeBilling` stays the code path until that provider is deliberately wired.
+**Owner action.** Leave `BILLING_SCAFFOLD` off until you mean to exercise the local test checkout. It does not call a payment provider. Do not add a live key, a test key, or any `VITE_` payment variable to turn it on. When you are ready for a real test-mode checkout, add the provider's test keys only as server environment variables, outside this repo, and point a new adapter at them. After that, and only when you accept live charges, replace them with live keys in the same server environment. Do not commit keys. Until that adapter exists, checkout stays on the local scaffold and on `fakeBilling`, both at $0. A live-mode id is refused. A failed test payment moves the workspace to past due and leaves a 7 day grace before the existing plan caps block new clients, packages, and pipeline runs.
 
 **Owner action.** Create the OAuth apps and store refresh tokens server-side, per workspace, for the mailbox, Google Ads, Meta, Google Business Profile, CMS, and the booking calendar. Job and estimate feeds need their own credentials. Do not reuse the owner's sales Gmail or sales calendar tokens for a client's mailbox or booking calendar.
 
-**Owner action.** Leave `disableSignUp` true. Do not turn on Better Auth's public registration. Self-serve signup is the separate `SELF_SERVE_SIGNUP` flag, and it ships off. Leave it off for a real customer while verification is still a dry-run log, because the marketer will not receive the code. Before turning it on: apply `migrations/0023_self_serve_signup.sql` yourself, confirm a workspace A session cannot read or write workspace B through `/api/account/*`, and wire a transactional sender that is not the sales outreach sender. Plan checkout on that path is still `fakeBilling` at $0. Do not add a live payment key to turn the flag on. The owner membership cannot be removed or demoted. Session cookies on this path are `__Host-lae.session` (HttpOnly, Secure, SameSite=Lax, Path=/, no Domain) and rotate on login and when that person's role changes. State-changing account routes require the CSRF token.
+**Owner action.** Leave `disableSignUp` true. Do not turn on Better Auth's public registration. Self-serve signup is the separate `SELF_SERVE_SIGNUP` flag, and it ships off. Leave it off for a real customer while verification is still a dry-run log, because the marketer will not receive the code. The transactional sender is in place and its default writes a log row only. Before turning signup on: apply `migrations/0023_self_serve_signup.sql` and `migrations/0024_subscription_team.sql` yourself, confirm a workspace A session cannot read or write workspace B through `/api/account/*`, and replace the dry-run sender with a provider that is not the sales outreach sender. Do not point that provider at the outreach send caps or suppression list. Plan checkout on the signup path is still `fakeBilling` at $0 unless `BILLING_SCAFFOLD` is also on, and that scaffold is still $0. Do not add a live payment key to turn either flag on. The owner membership cannot be removed or demoted through the old member route. Session cookies on this path are `__Host-lae.session` (HttpOnly, Secure, SameSite=Lax, Path=/, no Domain) and rotate on login, when that person's role changes, and when ownership is transferred. State-changing account routes require the CSRF token.
+
+**Owner action.** Leave `TEAM_SEATS` off for a real customer while invites are still dry-run notes. An invited person will not receive the code. Seat caps are Starter 2, Pro 8, and Agency 25, counting accepted people and pending invites. Removing someone revokes their sessions. Transfer makes the other person the owner and the previous owner an admin.
+
+**Owner action.** Leave `WORKSPACE_LIFECYCLE` off until you have tried export and close on an internal workspace. Export returns that workspace's rows only, with no password hashes. Close is a soft delete: sessions for that workspace are revoked, pipeline kill switches are turned on, and the rows stay so the owner can restore them for 30 days. After that window, restore is refused.
 
 **Owner action.** Turn `PACKAGE_FULFILLMENT` on for one internal workspace first. Watch pipeline health, the $0 billing panel, and that one workspace cannot see another. Then turn it on for real marketers. Leave it off if any owner action above is unfinished.
 
@@ -37,14 +45,15 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 - Per-workspace adapters so a stub "Connected (test)" can actually send, publish, or read ads. Until then, steps stay on "needs human" and name the missing connection. The Lead Follow-Up dry-run already does this for Mailbox.
 - A cron for pipeline ticks when the desk is closed. `tickPackagePipelines` already no-ops while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 - Sentinel, if you want it to page you. The per-tenant health report is `sentinelPackageHealth`. Sentinel itself is not in this branch.
-- Tax, proration, card retry, and dunning. The test lifecycle (trial, active, past due, canceled) does not collect money.
-- Seats beyond a single owner, custom domains, and exporting a workspace when a marketer leaves.
+- Tax, proration, card retry, and dunning. The test lifecycle (trialing, active, past due, canceled) does not collect money. The billing scaffold records those states locally and does not call a payment provider.
+- A real transactional provider, custom domains, and a hosted restore for a workspace whose 30 day window has ended. The seat and export scaffolds are in the tree and stay off.
 
 ## Stop if
 
 - A fulfillment query runs without the session tenant set.
 - Sample workspace names (Harbor Marketing, Prairie Studio) appear in production data.
 - A live Stripe key is in the repo, the browser bundle, or a `VITE_` variable.
-- `SELF_SERVE_SIGNUP` is on while verification mail is still dry-run, or `disableSignUp` was flipped off.
-- A live payment key was added in order to open signup.
-- Client follow-ups start going out through the sales outreach sender.
+- `SELF_SERVE_SIGNUP` or `TEAM_SEATS` is on while verification or invite mail is still dry-run, or `disableSignUp` was flipped off.
+- `BILLING_SCAFFOLD` is treated as permission to charge a card, or a live payment key was added in order to open signup.
+- Client follow-ups, verification, password reset, or invites start going out through the sales outreach sender.
+- Outreach send caps, suppression, or the outreach worker schedule were changed while this layer went in.

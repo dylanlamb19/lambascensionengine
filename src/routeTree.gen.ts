@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
+import { Route as BillingRouteImport } from './routes/billing'
+import { Route as TeamRouteImport } from './routes/team'
 import { Route as BookTokenRouteImport } from './routes/book/$token'
 import { Route as ApiAccountSplatRouteImport } from './routes/api/account/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -33,6 +35,16 @@ const SignupRoute = SignupRouteImport.update({
 const WorkspaceRoute = WorkspaceRouteImport.update({
   id: '/workspace',
   path: '/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamRoute = TeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BookTokenRoute = BookTokenRouteImport.update({
@@ -75,6 +87,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/signup': typeof SignupRoute
   '/workspace': typeof WorkspaceRoute
+  '/billing': typeof BillingRoute
+  '/team': typeof TeamRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -87,6 +101,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/signup': typeof SignupRoute
   '/workspace': typeof WorkspaceRoute
+  '/billing': typeof BillingRoute
+  '/team': typeof TeamRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -100,6 +116,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/signup': typeof SignupRoute
   '/workspace': typeof WorkspaceRoute
+  '/billing': typeof BillingRoute
+  '/team': typeof TeamRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -114,6 +132,8 @@ export interface FileRouteTypes {
     | '/'
     | '/signup'
     | '/workspace'
+    | '/billing'
+    | '/team'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -126,6 +146,8 @@ export interface FileRouteTypes {
     | '/'
     | '/signup'
     | '/workspace'
+    | '/billing'
+    | '/team'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -138,6 +160,8 @@ export interface FileRouteTypes {
     | '/'
     | '/signup'
     | '/workspace'
+    | '/billing'
+    | '/team'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -151,6 +175,8 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SignupRoute: typeof SignupRoute
   WorkspaceRoute: typeof WorkspaceRoute
+  BillingRoute: typeof BillingRoute
+  TeamRoute: typeof TeamRoute
   BookTokenRoute: typeof BookTokenRoute
   ApiAccountSplatRoute: typeof ApiAccountSplatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -181,6 +207,20 @@ declare module '@tanstack/react-router' {
       path: '/workspace'
       fullPath: '/workspace'
       preLoaderRoute: typeof WorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/billing': {
+      id: '/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/team': {
+      id: '/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof TeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/book/$token': {
@@ -239,6 +279,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SignupRoute: SignupRoute,
   WorkspaceRoute: WorkspaceRoute,
+  BillingRoute: BillingRoute,
+  TeamRoute: TeamRoute,
   BookTokenRoute: BookTokenRoute,
   ApiAccountSplatRoute: ApiAccountSplatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

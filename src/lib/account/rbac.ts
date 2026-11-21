@@ -9,7 +9,10 @@ export type AccountAction =
   | "billing:write"
   | "invite"
   | "members:write"
-  | "members:remove";
+  | "members:remove"
+  | "workspace:export"
+  | "workspace:close"
+  | "workspace:restore";
 
 const ALLOWED: Record<AccountAction, readonly DeskRole[]> = {
   "settings:read": ["owner", "admin", "member"],
@@ -19,6 +22,9 @@ const ALLOWED: Record<AccountAction, readonly DeskRole[]> = {
   "invite": ["owner", "admin"],
   "members:write": ["owner"],
   "members:remove": ["owner", "admin"],
+  "workspace:export": ["owner"],
+  "workspace:close": ["owner"],
+  "workspace:restore": ["owner"],
 };
 
 export function deskRole(state: FulfillmentState, userId: string, tenantId: string): DeskRole | null {

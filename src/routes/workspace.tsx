@@ -21,6 +21,7 @@ type SettingsBody = {
   checklist?: { plan?: boolean; brand?: boolean; firstClient?: boolean; firstPackage?: boolean; complete?: boolean };
   billing?: { planName?: string; subscriptionStatus?: string; amountCents?: number; clients?: number; enrollments?: number };
   members?: { userId: string; email: string; role: string }[];
+  csrfToken?: string;
 };
 
 function WorkspacePage() {
@@ -58,6 +59,7 @@ function WorkspaceSettings() {
       return;
     }
     setSettings(body);
+    if (body.csrfToken) setCsrf(body.csrfToken);
     setName(body.brand?.name || "");
     setSender(body.brand?.senderDisplayName || "");
     setPrimary(body.brand?.primary || "#1f6f5b");
@@ -168,10 +170,82 @@ function WorkspaceSettings() {
                 <li key={member.userId}>{member.email} · {member.role}</li>
               ))}
             </ul>
+            <p className="mt-3 text-sm"><a href="/team">Team page</a> · <a href="/billing">Billing page</a></p>
           </section>
+          <DangerZone csrf={csrf} onMessage={setMessage} />
         </>
       )}
       {message ? <p className="mt-4 text-sm text-muted">{message}</p> : null}
     </main>
+  );
+}
+
+function DangerZone({ csrf, onMessage }: { csrf: string; onMessage: (value: string) => void }) {
+  const [confirm, setConfirm] = useState("");
+  if (!FLAGS.WORKSPACE_LIFECYCLE) {
+    return (
+      <section className="la-card mt-4" data-danger-zone="closed">
+        <h2 className="font-display text-xl">Danger zone</h2>
+        <p className="mt-3 text-sm text-muted">Export and closing this workspace stay off.</p>
+      </section>
+    );
+  }
+
+  async function post(path: string, extra: Record<string, string> = {}) {
+    const response = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", "x-csrf-token": csrf },
+      body: JSON.stringify({ ...extra, csrfToken: csrf }),
+    });
+    const body = (await response.json()) as { reason?: string; restoreUntil?: string };
+    return { response, body };
+  }
+
+  async function onExport() {
+    const { response, body } = await post("/api/account/workspace/export");
+    if (!response.ok) {
+      onMessage(body.reason || "The export was not created.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify(body, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "workspace.json";
+    link.click();
+    URL.revokeObjectURL(url);
+    onMessage("Export downloaded for this workspace.");
+  }
+
+  async function onClose(event: FormEvent) {
+    event.preventDefault();
+    if (confirm.trim().toLowerCase() !== "close") {
+      onMessage("Type close to confirm.");
+      return;
+    }
+    const { response, body } = await post("/api/account/workspace/close");
+    onMessage(response.ok ? `Workspace closed. It can be restored until ${body.restoreUntil}.` : body.reason || "The workspace was not closed.");
+  }
+
+  async function onRestore() {
+    const { response, body } = await post("/api/account/workspace/restore");
+    onMessage(response.ok ? "Workspace restored." : body.reason || "The workspace was not restored.");
+  }
+
+  return (
+    <section className="la-card mt-4" data-danger-zone="open">
+      <h2 className="font-display text-xl">Danger zone</h2>
+      <p className="mt-2 text-sm text-muted">Export is this workspace only. Closing signs everyone out and stops pipelines. You can restore it for 30 days.</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="la-btn" type="button" onClick={() => void onExport()}>Download export</button>
+        <button className="la-btn" type="button" onClick={() => void onRestore()}>Restore</button>
+      </div>
+      <form className="mt-4" onSubmit={onClose}>
+        <label className="la-label" htmlFor="ws-close">Type close to confirm</label>
+        <input id="ws-close" className="la-field mb-3" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+        <button className="la-btn" type="submit">Close workspace</button>
+      </form>
+    </section>
   );
 }

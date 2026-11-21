@@ -342,7 +342,41 @@ export function guardSession(
   }
   const role = deskRole(bundle.fulfillment, session.userId, session.tenantId);
   if (!role || !roleAllows(role, input.action)) return fail(bundle, 403, "You cannot change that.");
+  const workspace = workspaceFor(bundle.fulfillment, session.tenantId);
+  if (workspace?.closedAt && input.action !== "workspace:restore" && input.action !== "workspace:export") {
+    return fail(bundle, 403, "This workspace is closed.");
+  }
   return { session };
+}
+
+export function replaceUserSession(bundle: AccountBundle, userId: string, tenantId: string, now: string): FlowResult {
+  const workspace = workspaceFor(bundle.fulfillment, tenantId);
+  if (!workspace) return fail(bundle, 404, "That workspace is not open.");
+  if (workspace.closedAt) return fail(bundle, 403, "This workspace is closed.");
+  const role = deskRole(bundle.fulfillment, userId, tenantId);
+  if (!role) return fail(bundle, 403, "You are not in that workspace.");
+  const previous = bundle.accounts.sessions.find((row) => row.userId === userId)?.id || null;
+  const session: AccountSession = {
+    id: newId(),
+    userId,
+    tenantId,
+    role,
+    csrfToken: newId() + newId(),
+    createdAt: now,
+    rotatedFrom: previous,
+  };
+  return done(
+    {
+      ...bundle,
+      accounts: {
+        ...bundle.accounts,
+        sessions: [...bundle.accounts.sessions.filter((row) => row.userId !== userId), session],
+      },
+    },
+    200,
+    { ok: true, csrfToken: session.csrfToken, tenantId, role },
+    { "Set-Cookie": sessionCookie(session.id) },
+  );
 }
 
 function asGuard(value: FlowResult | { session: AccountSession }): value is FlowResult {
@@ -364,6 +398,7 @@ export function readSettings(bundle: AccountBundle, session: AccountSession): Fl
     checklist,
     billing,
     members,
+    csrfToken: session.csrfToken,
   });
 }
 

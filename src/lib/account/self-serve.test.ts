@@ -636,7 +636,7 @@ test("the http route parses a signup request and row security hides the other wo
   assert.equal(posted.bundle.accounts.users.length, 0);
 
   const pg = new PGlite();
-  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql", "0022_meta_office_bundle.sql", "0023_self_serve_signup.sql"]) {
+  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql", "0022_meta_office_bundle.sql", "0023_self_serve_signup.sql", "0024_subscription_team.sql"]) {
     await pg.exec(readFileSync(join(root, "migrations", name), "utf8"));
   }
   await pg.exec(`

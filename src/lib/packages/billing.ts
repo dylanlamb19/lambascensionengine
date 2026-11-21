@@ -1,6 +1,7 @@
 import { getTestPlan, isTestPlanId, type TestPlanId } from "./plans.ts";
 import { selectTestPlan, workspaceFor } from "./tenancy.ts";
 import type { BillingEvent, FulfillmentState, SubscriptionLifecycle, TestInvoice } from "./types.ts";
+import { scaffoldAccessBlock } from "./usage.ts";
 
 export const SUBSCRIPTION_EDGES: Record<SubscriptionLifecycle, readonly SubscriptionLifecycle[]> = {
   trial: ["active", "canceled"],
@@ -56,6 +57,8 @@ export const fakeBilling: BillingProvider = {
     if (!workspace || workspace.billingMode !== "test") {
       return { ok: false, state, reason: "Open this marketer's workspace before recording a purchase." };
     }
+    const blocked = scaffoldAccessBlock(state, tenantId, now);
+    if (blocked) return { ok: false, state, reason: blocked };
     const limit = getTestPlan(workspace.planId).clientLimit;
     const owned = state.clients.filter((row) => row.tenantId === tenantId).length;
     if (limit != null && owned >= limit) {

@@ -241,7 +241,7 @@ export function tickPackageRun(
     quietLine: spec.quietLine,
     stopReason: spec.stopReason,
     runs: usageFor(opened, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(opened, tenantId, runs),
+    allow: (runs) => assertPipelineRunAllowed(opened, tenantId, runs, now),
   });
   const openedChanged = opened !== state;
   if (tick.unchanged && !openedChanged) return { state, advanced: 0 };

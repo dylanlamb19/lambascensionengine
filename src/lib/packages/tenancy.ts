@@ -65,6 +65,12 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     adsChangeNotes: (state.adsChangeNotes || []).filter((row) => row.tenantId === tenantId),
     metaBudgetNotes: (state.metaBudgetNotes || []).filter((row) => row.tenantId === tenantId),
     officeWorkflows: (state.officeWorkflows || []).filter((row) => row.tenantId === tenantId),
+    scaffoldSubscriptions: (state.scaffoldSubscriptions || []).filter((row) => row.tenantId === tenantId),
+    webhookReceipts: (state.webhookReceipts || []).filter((row) => row.tenantId === tenantId),
+    checkoutSessions: (state.checkoutSessions || []).filter((row) => row.tenantId === tenantId),
+    portalSessions: (state.portalSessions || []).filter((row) => row.tenantId === tenantId),
+    seatInvites: (state.seatInvites || []).filter((row) => row.tenantId === tenantId),
+    closures: (state.closures || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -102,6 +108,12 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     adsChangeNotes: [...(state.adsChangeNotes || []).filter((row) => row.tenantId !== tenantId), ...safe.adsChangeNotes],
     metaBudgetNotes: [...(state.metaBudgetNotes || []).filter((row) => row.tenantId !== tenantId), ...safe.metaBudgetNotes],
     officeWorkflows: [...(state.officeWorkflows || []).filter((row) => row.tenantId !== tenantId), ...safe.officeWorkflows],
+    scaffoldSubscriptions: [...(state.scaffoldSubscriptions || []).filter((row) => row.tenantId !== tenantId), ...safe.scaffoldSubscriptions],
+    webhookReceipts: [...(state.webhookReceipts || []).filter((row) => row.tenantId !== tenantId), ...safe.webhookReceipts],
+    checkoutSessions: [...(state.checkoutSessions || []).filter((row) => row.tenantId !== tenantId), ...safe.checkoutSessions],
+    portalSessions: [...(state.portalSessions || []).filter((row) => row.tenantId !== tenantId), ...safe.portalSessions],
+    seatInvites: [...(state.seatInvites || []).filter((row) => row.tenantId !== tenantId), ...safe.seatInvites],
+    closures: [...(state.closures || []).filter((row) => row.tenantId !== tenantId), ...safe.closures],
   };
 }
 

@@ -328,7 +328,7 @@ export function tickAppointments(
     quietLine: QUIET,
     stopReason: STOP,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   let steps = tick.steps;

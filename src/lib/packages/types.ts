@@ -47,6 +47,81 @@ export type Workspace = {
   brandAccent?: string;
   senderDisplayName?: string;
   timezone?: string;
+  /** Set while the owner has closed this workspace. Rows stay in place. */
+  closedAt?: string | null;
+  restoreUntil?: string | null;
+};
+
+export type ScaffoldPlanId = "starter" | "pro" | "agency";
+export type ScaffoldStatus = "trialing" | "active" | "past_due" | "canceled";
+
+/** Test-mode subscription recorded by the billing scaffold. Amounts stay at zero. */
+export type ScaffoldSubscription = {
+  tenantId: string;
+  planId: ScaffoldPlanId;
+  status: ScaffoldStatus;
+  customerId: string;
+  subscriptionId: string;
+  graceUntil: string | null;
+  billingMode: "test";
+  updatedAt: string;
+};
+
+export type WebhookReceipt = {
+  id: string;
+  tenantId: string;
+  type: string;
+  at: string;
+};
+
+export type CheckoutSessionRecord = {
+  id: string;
+  tenantId: string;
+  planId: ScaffoldPlanId;
+  amountCents: 0;
+  billingMode: "test";
+  status: "open" | "complete";
+  createdAt: string;
+};
+
+export type PortalSessionRecord = {
+  id: string;
+  tenantId: string;
+  url: string;
+  billingMode: "test";
+  createdAt: string;
+};
+
+export type SeatInvite = {
+  id: string;
+  tenantId: string;
+  email: string;
+  role: "admin" | "member";
+  tokenHash: string;
+  expiresAt: string;
+  usedAt: string | null;
+  invitedByUserId: string;
+  createdAt: string;
+};
+
+export type ClosureSnapshot = {
+  id: string;
+  tenantId: string;
+  closedAt: string;
+  restoreUntil: string;
+  restoredAt: string | null;
+  kills: {
+    leadFollowUpKillSwitch: boolean;
+    leadGenerationKillSwitch: boolean;
+    aiVisibilityKillSwitch: boolean;
+    reviewsKillSwitch: boolean;
+    appointmentRemindersKillSwitch: boolean;
+    estimateFollowUpsKillSwitch: boolean;
+    googleAdsKillSwitch: boolean;
+    metaAdsKillSwitch: boolean;
+    officeAutomationKillSwitch: boolean;
+  };
+  enrollmentKills: { id: string; killSwitch: boolean }[];
 };
 
 export type ServiceClient = {
@@ -496,6 +571,12 @@ export type FulfillmentState = {
   adsChangeNotes: AdsChangeNote[];
   metaBudgetNotes: MetaBudgetNote[];
   officeWorkflows: OfficeWorkflow[];
+  scaffoldSubscriptions: ScaffoldSubscription[];
+  webhookReceipts: WebhookReceipt[];
+  checkoutSessions: CheckoutSessionRecord[];
+  portalSessions: PortalSessionRecord[];
+  seatInvites: SeatInvite[];
+  closures: ClosureSnapshot[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -526,6 +607,12 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   adsChangeNotes: [],
   metaBudgetNotes: [],
   officeWorkflows: [],
+  scaffoldSubscriptions: [],
+  webhookReceipts: [],
+  checkoutSessions: [],
+  portalSessions: [],
+  seatInvites: [],
+  closures: [],
 };
 
 export type RecordPurchaseInput = {

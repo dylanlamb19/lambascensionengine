@@ -17,11 +17,29 @@ export function writeUsage(state: FulfillmentState, usage: TenantUsage): Fulfill
   return { ...state, usage: [...rest, usage] };
 }
 
-export function assertEnrollmentAllowed(state: FulfillmentState, tenantId: string): { ok: true } | { ok: false; reason: string } {
+/**
+ * Extra block for a scaffold subscription or a closed workspace.
+ * Workspaces with no scaffold row keep the previous metering rules.
+ */
+export function scaffoldAccessBlock(state: FulfillmentState, tenantId: string, now?: string): string | null {
+  const workspace = workspaceFor(state, tenantId);
+  if (workspace?.closedAt) return "This workspace is closed. Nothing was changed.";
+  const sub = (state.scaffoldSubscriptions || []).find((row) => row.tenantId === tenantId);
+  if (!sub) return null;
+  if (sub.status === "canceled") return "This test subscription is canceled. No charge was attempted.";
+  if (sub.status === "past_due" && sub.graceUntil && now && now > sub.graceUntil) {
+    return "The grace period for this test subscription has ended. No charge was attempted.";
+  }
+  return null;
+}
+
+export function assertEnrollmentAllowed(state: FulfillmentState, tenantId: string, now?: string): { ok: true } | { ok: false; reason: string } {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace || workspace.billingMode !== "test") {
     return { ok: false, reason: "Open this marketer's workspace before recording a purchase." };
   }
+  const blocked = scaffoldAccessBlock(state, tenantId, now);
+  if (blocked) return { ok: false, reason: blocked };
   if (workspace.subscriptionStatus === "canceled") {
     return { ok: false, reason: "This test subscription is canceled. No package was added and no charge was attempted." };
   }
@@ -33,9 +51,11 @@ export function assertEnrollmentAllowed(state: FulfillmentState, tenantId: strin
   return { ok: true };
 }
 
-export function assertPipelineRunAllowed(state: FulfillmentState, tenantId: string, runsSoFar: number): { ok: true } | { ok: false; reason: string } {
+export function assertPipelineRunAllowed(state: FulfillmentState, tenantId: string, runsSoFar: number, now?: string): { ok: true } | { ok: false; reason: string } {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace) return { ok: false, reason: "That workspace is not open." };
+  const blocked = scaffoldAccessBlock(state, tenantId, now);
+  if (blocked) return { ok: false, reason: blocked };
   if (workspace.subscriptionStatus === "canceled") {
     return { ok: false, reason: "This test subscription is canceled. The pipeline did not run and no charge was attempted." };
   }

@@ -1,16 +1,24 @@
-import { newId } from "./crypto.ts";
+import { deliverTransactional } from "../transactional/send.ts";
 import type { AccountMail, AccountState } from "./types.ts";
 
 /**
- * Account mail is a dry-run log. It does not import a sender,
- * does not read send caps, and does not open a network connection.
+ * Account mail goes through the transactional dry-run sender.
+ * It does not import the sales outreach sender, send caps, or suppression list.
  */
 export function logAccountMail(
   accounts: AccountState,
-  input: { kind: AccountMail["kind"]; to: string; subject: string; body: string; at: string },
+  input: { kind: AccountMail["kind"]; to: string; subject: string; body: string; at: string; tenantId?: string | null },
 ): { accounts: AccountState; mail: AccountMail } {
+  const delivered = deliverTransactional(accounts.transactional || [], {
+    kind: input.kind,
+    to: input.to,
+    subject: input.subject,
+    body: input.body,
+    tenantId: input.tenantId ?? null,
+    at: input.at,
+  });
   const mail: AccountMail = {
-    id: newId(),
+    id: delivered.message.id,
     kind: input.kind,
     to: input.to,
     subject: input.subject,
@@ -18,7 +26,10 @@ export function logAccountMail(
     mode: "dry_run",
     at: input.at,
   };
-  return { mail, accounts: { ...accounts, mail: [...accounts.mail, mail] } };
+  return {
+    mail,
+    accounts: { ...accounts, mail: [...accounts.mail, mail], transactional: delivered.log },
+  };
 }
 
 export function verificationNote(token: string, workspaceName: string): { subject: string; body: string } {

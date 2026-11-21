@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql` through `migrations/0023_self_serve_signup.sql` is a file only. It was not applied to a hosted database from this change. `SELF_SERVE_SIGNUP` is a separate switch and stays off. It does not turn on Better Auth public registration.
+The SQL in `migrations/0015_client_packages.sql` through `migrations/0024_subscription_team.sql` is a file only. It was not applied to a hosted database from this change. `SELF_SERVE_SIGNUP`, `BILLING_SCAFFOLD`, `TEAM_SEATS`, and `WORKSPACE_LIFECYCLE` stay off. None of them turns on Better Auth public registration.
 
 ## Two products, one engine
 
@@ -289,6 +289,15 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `package_runs.package_id` also allows `google-ads`
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
 
+`migrations/0024_subscription_team.sql` (file only, not applied):
+
+- `transactional_mail` — verification, password reset, and invite rows. `mode` is constrained to `dry_run`. There is no provider key
+- `scaffold_subscriptions`, `scaffold_checkout_sessions`, `scaffold_portal_sessions`, and `scaffold_webhook_receipts` — test-mode billing. Checkout amount is constrained to 0. There is no payment key
+- `seat_invites` — hashed invite token, expiry, and a single `used_at`
+- `workspace_closures` — close time and the 30 day restore deadline
+- The one-owner unique key on `marketer_workspaces.owner_user_id` is dropped so ownership can move to someone who already has a workspace
+- Forced row-level security, same `app.tenant_id` rule
+
 `migrations/0023_self_serve_signup.sql` (file only, not applied):
 
 - `workspace_branding` and `workspace_logos` for one workspace's name colors, sender, timezone, and a small logo
@@ -330,14 +339,14 @@ The running desk uses the in-memory and browser store above. It does not query t
 1. **Marketer accounts.** Public signup is still disabled on purpose. The onboarding hook must be called only after a verified session exists. Turning on self-serve registration, email verification, and password reset is separate work and must not weaken the current owner-desk signup lock by accident.
 2. **Server-side isolation in production.** The request path sets `app.tenant_id` from the verified session for a package transaction, and the RLS file exists. Production still needs that migration applied on purpose before the policies are in force.
 3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
-4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
-5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
+4. **Real subscription billing.** `BillingProvider`, `fakeBilling`, and the billing scaffold record plan choices and webhook notices at zero cents. The scaffold is behind `BILLING_SCAFFOLD` and stays off. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
+5. **A delivered invite.** Seat invites, roles, and ownership transfer are behind `TEAM_SEATS` and stay off. The invite is a dry-run transactional note, so the person is not emailed yet.
 6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. Estimate follow-ups draft from a recorded open estimate. Google Ads drafts a plan from stored intake and a weekly report from stored figures. Meta Ads drafts creative, audience, a plan-cap check, and an approval gate from stored intake. Office Automation drafts intake, a schedule, a reminder, and a fakeBilling invoice reminder. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 9. **Sentinel.** `sentinelPackageHealth` is the per-tenant report, including `summary`: running, failed, needs-human, and killed counts for each of the ten pipelines. Sentinel itself is not in this branch, and nothing here disables it. Calling the report does not start or stop a pipeline.
 10. **Client-facing report delivery, landing-page hosting, and structured-data edits.** Lead Generation and AI Visibility now draft the brief, page, ad copy, schema, and reports. Launch and the recommendation check stay needs human. Publishing does not.
-11. **Custom domains, audit export, and tenant offboarding.** Not started. Cancelling an enrollment stops its pipeline. It does not export or delete a workspace.
+11. **Custom domains and a permanent delete.** Export and a 30 day close/restore are behind `WORKSPACE_LIFECYCLE` and stay off. Cancelling an enrollment still stops only that pipeline. Close stops the workspace's pipelines and keeps the rows until the restore window ends.
 12. **Legal and packaging.** Plan names in the scaffold are test labels, not the public price page. The ten service prices live in the catalog so a future plan can include them without inventing a fee at runtime.
 
 ## Blockers

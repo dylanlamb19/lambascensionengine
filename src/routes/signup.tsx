@@ -111,7 +111,7 @@ function SignupForm() {
         <p className="la-kicker">Lamb Ascension</p>
         <h1 className="font-display mt-2 text-3xl">Open a workspace</h1>
         <p className="mt-3 mb-5 text-sm text-muted">
-          Test mode only. The plan is recorded at $0. Verification stays in the dry-run log until a separate sender is wired. Sales outreach is not used.
+          Test mode only. The plan is recorded at $0. Verification is recorded by the transactional dry-run sender. Nothing is sent, and sales outreach is not used.
         </p>
         {step === "form" ? (
           <form onSubmit={onSignup}>

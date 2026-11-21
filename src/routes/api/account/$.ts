@@ -5,7 +5,11 @@ import { FLAGS } from "@/lib/flags";
 
 async function respond(request: Request): Promise<Response> {
   const current = readAccountBundle();
-  const result = await handleAccountHttp(request, FLAGS.SELF_SERVE_SIGNUP, current);
+  const result = await handleAccountHttp(request, FLAGS.SELF_SERVE_SIGNUP, current, {
+    billing: FLAGS.BILLING_SCAFFOLD,
+    team: FLAGS.TEAM_SEATS,
+    lifecycle: FLAGS.WORKSPACE_LIFECYCLE,
+  });
   if (result.bundle !== current) writeAccountBundle(result.bundle);
   return result.response;
 }

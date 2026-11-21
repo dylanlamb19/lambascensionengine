@@ -1,8 +1,14 @@
 import { readCookie, SESSION_COOKIE_NAME } from "./crypto.ts";
 import { dispatchAccountRoute, type AccountReply } from "./routes.ts";
+import type { LayerFlags } from "../subscription/dispatch.ts";
 import type { AccountBundle } from "./types.ts";
 
-export async function handleAccountHttp(request: Request, enabled: boolean, bundle: AccountBundle): Promise<{ response: Response; bundle: AccountBundle }> {
+export async function handleAccountHttp(
+  request: Request,
+  enabled: boolean,
+  bundle: AccountBundle,
+  flags: LayerFlags = { billing: false, team: false, lifecycle: false },
+): Promise<{ response: Response; bundle: AccountBundle }> {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "POST") {
@@ -20,7 +26,7 @@ export async function handleAccountHttp(request: Request, enabled: boolean, bund
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
           return { bundle, response: Response.json({ ok: false, reason: "That request could not be read." }, { status: 400 }) };
         }
-        body = parsed as Record<string, unknown>;
+        body = { ...(parsed as Record<string, unknown>), raw: text };
       } catch {
         return { bundle, response: Response.json({ ok: false, reason: "That request could not be read." }, { status: 400 }) };
       }
@@ -34,6 +40,8 @@ export async function handleAccountHttp(request: Request, enabled: boolean, bund
     enabled,
     sessionId: readCookie(request.headers.get("cookie"), SESSION_COOKIE_NAME),
     csrfToken: request.headers.get("x-csrf-token") || (typeof body?.csrfToken === "string" ? body.csrfToken : null),
+    signature: request.headers.get("x-scaffold-signature"),
+    flags,
     body,
   });
   const headers = new Headers({ "content-type": "application/json; charset=utf-8" });
