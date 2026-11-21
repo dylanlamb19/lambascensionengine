@@ -53,23 +53,28 @@ export function sentinelPackageHealth(
       const packageSteps = (state.packageRunSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
       const reviewSteps = (state.reviewRequestSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
       const appointmentSteps = (state.appointmentSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
+      const estimateSteps = (state.estimateSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
       const needsHuman = steps.filter((step) => step.status === "needs_human").length
         + leadSteps.filter((step) => step.status === "needs_human").length
         + packageSteps.filter((step) => step.status === "needs_human").length
         + reviewSteps.filter((step) => step.status === "needs_human").length
-        + appointmentSteps.filter((step) => step.status === "needs_human").length;
+        + appointmentSteps.filter((step) => step.status === "needs_human").length
+        + estimateSteps.filter((step) => step.status === "needs_human").length;
       const failed = steps.filter((step) => step.status === "failed").length
         + leadSteps.filter((step) => step.status === "failed").length
         + packageSteps.filter((step) => step.status === "failed").length
         + reviewSteps.filter((step) => step.status === "failed").length
-        + appointmentSteps.filter((step) => step.status === "failed").length;
-      const watched = [...steps, ...leadSteps, ...packageSteps, ...reviewSteps, ...appointmentSteps];
+        + appointmentSteps.filter((step) => step.status === "failed").length
+        + estimateSteps.filter((step) => step.status === "failed").length;
+      const watched = [...steps, ...leadSteps, ...packageSteps, ...reviewSteps, ...appointmentSteps, ...estimateSteps];
       const finished = watched.map((step) => step.finishedAt).filter((value): value is string => Boolean(value)).sort();
       const workspaceStopped = (enrollment.packageId === "lead-follow-up" && workspace?.leadFollowUpKillSwitch === true)
         || (enrollment.packageId === "lead-generation" && workspace?.leadGenerationKillSwitch === true)
         || (enrollment.packageId === "ai-visibility" && workspace?.aiVisibilityKillSwitch === true)
         || (enrollment.packageId === "reviews-gbp" && workspace?.reviewsKillSwitch === true)
-        || (enrollment.packageId === "appointment-reminders" && workspace?.appointmentRemindersKillSwitch === true);
+        || (enrollment.packageId === "appointment-reminders" && workspace?.appointmentRemindersKillSwitch === true)
+        || (enrollment.packageId === "estimate-follow-ups" && workspace?.estimateFollowUpsKillSwitch === true)
+        || (enrollment.packageId === "google-ads" && workspace?.googleAdsKillSwitch === true);
       let health: SentinelPipelineHealth = "idle";
       if (!enabled) health = "disabled";
       else if (enrollment.killSwitch || enrollment.status !== "active" || workspaceStopped) health = "stopped";

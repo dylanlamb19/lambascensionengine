@@ -140,6 +140,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
   aiVisibilityKillSwitch: boolean;
   reviewsKillSwitch: boolean;
   appointmentRemindersKillSwitch: boolean;
+  estimateFollowUpsKillSwitch: boolean;
+  googleAdsKillSwitch: boolean;
   clientLimit: number | null;
   connections: { kind: string; label: string; status: "missing" | "stub_connected" }[];
 } | null {
@@ -156,6 +158,8 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
     aiVisibilityKillSwitch: workspace.aiVisibilityKillSwitch === true,
     reviewsKillSwitch: workspace.reviewsKillSwitch === true,
     appointmentRemindersKillSwitch: workspace.appointmentRemindersKillSwitch === true,
+    estimateFollowUpsKillSwitch: workspace.estimateFollowUpsKillSwitch === true,
+    googleAdsKillSwitch: workspace.googleAdsKillSwitch === true,
     clientLimit: getTestPlan(workspace.planId).clientLimit,
     connections: listConnections(state, tenantId).map((row) => ({ kind: row.kind, label: row.label, status: row.status })),
   };
@@ -245,6 +249,8 @@ export type PackageRunView = {
   status: string;
   steps: PackageRunStepView[];
   leads: GeneratedLeadView[];
+  metrics: { id: string; periodLabel: string; line: string }[];
+  changeNote: { summary: string; ambiguous: boolean; status: string } | null;
   intake: {
     businessName: string;
     phone: string;
@@ -291,6 +297,21 @@ export function packageRunViews(state: FulfillmentState, tenantId: string, enrol
             handoffNote: row.handoffNote,
           }))
       : [],
+    metrics: run.packageId === "google-ads"
+      ? (state.adsMetrics || [])
+          .filter((row) => row.tenantId === tenantId && row.clientId === enrollment.clientId && row.source === "stored")
+          .map((row) => ({
+            id: row.id,
+            periodLabel: row.periodLabel,
+            line: `Impressions ${row.impressions ?? "UNKNOWN"} · clicks ${row.clicks ?? "UNKNOWN"} · conversions ${row.conversions ?? "UNKNOWN"} · spend ${row.spendCents == null ? "UNKNOWN" : row.spendCents}`,
+          }))
+      : [],
+    changeNote: run.packageId === "google-ads"
+      ? (() => {
+          const note = (state.adsChangeNotes || []).find((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id);
+          return note ? { summary: note.summary, ambiguous: note.ambiguous, status: note.status } : null;
+        })()
+      : null,
     steps: (state.packageRunSteps || [])
       .filter((step) => step.tenantId === tenantId && step.runId === run.id)
       .map((step) => ({
@@ -368,6 +389,50 @@ export type AppointmentItemView = {
   steps: PackageRunStepView[];
 };
 
+export type EstimateItemView = {
+  id: string;
+  customerName: string;
+  label: string;
+  openedAt: string;
+  outcome: string;
+  status: string;
+  lastNote: string;
+  steps: PackageRunStepView[];
+};
+
+/** Open estimates on one Estimate Follow-Ups package. Null when that enrollment is not in this workspace. */
+export function estimateViews(state: FulfillmentState, tenantId: string, enrollmentId: string): EstimateItemView[] | null {
+  const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
+  if (!enrollment || enrollment.packageId !== "estimate-follow-ups") return null;
+  const owned = state.clients.some((row) => row.id === enrollment.clientId && row.tenantId === tenantId);
+  if (!owned) return null;
+  return (state.estimates || [])
+    .filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id)
+    .map((estimate) => ({
+      id: estimate.id,
+      customerName: estimate.customerName,
+      label: estimate.label,
+      openedAt: estimate.openedAt,
+      outcome: estimate.outcome,
+      status: estimate.status,
+      lastNote: estimate.lastNote,
+      steps: (state.estimateSteps || [])
+        .filter((step) => step.tenantId === tenantId && step.estimateId === estimate.id)
+        .map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+          statusLabel: STEP_STATUS_LABEL[step.status],
+          attempts: step.attempts,
+          lastError: step.lastError,
+          nextRunAt: step.nextRunAt,
+          output: step.output,
+          draft: step.draftedMessage,
+          logs: step.logs,
+        })),
+    }));
+}
+
 /** Appointments on one Appointment Reminders package. Null when that enrollment is not in this workspace. */
 export function appointmentViews(state: FulfillmentState, tenantId: string, enrollmentId: string): AppointmentItemView[] | null {
   const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
@@ -405,7 +470,7 @@ export function appointmentViews(state: FulfillmentState, tenantId: string, enro
 export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: string): string {
   const summary = workspaceSummary(state, tenantId);
   const lines: string[] = [];
-  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"} · reviews kill switch ${summary?.reviewsKillSwitch ? "on" : "off"} · appointment reminders kill switch ${summary?.appointmentRemindersKillSwitch ? "on" : "off"}`);
+  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"} · reviews kill switch ${summary?.reviewsKillSwitch ? "on" : "off"} · appointment reminders kill switch ${summary?.appointmentRemindersKillSwitch ? "on" : "off"} · estimate follow-ups kill switch ${summary?.estimateFollowUpsKillSwitch ? "on" : "off"} · google ads kill switch ${summary?.googleAdsKillSwitch ? "on" : "off"}`);
   for (const client of clientList(state, tenantId)) {
     lines.push(`Client: ${client.name}`);
     for (const pkg of client.packages) {
@@ -434,6 +499,12 @@ export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: s
       for (const job of reviews?.jobs || []) {
         lines.push(`    Completed job: ${job.customerName} · ${job.jobLabel}`);
         lines.push(formatStepReportLine("      ", job.step.title, job.step.statusLabel, job.step.attempts, job.step.lastError, job.step.nextRunAt));
+      }
+      for (const estimate of estimateViews(state, tenantId, pkg.enrollmentId) || []) {
+        lines.push(`    Estimate: ${estimate.customerName} · ${estimate.label} · ${estimate.outcome}`);
+        for (const step of estimate.steps) {
+          lines.push(formatStepReportLine("      ", step.title, step.statusLabel, step.attempts, step.lastError, step.nextRunAt));
+        }
       }
       for (const appointment of appointmentViews(state, tenantId, pkg.enrollmentId) || []) {
         lines.push(`    Appointment: ${appointment.customerName} · ${appointment.startsAt} · ${appointment.status}`);

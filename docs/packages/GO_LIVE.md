@@ -6,6 +6,7 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 
 - Package catalog, pipelines, and the Client Package Fulfillment tab (`PACKAGE_FULFILLMENT: false`).
 - Lead Follow-Up cadence (capture, speed-to-lead draft, day 1/3/7). The sender is dry-run only. `tickPackagePipelines` does nothing while the flag is off. No cron was added.
+- Estimate Follow-Ups (day 2, day 5, day 10, close-out) and Google Ads drafts (campaign plan, stored-metric weekly report, change proposal). Both are dry runs. No Google Ads API call and no spend.
 - Workspace isolation in the library, plus forced row-level security in `migrations/0017_tenant_rls.sql` (file only).
 - Request path that sets `app.tenant_id` from the verified session for one transaction (`scopePackageTenantFn`). It does not run while the flag is off.
 - Test plans, $0 checkout, and $0 invoices through `fakeBilling`.

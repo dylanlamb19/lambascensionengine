@@ -29,7 +29,7 @@ export type PackageRunOutcome = { outcome: CadenceOutcome; patch?: Partial<Packa
 export type PackageRunSpec = {
   packageId: PackageRunId;
   steps: readonly PackageStepDef[];
-  killField: "leadGenerationKillSwitch" | "aiVisibilityKillSwitch" | "reviewsKillSwitch";
+  killField: "leadGenerationKillSwitch" | "aiVisibilityKillSwitch" | "reviewsKillSwitch" | "googleAdsKillSwitch";
   quietLine: string;
   stopReason: string;
   killMessage: string;

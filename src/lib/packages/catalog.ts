@@ -85,7 +85,7 @@ const GOOGLE_ADS: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "The setup checklist and report shell run without the API. Live account changes need the Google Ads API.",
+  autonomyNote: "The campaign plan, weekly report, and change proposal are drafts from stored intake and stored metrics. A change stays needs human until a person approves it. No Google Ads API is called and no spend is set. The connection is this workspace's stub.",
 };
 
 const META_ADS: ServicePackage = {
@@ -144,7 +144,7 @@ const ESTIMATE_FOLLOW_UPS: ServicePackage = {
   includes: [],
   addonOf: "lead-follow-up",
   autonomy: "needs_integration",
-  autonomyNote: "Requires an active Lead Follow-Up enrollment and an estimate source. It does not copy the lead follow-up steps.",
+  autonomyNote: "An open estimate opens day 2, day 5, day 10, and a close-out draft. Won, lost, or replied stops the cadence. Quiet hours hold a draft until 8:00. Ambiguity needs a person. Nothing is sent, and Lead Follow-Up is not copied.",
 };
 
 const REVIEWS_GBP: ServicePackage = {

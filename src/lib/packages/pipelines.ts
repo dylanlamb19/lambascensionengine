@@ -1,11 +1,13 @@
 import { tickAppointments } from "./appointment-reminders.ts";
 import { tickAiVisibility } from "./ai-visibility.ts";
 import { packagePipelineEnabled } from "./cadence.ts";
+import { tickEstimates } from "./estimate-follow-ups.ts";
+import { tickGoogleAds } from "./google-ads.ts";
 import { tickLeadFollowUp, type LeadFlag } from "./lead-follow-up.ts";
 import { tickLeadGeneration } from "./lead-generation.ts";
 import { tickReviews } from "./reviews-gbp.ts";
 import { tickFulfillment, type TickOptions } from "./runner.ts";
-import type { AppointmentStep, CredentialPort, FollowUpLead, FulfillmentState, LeadStepRun, PackageRunStep, ReviewRequestStep } from "./types.ts";
+import type { AppointmentStep, CredentialPort, EstimateStep, FollowUpLead, FulfillmentState, LeadStepRun, PackageRunStep, ReviewRequestStep } from "./types.ts";
 
 /**
  * Tick every package pipeline for one workspace.
@@ -24,6 +26,8 @@ export function tickPackagePipelines(
     runReviewStep?: (step: ReviewRequestStep) => void;
     runReviewsCareStep?: (step: PackageRunStep) => void;
     runAppointmentStep?: (step: AppointmentStep) => void;
+    runEstimateStep?: (step: EstimateStep) => void;
+    runAdsStep?: (step: PackageRunStep) => void;
   } = {},
 ): { state: FulfillmentState; advanced: number } {
   if (!packagePipelineEnabled(opts.enabled)) return { state, advanced: 0 };
@@ -52,8 +56,16 @@ export function tickPackagePipelines(
     enabled: true,
     runStep: opts.runAppointmentStep,
   });
+  const estimateTick = tickEstimates(appointmentTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runEstimateStep,
+  });
+  const adsTick = tickGoogleAds(estimateTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runAdsStep,
+  });
   return {
-    state: appointmentTick.state,
-    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced + reviewsTick.advanced + appointmentTick.advanced,
+    state: adsTick.state,
+    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced + reviewsTick.advanced + appointmentTick.advanced + estimateTick.advanced + adsTick.advanced,
   };
 }

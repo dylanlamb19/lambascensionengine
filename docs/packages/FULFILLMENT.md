@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, and `migrations/0020_reviews_appointments.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, `migrations/0020_reviews_appointments.sql`, and `migrations/0021_estimate_google_ads.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -110,7 +110,7 @@ The desk tab is named exactly **Client Package Fulfillment**. It is hidden while
 
 1. The landing view lists that workspace's clients and the packages each one purchased.
 2. A client opens their page, with one tab per purchased package under their name.
-3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence. A Reviews tab lists each completed job and its review request. An Appointment Reminders tab lists each booking and the 24-hour, 2-hour, and no-show steps.
+3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence. A Reviews tab lists each completed job and its review request. An Appointment Reminders tab lists each booking and the 24-hour, 2-hour, and no-show steps. An Estimate Follow-Ups tab lists each open estimate and the day 2, day 5, day 10, and close-out drafts. A Google Ads tab lists the campaign plan, the weekly report, and the change proposal.
 4. The desk ticks every 2 seconds while it is open and the flag is on. A step moves to `running`, then to `done` or `needs human`, without a separate start button.
 
 There is no production cron. A closed browser does not keep ticking. Registering a cron is leftover work, and it must stay disabled until the flag is on and the send path is a separate, gated client mailbox.
@@ -153,11 +153,15 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 3. Google Advertising — $750/mo
 
-**Trigger.** Purchase. One Google Ads account. Ad spend is the client's and is not set here.
+**Trigger.** Purchase. One Google Ads account for this workspace. Ad spend is the client's and is not set here.
 
-**Steps.** Setup checklist and keyword shell (bookkeeping). Conversion check and monthly adjustments (Google Ads API). Monthly report shell with UNKNOWN spend until the API returns numbers.
+**Run.** Campaign plan from the client's stored intake: keywords, one ad group, ad copy drafts, negative keywords, and a budget recommendation that does not set a budget. The weekly performance report reads stored figures for this workspace and client only. A missing figure stays UNKNOWN. The change proposal stays needs human until a person approves it. Approval writes a note on the step. It does not call Google Ads and it does not spend.
 
-**Autonomy.** Needs the Google Ads API.
+**Connection.** The Google Ads row in this workspace's connection registry. Another workspace's stub does not count. A missing stub becomes needs human and names Google Ads. A Connected (test) stub still does not call the API. Live keys are refused and are not stored.
+
+**Older checklist.** Setup checklist and keyword shell still run as bookkeeping. Conversion check and monthly adjustments still need a person because no API adapter is wired. The monthly report shell still says spend is UNKNOWN.
+
+**Autonomy.** Needs a person before any account change. No Google Ads API call is made.
 
 ### 4. Meta Advertising — $650/mo
 
@@ -179,11 +183,13 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 6. Estimate Follow-Ups — $200/mo + $250 setup
 
-**Trigger.** Purchase only when the same client, in the same workspace, already has active Lead Follow-Up.
+**Trigger.** Purchase only when the same client, in the same workspace, already has active Lead Follow-Up. A recorded open estimate for that client's customer then opens the cadence.
 
-**Steps.** List outstanding estimates (needs an estimate source). Reminder (client mailbox). Personal-response alert (bookkeeping). Step ids do not overlap Lead Follow-Up.
+**Cadence.** Day 2, day 5, day 10, then a close-out draft. Each one is a dry run. Nothing is sent by email or text, and the sales outreach sender is not used. Won, lost, or replied stops the drafts that have not run. An ambiguous estimate, or an ambiguous outcome, stays needs human and does not draft. A time before 8:00 or after 21:00 America/Chicago waits until 8:00.
 
-**Autonomy.** Needs an estimate source and a mailbox.
+**Connection.** This workspace's estimate feed stub. Another workspace's stub does not count. A missing stub becomes needs human and names Estimate feed. The older enrollment checklist (estimate source, mailbox, personal-response alert) still runs and still does not send. Step ids do not overlap Lead Follow-Up.
+
+**Autonomy.** Needs an active Lead Follow-Up enrollment for the same client. The lead cadence is not copied.
 
 ### 7. Review Requests and Google Business Profile Care — $150/mo
 
@@ -263,6 +269,16 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `package_runs.package_id` also allows `reviews-gbp`
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
 
+`migrations/0021_estimate_google_ads.sql` (file only, not applied):
+
+- `open_estimates` — outcome is `open`, `won`, `lost`, `replied`, or `ambiguous`
+- `estimate_steps` and `estimate_step_logs` — day 2, day 5, day 10, and close-out drafts
+- `ads_metric_snapshots` — stored impressions, clicks, conversions, and spend figures. `source` is `stored`. There is no token column
+- `ads_change_notes` — the proposal text, whether it is ambiguous, and whether a person approved it
+- `estimate_follow_ups_kill_switch` and `google_ads_kill_switch` on the workspace
+- `package_runs.package_id` also allows `google-ads`
+- Forced row-level security, same `app.tenant_id` rule, and no secret column
+
 `migrations/0016_workspace_connections.sql`:
 
 - `workspace_connections` — `(workspace_id, kind)`, status `missing` or `stub_connected`, no secret column
@@ -289,7 +305,7 @@ The running desk uses the in-memory and browser store above. It does not query t
 3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
 4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
-6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
+6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. Estimate follow-ups draft from a recorded open estimate. Google Ads drafts a plan from stored intake and a weekly report from stored figures. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 9. **Sentinel.** The health report is ready for one tenant. Sentinel itself is not in this branch, and nothing here disables it.
@@ -299,7 +315,7 @@ The running desk uses the in-memory and browser store above. It does not query t
 
 ## Blockers
 
-- Connection rows are stubs. There is still no live Google Ads, Meta, Business Profile, mailbox, CMS, or booking-calendar adapter.
+- Connection rows are stubs. There is still no live Google Ads, Meta, Business Profile, mailbox, CMS, or booking-calendar adapter. Google Ads change proposals stay needs human, and no spend is set.
 - Job and estimate feeds can be marked connected in test mode. They do not read a real feed.
 - No hosted landing pages.
 - Sentinel is absent on this branch; only the health report exists.

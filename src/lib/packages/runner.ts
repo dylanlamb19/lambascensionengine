@@ -370,6 +370,11 @@ export function setKillSwitch(state: FulfillmentState, tenantId: string, enrollm
         ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
         : step,
     ),
+    estimateSteps: (state.estimateSteps || []).map((step) =>
+      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+        ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
+        : step,
+    ),
   };
 }
 
@@ -426,6 +431,10 @@ export function emptyFulfillment(): FulfillmentState {
     storedReviews: [],
     appointments: [],
     appointmentSteps: [],
+    estimates: [],
+    estimateSteps: [],
+    adsMetrics: [],
+    adsChangeNotes: [],
   };
 }
 
