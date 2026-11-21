@@ -147,6 +147,15 @@ export function recordPurchase(
     (row) => row.tenantId === tenantId && row.clientId === client?.id && row.packageId === pkg.id && row.status !== "cancelled",
   );
   if (existing) return { ok: true, state, clientId: client.id, enrollmentId: existing.id };
+  const covered = state.enrollments.find(
+    (row) =>
+      row.tenantId === tenantId
+      && row.clientId === client?.id
+      && row.status !== "cancelled"
+      && row.packageId !== pkg.id
+      && row.includedPackageIds.includes(pkg.id),
+  );
+  if (covered) return { ok: true, state, clientId: client.id, enrollmentId: covered.id };
   const enrollmentGate = assertEnrollmentAllowed(state, tenantId);
   if (!enrollmentGate.ok) return { ok: false, state, reason: enrollmentGate.reason };
 
@@ -165,6 +174,7 @@ export function recordPurchase(
     startedOn,
     renewsOn: addMonthsDate(startedOn, 1),
     includedPackageIds: [...pkg.includes],
+    cascadeFromEnrollmentId: null,
     createdAt: now,
   };
   const steps: StepRun[] = stepTemplates(pkg.id).map(({ sourcePackageId, group, step }) => ({
@@ -343,17 +353,52 @@ function enrollmentInTenant(state: FulfillmentState, tenantId: string, enrollmen
 }
 
 export function setKillSwitch(state: FulfillmentState, tenantId: string, enrollmentId: string, on: boolean, now: string): FulfillmentState {
-  if (!enrollmentInTenant(state, tenantId, enrollmentId)) return state;
+  const enrollment = enrollmentInTenant(state, tenantId, enrollmentId);
+  if (!enrollment) return state;
+  if (!on && enrollment.packageId !== "google-meta-ai") {
+    const held = state.enrollments.some((row) =>
+      row.tenantId === tenantId
+      && row.clientId === enrollment.clientId
+      && row.packageId === "google-meta-ai"
+      && row.status !== "cancelled"
+      && row.killSwitch
+      && row.includedPackageIds.includes(enrollment.packageId),
+    );
+    if (held) return state;
+  }
+  const cascaded = new Set<string>();
+  if (enrollment.packageId === "google-meta-ai") {
+    for (const row of state.enrollments) {
+      if (row.tenantId !== tenantId || row.clientId !== enrollment.clientId || row.id === enrollment.id) continue;
+      if (row.status === "cancelled") continue;
+      if (!enrollment.includedPackageIds.includes(row.packageId)) continue;
+      cascaded.add(row.id);
+    }
+  }
+  const touched = (id: string) => id === enrollment.id || cascaded.has(id);
   return {
     ...state,
-    enrollments: state.enrollments.map((row) => (row.id === enrollmentId && row.tenantId === tenantId ? { ...row, killSwitch: on } : row)),
+    enrollments: state.enrollments.map((row) => {
+      if (row.tenantId !== tenantId || !touched(row.id)) return row;
+      if (row.id === enrollment.id) {
+        return { ...row, killSwitch: on, cascadeFromEnrollmentId: on ? row.cascadeFromEnrollmentId : null };
+      }
+      if (on) {
+        if (row.killSwitch && row.cascadeFromEnrollmentId !== enrollment.id) return row;
+        return { ...row, killSwitch: true, cascadeFromEnrollmentId: enrollment.id };
+      }
+      if (row.cascadeFromEnrollmentId === enrollment.id) {
+        return { ...row, killSwitch: false, cascadeFromEnrollmentId: null };
+      }
+      return row;
+    }),
     steps: state.steps.map((step) =>
-      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+      touched(step.enrollmentId) && step.tenantId === tenantId && on
         ? appendLog(step, now, "Kill switch is on. This pipeline is stopped. Sales outreach was not changed.")
         : step,
     ),
     packageRunSteps: (state.packageRunSteps || []).map((step) =>
-      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+      touched(step.enrollmentId) && step.tenantId === tenantId && on
         ? {
             ...step,
             logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30),
@@ -361,17 +406,17 @@ export function setKillSwitch(state: FulfillmentState, tenantId: string, enrollm
         : step,
     ),
     reviewRequestSteps: (state.reviewRequestSteps || []).map((step) =>
-      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+      touched(step.enrollmentId) && step.tenantId === tenantId && on
         ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
         : step,
     ),
     appointmentSteps: (state.appointmentSteps || []).map((step) =>
-      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+      touched(step.enrollmentId) && step.tenantId === tenantId && on
         ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
         : step,
     ),
     estimateSteps: (state.estimateSteps || []).map((step) =>
-      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+      touched(step.enrollmentId) && step.tenantId === tenantId && on
         ? { ...step, logs: [...step.logs, { at: now, message: CLIENT_STOP }].slice(-30) }
         : step,
     ),
@@ -435,6 +480,8 @@ export function emptyFulfillment(): FulfillmentState {
     estimateSteps: [],
     adsMetrics: [],
     adsChangeNotes: [],
+    metaBudgetNotes: [],
+    officeWorkflows: [],
   };
 }
 

@@ -6,7 +6,7 @@ import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
 import { usageFor } from "@/lib/packages/usage";
 import { workspaceFor } from "@/lib/packages/tenancy";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
-import { appointmentViews, clientList, estimateViews, leadFollowUpView, packageRunViews, packageTabs, pipelineView, reviewsView, workspaceSummary, type AppointmentItemView, type EstimateItemView, type LeadView, type PackageRunView, type ReviewsView } from "@/lib/packages/view";
+import { appointmentViews, clientList, clientPackageOverview, estimateViews, leadFollowUpView, packageRunViews, packageTabs, pipelineView, reviewsView, workspaceSummary, type AppointmentItemView, type EstimateItemView, type LeadView, type PackageOverviewRow, type PackageRunView, type ReviewsView } from "@/lib/packages/view";
 
 const ONBOARDING_STEPS = [
   ["workspace", "Workspace"],
@@ -204,7 +204,36 @@ function runBlurb(packageId: PackageRunView["packageId"]): string {
   if (packageId === "google-ads") {
     return "Campaign plan, weekly report, and a change proposal from stored intake and stored figures. The proposal waits for a person. No Google Ads API is called and no spend is made.";
   }
+  if (packageId === "meta-ads") {
+    return "Creative and audience plans from stored intake. The budget is checked against this workspace's test plan and is not spent. Approval waits for a person. No Meta API is called.";
+  }
+  if (packageId === "office-automation") {
+    return "Intake, a schedule, a reminder, and an invoice reminder. Invoices stay on the test billing record at $0. An unnamed workflow waits for a person. Nothing is sent and nothing is charged.";
+  }
   return "Profile audit and schema draft from stored data, then a recommendation check that waits for a person. No live model or search call is made.";
+}
+
+function statusWord(status: string): string {
+  return status === "needs_human" ? "needs human" : status;
+}
+
+function AllPackages(props: { rows: PackageOverviewRow[] | null }) {
+  if (!props.rows) return null;
+  return (
+    <div className="la-card mb-4" data-all-packages="1">
+      <p className="la-kicker">All packages</p>
+      <ul className="mt-2 space-y-1 text-sm">
+        {props.rows.map((row) => (
+          <li key={row.packageId} data-package-overview={row.packageId}>
+            {row.name} · {row.purchased ? row.status : "not purchased"}
+            {row.viaBundle ? " · included in the bundle" : ""}
+            {row.detail ? ` · ${statusWord(row.detail)}` : ""}
+            {row.killSwitch ? " · kill switch on" : ""}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function AdsMetricsForm(props: {
@@ -261,6 +290,73 @@ function AdsMetricsForm(props: {
   );
 }
 
+function MetaBudgetForm(props: {
+  enrollmentId: string;
+  onSave: (input: { enrollmentId: string; proposedCents: number | null; ambiguous: boolean }) => { ok: boolean; reason?: string };
+}) {
+  const [amount, setAmount] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const trimmed = amount.trim();
+        const proposedCents = trimmed ? Number(trimmed) : null;
+        const result = props.onSave({ enrollmentId: props.enrollmentId, proposedCents, ambiguous: false });
+        if (!result.ok) {
+          setMessage(result.reason || "That budget was not stored.");
+          return;
+        }
+        setAmount("");
+        setMessage("Stored for this workspace. Nothing was spent.");
+      }}
+    >
+      <p className="la-kicker">Proposed budget</p>
+      <p className="mt-2 mb-3 text-sm text-muted">Cents, checked against this workspace's test plan. Nothing is spent.</p>
+      <label className="la-label" htmlFor="meta-budget">Proposed cents</label>
+      <input id="meta-budget" className="la-field mb-3" value={amount} onChange={(event) => setAmount(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Store budget proposal</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function OfficeWorkflowForm(props: {
+  enrollmentId: string;
+  onSave: (input: { enrollmentId: string; kind: string; scheduleNote: string; ambiguous: boolean }) => { ok: boolean; reason?: string };
+}) {
+  const [kind, setKind] = useState("document-collection");
+  const [scheduleNote, setScheduleNote] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onSave({ enrollmentId: props.enrollmentId, kind, scheduleNote, ambiguous: false });
+        if (!result.ok) {
+          setMessage(result.reason || "That workflow was not stored.");
+          return;
+        }
+        setMessage("Workflow stored. Nothing was sent and nothing was charged.");
+      }}
+    >
+      <p className="la-kicker">One workflow</p>
+      <label className="la-label mt-3" htmlFor="office-kind">Workflow</label>
+      <select id="office-kind" className="la-field mb-3" value={kind} onChange={(event) => setKind(event.target.value)}>
+        <option value="document-collection">Document collection</option>
+        <option value="sold-job-handoff">Hand a sold job to the office</option>
+        <option value="invoice-reminders">Invoice reminders</option>
+      </select>
+      <label className="la-label" htmlFor="office-when">Schedule note</label>
+      <input id="office-when" className="la-field mb-3" value={scheduleNote} onChange={(event) => setScheduleNote(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Store workflow</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
 function PackageRunPanel(props: {
   clientId: string;
   enrollmentId: string;
@@ -269,15 +365,24 @@ function PackageRunPanel(props: {
   aiKill: boolean;
   reviewsKill: boolean;
   adsKill?: boolean;
+  metaKill?: boolean;
+  officeKill?: boolean;
   onSaveIntake?: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
   onCaptureGeneratedLead?: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
   onLeadGenKill?: (on: boolean) => void;
   onAiKill?: (on: boolean) => void;
   onReviewsKill?: (on: boolean) => void;
   onAdsKill?: (on: boolean) => void;
+  onMetaKill?: (on: boolean) => void;
+  onOfficeKill?: (on: boolean) => void;
   onRecordAdsMetrics?: (input: { enrollmentId: string; periodLabel: string; impressions: number | null; clicks: number | null; conversions: number | null; spendCents: number | null }) => { ok: boolean; reason?: string };
   onApproveAdsChange?: (enrollmentId: string) => { ok: boolean; reason?: string };
   onMarkAdsAmbiguous?: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onSaveMetaBudget?: (input: { enrollmentId: string; proposedCents: number | null; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onApproveMeta?: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onMarkMetaAmbiguous?: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onSaveOfficeWorkflow?: (input: { enrollmentId: string; kind: string; scheduleNote: string; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onMarkOfficeAmbiguous?: (enrollmentId: string) => { ok: boolean; reason?: string };
 }) {
   if (!props.runs || props.runs.length === 0) return null;
   const intake = props.runs.find((run) => run.intake)?.intake || props.runs[0]?.intake || null;
@@ -291,13 +396,18 @@ function PackageRunPanel(props: {
             ? props.reviewsKill
             : run.packageId === "google-ads"
               ? props.adsKill === true
-              : props.aiKill;
+              : run.packageId === "meta-ads"
+                ? props.metaKill === true
+                : run.packageId === "office-automation"
+                  ? props.officeKill === true
+                  : props.aiKill;
         return (
           <section key={run.runId} data-package-run={run.packageId} className="mb-4">
             <h2 className="font-display mt-4 mb-2 text-2xl">{run.packageName}</h2>
             <p className="mb-3 text-sm text-muted">
               {runBlurb(run.packageId)}
               {stopped ? " The workspace kill switch is on." : ""}
+              {run.deduped ? " Already purchased separately. This bundle did not open a second run." : ""}
             </p>
             {run.packageId === "lead-generation" && props.onLeadGenKill ? (
               <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onLeadGenKill?.(!props.leadGenKill)}>
@@ -320,7 +430,7 @@ function PackageRunPanel(props: {
               </button>
             ) : null}
             {run.packageId === "google-ads" && props.onRecordAdsMetrics ? (
-              <AdsMetricsForm enrollmentId={props.enrollmentId} onRecord={props.onRecordAdsMetrics} />
+              <AdsMetricsForm enrollmentId={run.enrollmentId} onRecord={props.onRecordAdsMetrics} />
             ) : null}
             {run.packageId === "google-ads" && run.metrics.length > 0 ? (
               <ul className="mb-3 text-sm">
@@ -332,16 +442,51 @@ function PackageRunPanel(props: {
             {run.packageId === "google-ads" && (props.onApproveAdsChange || props.onMarkAdsAmbiguous) ? (
               <div className="mb-3 flex flex-wrap gap-2">
                 {props.onMarkAdsAmbiguous ? (
-                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onMarkAdsAmbiguous?.(props.enrollmentId)}>Mark change ambiguous</button>
+                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onMarkAdsAmbiguous?.(run.enrollmentId)}>Mark change ambiguous</button>
                 ) : null}
                 {props.onApproveAdsChange ? (
-                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onApproveAdsChange?.(props.enrollmentId)}>Approve change</button>
+                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onApproveAdsChange?.(run.enrollmentId)}>Approve change</button>
                 ) : null}
                 {run.changeNote?.ambiguous ? <p className="text-sm text-muted">This change is ambiguous and stays with a person.</p> : null}
               </div>
             ) : null}
+            {run.packageId === "meta-ads" && props.onMetaKill ? (
+              <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onMetaKill?.(!props.metaKill)}>
+                {props.metaKill ? "Clear Meta Ads kill switch" : "Stop Meta Ads drafts for this workspace"}
+              </button>
+            ) : null}
+            {run.packageId === "meta-ads" && props.onSaveMetaBudget ? (
+              <MetaBudgetForm enrollmentId={run.enrollmentId} onSave={props.onSaveMetaBudget} />
+            ) : null}
+            {run.packageId === "meta-ads" && run.budget ? (
+              <p className="mb-3 text-sm" data-meta-budget={run.enrollmentId}>{run.budget.line}</p>
+            ) : null}
+            {run.packageId === "meta-ads" && (props.onApproveMeta || props.onMarkMetaAmbiguous) ? (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {props.onMarkMetaAmbiguous ? (
+                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onMarkMetaAmbiguous?.(run.enrollmentId)}>Mark budget ambiguous</button>
+                ) : null}
+                {props.onApproveMeta ? (
+                  <button type="button" className="la-btn la-btn-quiet" onClick={() => props.onApproveMeta?.(run.enrollmentId)}>Approve Meta plan</button>
+                ) : null}
+              </div>
+            ) : null}
+            {run.packageId === "office-automation" && props.onOfficeKill ? (
+              <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onOfficeKill?.(!props.officeKill)}>
+                {props.officeKill ? "Clear office kill switch" : "Stop office drafts for this workspace"}
+              </button>
+            ) : null}
+            {run.packageId === "office-automation" && props.onSaveOfficeWorkflow ? (
+              <OfficeWorkflowForm enrollmentId={run.enrollmentId} onSave={props.onSaveOfficeWorkflow} />
+            ) : null}
+            {run.packageId === "office-automation" && props.onMarkOfficeAmbiguous ? (
+              <button type="button" className="la-btn la-btn-quiet mb-3" onClick={() => props.onMarkOfficeAmbiguous?.(run.enrollmentId)}>Mark workflow ambiguous</button>
+            ) : null}
+            {run.packageId === "office-automation" && run.office?.kind ? (
+              <p className="mb-3 text-sm" data-office-workflow={run.enrollmentId}>{run.office.kind}{run.office.ambiguous ? " · ambiguous" : ""}</p>
+            ) : null}
             {run.packageId === "lead-generation" && props.onCaptureGeneratedLead ? (
-              <GeneratedLeadForm key={props.enrollmentId} enrollmentId={props.enrollmentId} onCapture={props.onCaptureGeneratedLead} />
+              <GeneratedLeadForm key={run.enrollmentId} enrollmentId={run.enrollmentId} onCapture={props.onCaptureGeneratedLead} />
             ) : null}
             {run.steps.map((step) => (
               <article key={step.id} className="la-card" data-package-step={step.id} data-step-status={step.status}>
@@ -786,6 +931,13 @@ export function PackageFulfillmentPanel(props: {
   onAppointmentsKill: (on: boolean) => void;
   onEstimatesKill: (on: boolean) => void;
   onAdsKill: (on: boolean) => void;
+  onMetaKill: (on: boolean) => void;
+  onOfficeKill: (on: boolean) => void;
+  onSaveMetaBudget: (input: { enrollmentId: string; proposedCents: number | null; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onApproveMeta: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onMarkMetaAmbiguous: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onSaveOfficeWorkflow: (input: { enrollmentId: string; kind: string; scheduleNote: string; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onMarkOfficeAmbiguous: (enrollmentId: string) => { ok: boolean; reason?: string };
   onRecordJob: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
   onRecordStoredReview: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
   onRecordAppointment: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
@@ -861,6 +1013,9 @@ export function PackageFulfillmentPanel(props: {
         appointmentsKill={workspace?.appointmentRemindersKillSwitch === true}
         estimatesKill={workspace?.estimateFollowUpsKillSwitch === true}
         adsKill={workspace?.googleAdsKillSwitch === true}
+        metaKill={workspace?.metaAdsKillSwitch === true}
+        officeKill={workspace?.officeAutomationKillSwitch === true}
+        overview={clientPackageOverview(props.state, props.tenantId, client.id)}
         reviews={selectedEnrollment ? reviewsView(props.state, props.tenantId, selectedEnrollment) : null}
         appointments={selectedEnrollment ? appointmentViews(props.state, props.tenantId, selectedEnrollment) : null}
         estimates={selectedEnrollment ? estimateViews(props.state, props.tenantId, selectedEnrollment) : null}
@@ -889,6 +1044,13 @@ export function PackageFulfillmentPanel(props: {
         onRecordAdsMetrics={props.onRecordAdsMetrics}
         onApproveAdsChange={props.onApproveAdsChange}
         onMarkAdsAmbiguous={props.onMarkAdsAmbiguous}
+        onMetaKill={props.onMetaKill}
+        onOfficeKill={props.onOfficeKill}
+        onSaveMetaBudget={props.onSaveMetaBudget}
+        onApproveMeta={props.onApproveMeta}
+        onMarkMetaAmbiguous={props.onMarkMetaAmbiguous}
+        onSaveOfficeWorkflow={props.onSaveOfficeWorkflow}
+        onMarkOfficeAmbiguous={props.onMarkOfficeAmbiguous}
         billing={<WorkspaceBilling {...props} />}
       />
     );
@@ -916,6 +1078,8 @@ export function PackageFulfillmentPanel(props: {
         {workspace?.appointmentRemindersKillSwitch ? " Appointment reminders are stopped for this workspace." : ""}
         {workspace?.estimateFollowUpsKillSwitch ? " Estimate follow-ups are stopped for this workspace." : ""}
         {workspace?.googleAdsKillSwitch ? " Google Ads drafts are stopped for this workspace." : ""}
+        {workspace?.metaAdsKillSwitch ? " Meta Ads drafts are stopped for this workspace." : ""}
+        {workspace?.officeAutomationKillSwitch ? " Office drafts are stopped for this workspace." : ""}
       </p>
       {workspace ? (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -939,6 +1103,12 @@ export function PackageFulfillmentPanel(props: {
           </button>
           <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onAdsKill(!workspace.googleAdsKillSwitch)}>
             {workspace.googleAdsKillSwitch ? "Clear Google Ads kill switch" : "Stop Google Ads drafts for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onMetaKill(!workspace.metaAdsKillSwitch)}>
+            {workspace.metaAdsKillSwitch ? "Clear Meta Ads kill switch" : "Stop Meta Ads drafts for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onOfficeKill(!workspace.officeAutomationKillSwitch)}>
+            {workspace.officeAutomationKillSwitch ? "Clear office kill switch" : "Stop office drafts for this workspace"}
           </button>
         </div>
       ) : null}
@@ -1382,6 +1552,9 @@ function PackagePipeline(props: {
   appointmentsKill: boolean;
   estimatesKill: boolean;
   adsKill: boolean;
+  metaKill: boolean;
+  officeKill: boolean;
+  overview: PackageOverviewRow[] | null;
   reviews: ReviewsView | null;
   appointments: AppointmentItemView[] | null;
   estimates: EstimateItemView[] | null;
@@ -1396,6 +1569,13 @@ function PackagePipeline(props: {
   onAppointmentsKill: (on: boolean) => void;
   onEstimatesKill: (on: boolean) => void;
   onAdsKill: (on: boolean) => void;
+  onMetaKill: (on: boolean) => void;
+  onOfficeKill: (on: boolean) => void;
+  onSaveMetaBudget: (input: { enrollmentId: string; proposedCents: number | null; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onApproveMeta: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onMarkMetaAmbiguous: (enrollmentId: string) => { ok: boolean; reason?: string };
+  onSaveOfficeWorkflow: (input: { enrollmentId: string; kind: string; scheduleNote: string; ambiguous: boolean }) => { ok: boolean; reason?: string };
+  onMarkOfficeAmbiguous: (enrollmentId: string) => { ok: boolean; reason?: string };
   onRecordJob: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
   onRecordStoredReview: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
   onRecordAppointment: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
@@ -1420,6 +1600,7 @@ function PackagePipeline(props: {
       <button type="button" className="la-btn la-btn-quiet mb-3" onClick={props.onBack}>All clients</button>
       <p className="la-kicker">{props.workspaceName} · {props.planName}</p>
       <h1 className="font-display mt-2 mb-3 text-3xl">{props.clientName}</h1>
+      <AllPackages rows={props.overview} />
       <div className="la-nav mb-4" role="tablist" aria-label="Purchased packages">
         {props.tabs.map((tab) => (
           <button
@@ -1447,6 +1628,19 @@ function PackagePipeline(props: {
         <p className="mt-1 text-sm text-muted">Started {pipeline.startedOn} · renews {pipeline.renewsOn}</p>
         <p className="mt-1 text-sm text-muted">Next scheduled run: {pipeline.nextRunAt || "none queued"}</p>
         <p className="mt-2 text-sm text-muted">This view refreshes every 2 seconds while the desk is open. Due steps advance on their own.</p>
+        {pipeline.bundle ? (
+          <div className="mt-3" data-bundle-status={pipeline.bundle.status}>
+            <p className="text-sm">Aggregated status: {statusWord(pipeline.bundle.status)}</p>
+            <ul className="mt-2 text-sm">
+              {pipeline.bundle.members.map((member) => (
+                <li key={member.packageId} data-bundle-member={member.packageId}>
+                  {member.name} · {statusWord(member.status)}
+                  {member.deduped ? " · already purchased separately" : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onStatus(pipeline.enrollmentId, "paused")}>Pause</button>
           <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onStatus(pipeline.enrollmentId, "active")}>Resume</button>
@@ -1499,6 +1693,8 @@ function PackagePipeline(props: {
         aiKill={props.aiKill}
         reviewsKill={props.reviewsKill}
         adsKill={props.adsKill}
+        metaKill={props.metaKill}
+        officeKill={props.officeKill}
         onSaveIntake={props.onSaveIntake}
         onCaptureGeneratedLead={props.onCaptureGeneratedLead}
         onLeadGenKill={props.onLeadGenKill}
@@ -1508,6 +1704,13 @@ function PackagePipeline(props: {
         onRecordAdsMetrics={props.onRecordAdsMetrics}
         onApproveAdsChange={props.onApproveAdsChange}
         onMarkAdsAmbiguous={props.onMarkAdsAmbiguous}
+        onMetaKill={props.onMetaKill}
+        onOfficeKill={props.onOfficeKill}
+        onSaveMetaBudget={props.onSaveMetaBudget}
+        onApproveMeta={props.onApproveMeta}
+        onMarkMetaAmbiguous={props.onMarkMetaAmbiguous}
+        onSaveOfficeWorkflow={props.onSaveOfficeWorkflow}
+        onMarkOfficeAmbiguous={props.onMarkOfficeAmbiguous}
       />
       <ReviewsPanel
         enrollmentId={pipeline.enrollmentId}

@@ -104,7 +104,7 @@ const META_ADS: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "The checklist runs without the API. Campaign changes need the Meta Marketing API.",
+  autonomyNote: "Creative and audience plans are drafts from stored intake. The budget is checked against this workspace's test plan cap and is not spent. The approval gate stays needs human until a person approves it. No Meta API is called. The connection is this workspace's stub.",
 };
 
 const LEAD_GENERATION: ServicePackage = {
@@ -200,7 +200,7 @@ const OFFICE: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "The slot opens automatically. The workflow itself stays with a person until one workflow is agreed.",
+  autonomyNote: "Intake, scheduling, and reminders are dry runs. An invoice reminder reads this workspace's fakeBilling test invoices and stays at $0. An unnamed or ambiguous workflow needs a person. Nothing is sent and nothing is charged.",
 };
 
 const BUNDLE: ServicePackage = {
@@ -220,7 +220,7 @@ const BUNDLE: ServicePackage = {
   includes: ["ai-visibility", "google-ads", "meta-ads", "lead-generation"],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "Runs the four included pipelines under one purchase. Each part still needs its own connection.",
+  autonomyNote: "One purchase opens the four included pipelines. A member bought separately is not enrolled again. The live step view shows one aggregated status. A kill switch on this purchase stops the included pipelines for this client.",
 };
 
 export const PACKAGE_CATALOG: Record<PackageId, ServicePackage> = {

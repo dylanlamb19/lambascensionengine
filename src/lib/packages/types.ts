@@ -37,6 +37,10 @@ export type Workspace = {
   estimateFollowUpsKillSwitch: boolean;
   /** Stops every Google Ads draft in this workspace. Other workspaces are untouched. */
   googleAdsKillSwitch: boolean;
+  /** Stops every Meta Ads draft in this workspace. Other workspaces are untouched. */
+  metaAdsKillSwitch: boolean;
+  /** Stops every Office Automation draft in this workspace. Other workspaces are untouched. */
+  officeAutomationKillSwitch: boolean;
 };
 
 export type ServiceClient = {
@@ -61,6 +65,8 @@ export type Enrollment = {
   startedOn: string;
   renewsOn: string;
   includedPackageIds: PackageId[];
+  /** Set when a bundle kill switch stopped this enrollment. Null when the kill belongs to this package. */
+  cascadeFromEnrollmentId: string | null;
   createdAt: string;
 };
 
@@ -209,7 +215,7 @@ export type ClientIntake = {
   updatedAt: string;
 };
 
-export type PackageRunId = "lead-generation" | "ai-visibility" | "reviews-gbp" | "google-ads";
+export type PackageRunId = "lead-generation" | "ai-visibility" | "reviews-gbp" | "google-ads" | "meta-ads" | "office-automation";
 export type PackageRunStatus = "active" | "needs_human" | "stopped";
 
 /** One Lead Generation or AI Visibility run on a client's package. */
@@ -408,6 +414,33 @@ export type AdsChangeNote = {
   updatedAt: string;
 };
 
+/**
+ * A proposed Meta budget for one enrollment.
+ * It is checked against the test plan cap. It is not spent and it is not a charge.
+ */
+export type MetaBudgetNote = {
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  proposedCents: number | null;
+  ambiguous: boolean;
+  status: "open" | "approved";
+  updatedAt: string;
+};
+
+export type OfficeWorkflowKind = "document-collection" | "sold-job-handoff" | "invoice-reminders";
+
+/** The one office workflow a person agreed for this client. Dry-run only. */
+export type OfficeWorkflow = {
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  kind: OfficeWorkflowKind | "";
+  ambiguous: boolean;
+  scheduleNote: string;
+  updatedAt: string;
+};
+
 /** Confirm, 24h, 2h, and no-show drafts. Nothing is sent. */
 export type AppointmentStep = {
   id: string;
@@ -455,6 +488,8 @@ export type FulfillmentState = {
   estimateSteps: EstimateStep[];
   adsMetrics: AdsMetricSnapshot[];
   adsChangeNotes: AdsChangeNote[];
+  metaBudgetNotes: MetaBudgetNote[];
+  officeWorkflows: OfficeWorkflow[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -483,6 +518,8 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   estimateSteps: [],
   adsMetrics: [],
   adsChangeNotes: [],
+  metaBudgetNotes: [],
+  officeWorkflows: [],
 };
 
 export type RecordPurchaseInput = {
