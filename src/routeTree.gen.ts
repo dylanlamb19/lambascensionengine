@@ -10,7 +10,10 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as BookTokenRouteImport } from './routes/book/$token'
+import { Route as ApiAccountSplatRouteImport } from './routes/api/account/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBookTokenRouteImport } from './routes/api/book/$token'
 import { Route as ApiGoogleCallbackRouteImport } from './routes/api/google/callback'
@@ -22,9 +25,24 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspaceRoute = WorkspaceRouteImport.update({
+  id: '/workspace',
+  path: '/workspace',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BookTokenRoute = BookTokenRouteImport.update({
   id: '/book/$token',
   path: '/book/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAccountSplatRoute = ApiAccountSplatRouteImport.update({
+  id: '/api/account/$',
+  path: '/api/account/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -55,7 +73,10 @@ const ApiVisualAssetsIdRoute = ApiVisualAssetsIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/signup': typeof SignupRoute
+  '/workspace': typeof WorkspaceRoute
   '/book/$token': typeof BookTokenRoute
+  '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
@@ -64,7 +85,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/signup': typeof SignupRoute
+  '/workspace': typeof WorkspaceRoute
   '/book/$token': typeof BookTokenRoute
+  '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
@@ -74,7 +98,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/signup': typeof SignupRoute
+  '/workspace': typeof WorkspaceRoute
   '/book/$token': typeof BookTokenRoute
+  '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/book/$token': typeof ApiBookTokenRoute
   '/api/google/callback': typeof ApiGoogleCallbackRoute
@@ -85,7 +112,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/signup'
+    | '/workspace'
     | '/book/$token'
+    | '/api/account/$'
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
@@ -94,7 +124,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/signup'
+    | '/workspace'
     | '/book/$token'
+    | '/api/account/$'
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
@@ -103,7 +136,10 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/signup'
+    | '/workspace'
     | '/book/$token'
+    | '/api/account/$'
     | '/api/auth/$'
     | '/api/book/$token'
     | '/api/google/callback'
@@ -113,7 +149,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SignupRoute: typeof SignupRoute
+  WorkspaceRoute: typeof WorkspaceRoute
   BookTokenRoute: typeof BookTokenRoute
+  ApiAccountSplatRoute: typeof ApiAccountSplatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBookTokenRoute: typeof ApiBookTokenRoute
   ApiGoogleCallbackRoute: typeof ApiGoogleCallbackRoute
@@ -130,11 +169,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspace': {
+      id: '/workspace'
+      path: '/workspace'
+      fullPath: '/workspace'
+      preLoaderRoute: typeof WorkspaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/book/$token': {
       id: '/book/$token'
       path: '/book/$token'
       fullPath: '/book/$token'
       preLoaderRoute: typeof BookTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/account/$': {
+      id: '/api/account/$'
+      path: '/api/account/$'
+      fullPath: '/api/account/$'
+      preLoaderRoute: typeof ApiAccountSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -177,7 +237,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SignupRoute: SignupRoute,
+  WorkspaceRoute: WorkspaceRoute,
   BookTokenRoute: BookTokenRoute,
+  ApiAccountSplatRoute: ApiAccountSplatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBookTokenRoute: ApiBookTokenRoute,
   ApiGoogleCallbackRoute: ApiGoogleCallbackRoute,

@@ -86,6 +86,7 @@ import {
 } from "@/lib/visual/gallery";
 import { ImageDock } from "@/components/image-dock";
 import { DesignDirectorBar } from "@/components/design-director";
+import { clientFacingBrand, shellBrandStyle } from "@/lib/account/brand";
 import { FLAGS } from "@/lib/flags";
 import { scopePackageTenantFn } from "@/lib/packages/scope-action";
 import { PackageFulfillmentPanel } from "@/components/package-fulfillment";
@@ -2241,6 +2242,9 @@ export function OwnerDesk() {
             <button type="submit" className="la-btn la-btn-primary" disabled={busy}>
               {busy ? "Signing in…" : "Enter"}
             </button>
+            {FLAGS.SELF_SERVE_SIGNUP ? (
+              <a className="la-btn la-btn-ghost" href="/signup">Register a workspace</a>
+            ) : null}
             <button type="button" className="la-btn la-btn-ghost" onClick={() => setExplain("Sign in with the owner email and password. This desk does not create accounts from the browser. Wrong details show the same message — we do not reveal whether an email exists.")}>
               Explain this
             </button>
@@ -2416,7 +2420,8 @@ export function OwnerDesk() {
       data-widget-size-sales={chrome.widgetSize.sales || ""}
       data-widget-size-needs_you={chrome.widgetSize.needs_you || ""}
       data-widget-size-status={chrome.widgetSize.status || ""}
-      style={view === "home" ? { ...visualCssVars(visual.home), ...designCssVars(chrome) } : undefined}
+      data-tenant-brand={FLAGS.SELF_SERVE_SIGNUP && packageTenantId ? packageTenantId : undefined}
+      style={view === "home" ? { ...visualCssVars(visual.home), ...designCssVars(chrome), ...shellBrandStyle(pkgState, packageTenantId || "", FLAGS.SELF_SERVE_SIGNUP) } : shellBrandStyle(pkgState, packageTenantId || "", FLAGS.SELF_SERVE_SIGNUP)}
     >
       {view === "home" && visibleBackgroundUrl(visual, adultUnlocked) ? (
         <div className="la-scene" aria-hidden>
@@ -2442,6 +2447,9 @@ export function OwnerDesk() {
               <div className="la-brand-name">Lamb Ascension</div>
               <div className="la-brand-meta">
                 <span>Owner Mode</span>
+                {FLAGS.SELF_SERVE_SIGNUP && packageTenantId ? (
+                  <span className="la-chip" data-shell-brand={packageTenantId}>{clientFacingBrand(pkgState, packageTenantId)?.senderDisplayName || "Workspace"}</span>
+                ) : null}
                 {testModeOn ? <span className="la-chip">TEST MODE</span> : null}
                 <span className="la-chip"><span className={`la-dot ${healthClass(google.gmail)}`} />Gmail</span>
                 <span className="la-chip"><span className={`la-dot ${healthClass(google.calendar)}`} />Calendar</span>
@@ -2453,6 +2461,9 @@ export function OwnerDesk() {
             <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "add" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "OPEN_ADD_CLIENT" }); }}>Add Client</button>
             <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "pipe" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_PIPELINE" }); }}>Pipeline</button>
             <button className="la-nav-btn la-nav-quiet" data-on={!packagesOpen && view === "calendar" ? "1" : "0"} onClick={() => { setPackagesOpen(false); dispatchAction({ name: "NAVIGATE_CALENDAR" }); }}>Calendar</button>
+            {FLAGS.SELF_SERVE_SIGNUP ? (
+              <a className="la-nav-btn la-nav-quiet" href="/workspace">Workspace</a>
+            ) : null}
             {packageNav.visible ? (
               <button
                 type="button"
