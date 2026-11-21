@@ -32,6 +32,8 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
       leadFollowUpKillSwitch: row.leadFollowUpKillSwitch === true,
       leadGenerationKillSwitch: row.leadGenerationKillSwitch === true,
       aiVisibilityKillSwitch: row.aiVisibilityKillSwitch === true,
+      reviewsKillSwitch: row.reviewsKillSwitch === true,
+      appointmentRemindersKillSwitch: row.appointmentRemindersKillSwitch === true,
     })),
     clients: (state.clients || []).filter((row) => row.tenantId === tenantId),
     enrollments: (state.enrollments || []).filter((row) => row.tenantId === tenantId),
@@ -48,6 +50,11 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     packageRuns: (state.packageRuns || []).filter((row) => row.tenantId === tenantId),
     packageRunSteps: (state.packageRunSteps || []).filter((row) => row.tenantId === tenantId),
     generatedLeads: (state.generatedLeads || []).filter((row) => row.tenantId === tenantId),
+    completedJobs: (state.completedJobs || []).filter((row) => row.tenantId === tenantId),
+    reviewRequestSteps: (state.reviewRequestSteps || []).filter((row) => row.tenantId === tenantId),
+    storedReviews: (state.storedReviews || []).filter((row) => row.tenantId === tenantId),
+    appointments: (state.appointments || []).filter((row) => row.tenantId === tenantId),
+    appointmentSteps: (state.appointmentSteps || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -74,6 +81,11 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     packageRuns: [...(state.packageRuns || []).filter((row) => row.tenantId !== tenantId), ...safe.packageRuns],
     packageRunSteps: [...(state.packageRunSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.packageRunSteps],
     generatedLeads: [...(state.generatedLeads || []).filter((row) => row.tenantId !== tenantId), ...safe.generatedLeads],
+    completedJobs: [...(state.completedJobs || []).filter((row) => row.tenantId !== tenantId), ...safe.completedJobs],
+    reviewRequestSteps: [...(state.reviewRequestSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.reviewRequestSteps],
+    storedReviews: [...(state.storedReviews || []).filter((row) => row.tenantId !== tenantId), ...safe.storedReviews],
+    appointments: [...(state.appointments || []).filter((row) => row.tenantId !== tenantId), ...safe.appointments],
+    appointmentSteps: [...(state.appointmentSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.appointmentSteps],
   };
 }
 
@@ -117,6 +129,8 @@ export function startMarketerOnboarding(state: FulfillmentState, input: Onboardi
     leadFollowUpKillSwitch: false,
     leadGenerationKillSwitch: false,
     aiVisibilityKillSwitch: false,
+    reviewsKillSwitch: false,
+    appointmentRemindersKillSwitch: false,
   };
   return {
     ok: true,

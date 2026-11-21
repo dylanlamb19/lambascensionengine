@@ -1,9 +1,11 @@
 import { tickAiVisibility } from "./ai-visibility.ts";
+import { recordAppointment, tickAppointments } from "./appointment-reminders.ts";
 import { fakeBilling } from "./billing.ts";
 import { stubConnect } from "./connections.ts";
 import { saveClientIntake, tickLeadGeneration } from "./lead-generation.ts";
 import { captureLead, tickLeadFollowUp } from "./lead-follow-up.ts";
-import { recordPurchase, tickFulfillment } from "./runner.ts";
+import { recordCompletedJob, recordStoredReview, tickReviews } from "./reviews-gbp.ts";
+import { addMonthsIso, recordPurchase, tickFulfillment } from "./runner.ts";
 import { startMarketerOnboarding, workspaceIdForUser } from "./tenancy.ts";
 import { EMPTY_FULFILLMENT, type FulfillmentState } from "./types.ts";
 import { credentialsFor } from "./connections.ts";
@@ -120,12 +122,86 @@ export function buildDemoSeed(now = DEMO_NOW): FulfillmentState {
         state = tickLeadGeneration(state, tenantId, now, { enabled: true }).state;
         state = tickAiVisibility(state, tenantId, now, { enabled: true }).state;
       }
+      for (const item of [
+        { clientName: marketer.client, packageId: "reviews-gbp" as const },
+        { clientName: marketer.secondClient, packageId: "appointment-reminders" as const },
+      ]) {
+        const bought = recordPurchase(state, tenantId, {
+          clientName: item.clientName,
+          packageId: item.packageId,
+          setupPayment: "recorded",
+          monthlyPayment: "recorded",
+          startedOn: "2026-11-01",
+        }, now, factory);
+        if (bought.ok) state = bought.state;
+      }
+      const listed = tickFulfillment(state, tenantId, now, { enabled: true, credentials: credentialsFor(state, tenantId) });
+      state = tickFulfillment(listed.state, tenantId, now, { enabled: true, credentials: credentialsFor(listed.state, tenantId) }).state;
     }
+    state = seedServiceCare(state, tenantId, now, factory);
   }
   return {
     ...state,
     workspaces: state.workspaces.map((row) => ({ ...row, onboarding: "desk" as const })),
   };
+}
+
+const SAMPLE_APPOINTMENT = "2026-11-17T15:00:00.000Z";
+
+/** Completed jobs, stored reviews, and booking-calendar reminders for the sample workspaces. */
+function seedServiceCare(state: FulfillmentState, tenantId: string, now: string, factory: () => string): FulfillmentState {
+  for (const kind of ["job_feed", "gbp", "booking_calendar"] as const) {
+    const connected = stubConnect(state, tenantId, kind, now);
+    if (connected.ok) state = connected.state;
+  }
+  const reviews = state.enrollments.find((row) => row.tenantId === tenantId && row.packageId === "reviews-gbp" && row.status === "active");
+  if (reviews) {
+    const client = state.clients.find((row) => row.id === reviews.clientId && row.tenantId === tenantId);
+    const harbor = client?.name === "North Roofing";
+    const intake = saveClientIntake(state, tenantId, {
+      clientId: reviews.clientId,
+      businessName: client?.name || "Client",
+      phone: harbor ? "555-0142" : "555-0160",
+      address: harbor ? "12 Harbor Ave" : "8 County Road",
+      website: harbor ? "https://north.example" : "https://redbarn.example",
+      offer: harbor ? "Roof inspections" : "Barn roof repair",
+      serviceArea: harbor ? "Harbor County" : "Prairie County",
+    }, now, { enabled: true });
+    if (intake.ok) state = intake.state;
+    const job = recordCompletedJob(state, tenantId, {
+      enrollmentId: reviews.id,
+      customerName: harbor ? "Riley Chen" : "Jordan Hale",
+      customerEmail: harbor ? "riley@north.example" : "jordan@redbarn.example",
+      jobLabel: harbor ? "Shingle replacement" : "Barn roof",
+      completedAt: "2026-11-14T15:00:00.000Z",
+      completed: true,
+    }, now, { enabled: true, ids: factory });
+    if (job.ok) state = job.state;
+    const review = recordStoredReview(state, tenantId, {
+      enrollmentId: reviews.id,
+      reviewerName: harbor ? "Riley Chen" : "Jordan Hale",
+      body: harbor ? "The crew kept the yard clean." : "The barn roof was finished on time.",
+    }, now, { enabled: true, ids: factory });
+    if (review.ok) state = review.state;
+    for (let i = 0; i < 6; i += 1) state = tickReviews(state, tenantId, now, { enabled: true }).state;
+    const month = addMonthsIso(now, 1);
+    for (let i = 0; i < 4; i += 1) state = tickReviews(state, tenantId, month, { enabled: true }).state;
+  }
+  const reminders = state.enrollments.find((row) => row.tenantId === tenantId && row.packageId === "appointment-reminders" && row.status === "active");
+  if (reminders) {
+    const client = state.clients.find((row) => row.id === reminders.clientId && row.tenantId === tenantId);
+    const harbor = client?.name === "Lakeside HVAC";
+    const booked = recordAppointment(state, tenantId, {
+      enrollmentId: reminders.id,
+      customerName: harbor ? "Avery Cole" : "Morgan Diaz",
+      customerEmail: harbor ? "avery@lakeside.example" : "morgan@mainstreet.example",
+      startsAt: SAMPLE_APPOINTMENT,
+      calendar: "booking_calendar",
+    }, now, { enabled: true, ids: factory });
+    if (booked.ok) state = booked.state;
+    for (let i = 0; i < 4; i += 1) state = tickAppointments(state, tenantId, now, { enabled: true }).state;
+  }
+  return state;
 }
 
 export type DemoLoad =

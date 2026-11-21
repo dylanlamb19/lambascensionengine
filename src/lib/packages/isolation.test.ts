@@ -105,7 +105,7 @@ test("subscription lifecycle and invoices stay at zero cents", () => {
 
 test("row security policies hide and reject the other tenant", async () => {
   const pg = new PGlite();
-  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql"]) {
+  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql"]) {
     await pg.exec(readFileSync(join(root, "migrations", name), "utf8"));
   }
   await pg.exec(`
@@ -119,10 +119,17 @@ test("row security policies hide and reject the other tenant", async () => {
              ('lead-b', 'ws_b', 'c2', 'enr-b', 'Pat', 'active', '2026-11-15T15:00:00Z');
     insert into package_runs (id, workspace_id, client_id, enrollment_id, package_id, status, opened_at)
       values ('run-a', 'ws_a', 'c1', 'enr-a', 'lead-generation', 'active', '2026-11-15T15:00:00Z'),
+             ('run-r', 'ws_a', 'c1', 'enr-a', 'reviews-gbp', 'active', '2026-11-15T15:00:00Z'),
              ('run-b', 'ws_b', 'c2', 'enr-b', 'ai-visibility', 'active', '2026-11-15T15:00:00Z');
     insert into generated_leads (id, workspace_id, client_id, enrollment_id, contact_name, captured_at)
       values ('gen-a', 'ws_a', 'c1', 'enr-a', 'Sam', '2026-11-15T15:00:00Z'),
              ('gen-b', 'ws_b', 'c2', 'enr-b', 'Pat', '2026-11-15T15:00:00Z');
+    insert into completed_jobs (id, workspace_id, client_id, enrollment_id, customer_name, job_label, completed_at, recorded_at, status)
+      values ('job-a', 'ws_a', 'c1', 'enr-a', 'Riley', 'Roof', '2026-11-14T15:00:00Z', '2026-11-15T15:00:00Z', 'completed'),
+             ('job-b', 'ws_b', 'c2', 'enr-b', 'Jordan', 'Barn', '2026-11-14T15:00:00Z', '2026-11-15T15:00:00Z', 'completed');
+    insert into client_appointments (id, workspace_id, client_id, enrollment_id, customer_name, starts_at, calendar, status, response, outcome, recorded_at)
+      values ('appt-a', 'ws_a', 'c1', 'enr-a', 'Avery', '2026-11-17T15:00:00Z', 'booking_calendar', 'active', 'none', 'unset', '2026-11-15T15:00:00Z'),
+             ('appt-b', 'ws_b', 'c2', 'enr-b', 'Morgan', '2026-11-17T15:00:00Z', 'booking_calendar', 'active', 'none', 'unset', '2026-11-15T15:00:00Z');
   `);
   await pg.exec(`
     do $$ begin
@@ -145,9 +152,15 @@ test("row security policies hide and reject the other tenant", async () => {
   assert.deepEqual(leads.rows.map((row) => row.id), ["lead-a"]);
   await assert.rejects(() => pg.exec(`insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at) values ('lead-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'active', '2026-11-15T15:00:00Z')`));
   const runs = await pg.query<{ id: string }>(`select id from package_runs order by id`);
-  assert.deepEqual(runs.rows.map((row) => row.id), ["run-a"]);
+  assert.deepEqual(runs.rows.map((row) => row.id), ["run-a", "run-r"]);
   const generated = await pg.query<{ id: string }>(`select id from generated_leads order by id`);
   assert.deepEqual(generated.rows.map((row) => row.id), ["gen-a"]);
   await assert.rejects(() => pg.exec(`insert into generated_leads (id, workspace_id, client_id, enrollment_id, contact_name, captured_at) values ('gen-c', 'ws_b', 'c2', 'enr-b', 'Hidden', '2026-11-15T15:00:00Z')`));
+  const jobs = await pg.query<{ id: string }>(`select id from completed_jobs order by id`);
+  assert.deepEqual(jobs.rows.map((row) => row.id), ["job-a"]);
+  const appointments = await pg.query<{ id: string }>(`select id from client_appointments order by id`);
+  assert.deepEqual(appointments.rows.map((row) => row.id), ["appt-a"]);
+  await assert.rejects(() => pg.exec(`insert into completed_jobs (id, workspace_id, client_id, enrollment_id, customer_name, job_label, completed_at, recorded_at, status) values ('job-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'Roof', '2026-11-14T15:00:00Z', '2026-11-15T15:00:00Z', 'completed')`));
+  await assert.rejects(() => pg.exec(`insert into client_appointments (id, workspace_id, client_id, enrollment_id, customer_name, starts_at, calendar, status, response, outcome, recorded_at) values ('appt-c', 'ws_b', 'c2', 'enr-b', 'Hidden', '2026-11-17T15:00:00Z', 'booking_calendar', 'active', 'none', 'unset', '2026-11-15T15:00:00Z')`));
   await pg.close();
 });

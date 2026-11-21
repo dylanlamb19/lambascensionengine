@@ -6,7 +6,7 @@ import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
 import { usageFor } from "@/lib/packages/usage";
 import { workspaceFor } from "@/lib/packages/tenancy";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
-import { clientList, leadFollowUpView, packageRunViews, packageTabs, pipelineView, workspaceSummary, type LeadView, type PackageRunView } from "@/lib/packages/view";
+import { appointmentViews, clientList, leadFollowUpView, packageRunViews, packageTabs, pipelineView, reviewsView, workspaceSummary, type AppointmentItemView, type LeadView, type PackageRunView, type ReviewsView } from "@/lib/packages/view";
 
 const ONBOARDING_STEPS = [
   ["workspace", "Workspace"],
@@ -194,16 +194,28 @@ function GeneratedLeadForm(props: {
   );
 }
 
+function runBlurb(packageId: PackageRunView["packageId"]): string {
+  if (packageId === "lead-generation") {
+    return "Brief, landing page, Google and Meta copy, then a launch that waits for a person. No ad account is used and no spend is set.";
+  }
+  if (packageId === "reviews-gbp") {
+    return "Profile audit, up to two post drafts, and reply drafts from stored data. Replies wait for a person. No Google API is called.";
+  }
+  return "Profile audit and schema draft from stored data, then a recommendation check that waits for a person. No live model or search call is made.";
+}
+
 function PackageRunPanel(props: {
   clientId: string;
   enrollmentId: string;
   runs: PackageRunView[] | null;
   leadGenKill: boolean;
   aiKill: boolean;
+  reviewsKill: boolean;
   onSaveIntake?: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
   onCaptureGeneratedLead?: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
   onLeadGenKill?: (on: boolean) => void;
   onAiKill?: (on: boolean) => void;
+  onReviewsKill?: (on: boolean) => void;
 }) {
   if (!props.runs || props.runs.length === 0) return null;
   const intake = props.runs.find((run) => run.intake)?.intake || props.runs[0]?.intake || null;
@@ -211,14 +223,12 @@ function PackageRunPanel(props: {
     <div data-package-runs="1">
       <IntakeForm key={props.clientId} clientId={props.clientId} intake={intake} onSave={props.onSaveIntake} />
       {props.runs.map((run) => {
-        const stopped = run.packageId === "lead-generation" ? props.leadGenKill : props.aiKill;
+        const stopped = run.packageId === "lead-generation" ? props.leadGenKill : run.packageId === "reviews-gbp" ? props.reviewsKill : props.aiKill;
         return (
           <section key={run.runId} data-package-run={run.packageId} className="mb-4">
             <h2 className="font-display mt-4 mb-2 text-2xl">{run.packageName}</h2>
             <p className="mb-3 text-sm text-muted">
-              {run.packageId === "lead-generation"
-                ? "Brief, landing page, Google and Meta copy, then a launch that waits for a person. No ad account is used and no spend is set."
-                : "Profile audit and schema draft from stored data, then a recommendation check that waits for a person. No live model or search call is made."}
+              {runBlurb(run.packageId)}
               {stopped ? " The workspace kill switch is on." : ""}
             </p>
             {run.packageId === "lead-generation" && props.onLeadGenKill ? (
@@ -229,6 +239,11 @@ function PackageRunPanel(props: {
             {run.packageId === "ai-visibility" && props.onAiKill ? (
               <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onAiKill?.(!props.aiKill)}>
                 {props.aiKill ? "Clear AI visibility kill switch" : "Stop AI visibility for this workspace"}
+              </button>
+            ) : null}
+            {run.packageId === "reviews-gbp" && props.onReviewsKill ? (
+              <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onReviewsKill?.(!props.reviewsKill)}>
+                {props.reviewsKill ? "Clear reviews kill switch" : "Stop reviews for this workspace"}
               </button>
             ) : null}
             {run.packageId === "lead-generation" && props.onCaptureGeneratedLead ? (
@@ -259,6 +274,256 @@ function PackageRunPanel(props: {
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function CompletedJobForm(props: {
+  enrollmentId: string;
+  onRecord: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
+}) {
+  const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [jobLabel, setJobLabel] = useState("");
+  const [completedAt, setCompletedAt] = useState("");
+  const [completed, setCompleted] = useState(false);
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onRecord({
+          enrollmentId: props.enrollmentId,
+          customerName,
+          customerEmail,
+          customerPhone,
+          jobLabel,
+          completedAt: completedAt ? new Date(completedAt).toISOString() : "",
+          completed,
+        });
+        if (!result.ok) {
+          setMessage(result.reason || "That job was not recorded.");
+          return;
+        }
+        setCustomerName("");
+        setCustomerEmail("");
+        setCustomerPhone("");
+        setJobLabel("");
+        setCompletedAt("");
+        setCompleted(false);
+        setMessage("Completed job recorded. The review request is a dry run and asks every customer the same way. Nothing was sent.");
+      }}
+    >
+      <p className="la-kicker">Completed job</p>
+      <p className="mt-2 mb-3 text-sm text-muted">A review request opens only after the job is marked completed. Reviews are not purchased or filtered.</p>
+      <label className="la-label" htmlFor="job-customer">Customer</label>
+      <input id="job-customer" className="la-field mb-3" value={customerName} onChange={(event) => setCustomerName(event.target.value)} />
+      <label className="la-label" htmlFor="job-email">Email</label>
+      <input id="job-email" className="la-field mb-3" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} />
+      <label className="la-label" htmlFor="job-phone">Phone</label>
+      <input id="job-phone" className="la-field mb-3" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} />
+      <label className="la-label" htmlFor="job-label">Job</label>
+      <input id="job-label" className="la-field mb-3" value={jobLabel} onChange={(event) => setJobLabel(event.target.value)} />
+      <label className="la-label" htmlFor="job-done">Completed on</label>
+      <input id="job-done" className="la-field mb-3" type="date" value={completedAt} onChange={(event) => setCompletedAt(event.target.value)} />
+      <label className="mb-3 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={completed} onChange={(event) => setCompleted(event.target.checked)} />
+        This job is completed
+      </label>
+      <button className="la-btn la-btn-primary" type="submit">Record completed job</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function StoredReviewForm(props: {
+  enrollmentId: string;
+  onRecord: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
+}) {
+  const [reviewerName, setReviewerName] = useState("");
+  const [body, setBody] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onRecord({ enrollmentId: props.enrollmentId, reviewerName, body });
+        if (!result.ok) {
+          setMessage(result.reason || "That review was not stored.");
+          return;
+        }
+        setReviewerName("");
+        setBody("");
+        setMessage("Review stored from what you already have. No Google API was called. A reply still needs a person.");
+      }}
+    >
+      <p className="la-kicker">Stored review</p>
+      <label className="la-label mt-3" htmlFor="review-name">Reviewer</label>
+      <input id="review-name" className="la-field mb-3" value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} />
+      <label className="la-label" htmlFor="review-body">Review text</label>
+      <textarea id="review-body" className="la-field mb-3" value={body} onChange={(event) => setBody(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Store review</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function ReviewsPanel(props: {
+  enrollmentId: string;
+  reviews: ReviewsView | null;
+  onRecordJob?: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
+  onRecordStoredReview?: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
+}) {
+  if (!props.reviews) return null;
+  return (
+    <div data-reviews="1">
+      <h2 className="font-display mt-4 mb-2 text-2xl">Review requests</h2>
+      <p className="mb-3 text-sm text-muted">Each request waits for a real completed job. The draft is not sent. Every customer is asked the same way.</p>
+      {props.onRecordJob ? <CompletedJobForm enrollmentId={props.enrollmentId} onRecord={props.onRecordJob} /> : null}
+      {props.onRecordStoredReview ? <StoredReviewForm enrollmentId={props.enrollmentId} onRecord={props.onRecordStoredReview} /> : null}
+      {props.reviews.jobs.length === 0 ? <p className="text-sm text-muted">No completed jobs recorded yet.</p> : null}
+      {props.reviews.jobs.map((job) => (
+        <article key={job.jobId} className="la-card" data-review-job={job.jobId} data-step-status={job.step.status}>
+          <h3 className="text-lg font-display">{job.customerName} · {job.jobLabel}</h3>
+          <p className="mt-1 text-sm text-muted">Completed {job.completedAt}</p>
+          <p className="mt-2 text-sm">{job.step.title}</p>
+          <StepFacts statusLabel={job.step.statusLabel} attempts={job.step.attempts} lastError={job.step.lastError} nextRunAt={job.step.nextRunAt} />
+          {job.step.draftedMessage ? <p className="mt-2 text-sm">Draft: {job.step.draftedMessage}</p> : null}
+          {job.step.logs.length ? (
+            <ul className="mt-2 text-sm text-muted">
+              {job.step.logs.map((log, index) => <li key={`${log.at}-${index}`}>{log.at} — {log.message}</li>)}
+            </ul>
+          ) : null}
+        </article>
+      ))}
+      {props.reviews.storedReviews.length ? (
+        <div className="mt-3">
+          {props.reviews.storedReviews.map((review) => (
+            <p key={review.id} className="mt-2 text-sm" data-stored-review={review.id}>{review.reviewerName}: {review.body}</p>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AppointmentForm(props: {
+  enrollmentId: string;
+  onRecord: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
+}) {
+  const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [startsAt, setStartsAt] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onRecord({
+          enrollmentId: props.enrollmentId,
+          customerName,
+          customerEmail,
+          customerPhone,
+          startsAt: startsAt ? new Date(startsAt).toISOString() : "",
+        });
+        if (!result.ok) {
+          setMessage(result.reason || "That appointment was not recorded.");
+          return;
+        }
+        setCustomerName("");
+        setCustomerEmail("");
+        setCustomerPhone("");
+        setStartsAt("");
+        setMessage("Appointment recorded on this workspace's booking calendar. Nothing was sent. The sales calendar was not read.");
+      }}
+    >
+      <p className="la-kicker">Booking</p>
+      <p className="mt-2 mb-3 text-sm text-muted">Uses the booking calendar connection for this workspace. Reminders are 24 hours and 2 hours before, and they wait through quiet hours.</p>
+      <label className="la-label" htmlFor="appt-name">Customer</label>
+      <input id="appt-name" className="la-field mb-3" value={customerName} onChange={(event) => setCustomerName(event.target.value)} />
+      <label className="la-label" htmlFor="appt-email">Email</label>
+      <input id="appt-email" className="la-field mb-3" value={customerEmail} onChange={(event) => setCustomerEmail(event.target.value)} />
+      <label className="la-label" htmlFor="appt-phone">Phone</label>
+      <input id="appt-phone" className="la-field mb-3" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} />
+      <label className="la-label" htmlFor="appt-start">Starts</label>
+      <input id="appt-start" className="la-field mb-3" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Record appointment</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function AppointmentPanel(props: {
+  enrollmentId: string;
+  appointments: AppointmentItemView[] | null;
+  appointmentsKill: boolean;
+  onRecord?: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
+  onReply?: (input: { appointmentId: string; kind: "confirm" | "reschedule" | "no_show" | "attended"; startsAt?: string }) => { ok: boolean; reason?: string };
+  onKill?: (on: boolean) => void;
+}) {
+  const [rescheduleAt, setRescheduleAt] = useState("");
+  const [note, setNote] = useState("");
+  if (!props.appointments) return null;
+  function reply(appointmentId: string, kind: "confirm" | "reschedule" | "no_show" | "attended") {
+    const result = props.onReply?.({
+      appointmentId,
+      kind,
+      startsAt: kind === "reschedule" && rescheduleAt ? new Date(rescheduleAt).toISOString() : undefined,
+    });
+    if (!props.onReply) return;
+    setNote(result?.ok ? "Noted. Nothing was sent. The sales calendar was not read." : result?.reason || "That was not recorded.");
+  }
+  return (
+    <div data-appointments="1">
+      <h2 className="font-display mt-4 mb-2 text-2xl">Appointment reminders</h2>
+      <p className="mb-3 text-sm text-muted">
+        Confirmation, a 24-hour reminder, a 2-hour reminder, and a no-show draft. Quiet hours hold a send until 8:00. The owner sales calendar is not read.
+        {props.appointmentsKill ? " The workspace kill switch is on." : ""}
+      </p>
+      {props.onKill ? (
+        <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onKill?.(!props.appointmentsKill)}>
+          {props.appointmentsKill ? "Clear appointment kill switch" : "Stop appointment reminders for this workspace"}
+        </button>
+      ) : null}
+      {props.onRecord ? <AppointmentForm enrollmentId={props.enrollmentId} onRecord={props.onRecord} /> : null}
+      {props.appointments.length === 0 ? <p className="text-sm text-muted">No appointments recorded yet.</p> : null}
+      {props.appointments.map((appointment) => (
+        <section key={appointment.id} data-appointment={appointment.id} className="mb-4">
+          <h3 className="font-display text-xl">{appointment.customerName}</h3>
+          <p className="mt-1 text-sm text-muted">{appointment.startsAt} · {appointment.status} · {appointment.response} · {appointment.outcome}</p>
+          {appointment.lastNote ? <p className="mt-2 text-sm">{appointment.lastNote}</p> : null}
+          {props.onReply ? (
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => reply(appointment.id, "confirm")}>Confirm</button>
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => reply(appointment.id, "attended")}>Attended</button>
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => reply(appointment.id, "no_show")}>No-show</button>
+              <label className="text-sm">
+                New time
+                <input className="la-field mt-1" type="datetime-local" value={rescheduleAt} onChange={(event) => setRescheduleAt(event.target.value)} />
+              </label>
+              <button type="button" className="la-btn la-btn-quiet" onClick={() => reply(appointment.id, "reschedule")}>Reschedule</button>
+            </div>
+          ) : null}
+          {appointment.steps.map((step) => (
+            <article key={step.id} className="la-card" data-appointment-step={step.id} data-step-status={step.status}>
+              <h4 className="text-lg font-display">{step.title}</h4>
+              <StepFacts statusLabel={step.statusLabel} attempts={step.attempts} lastError={step.lastError} nextRunAt={step.nextRunAt} />
+              {step.draft ? <p className="mt-2 text-sm">Draft: {step.draft}</p> : null}
+              {step.logs.length ? (
+                <ul className="mt-2 text-sm text-muted">
+                  {step.logs.map((log, index) => <li key={`${log.at}-${index}`}>{log.at} — {log.message}</li>)}
+                </ul>
+              ) : null}
+            </article>
+          ))}
+        </section>
+      ))}
+      {note ? <p className="mt-3 text-sm text-muted">{note}</p> : null}
     </div>
   );
 }
@@ -304,6 +569,12 @@ export function PackageFulfillmentPanel(props: {
   onCaptureGeneratedLead: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
   onLeadGenKill: (on: boolean) => void;
   onAiKill: (on: boolean) => void;
+  onReviewsKill: (on: boolean) => void;
+  onAppointmentsKill: (on: boolean) => void;
+  onRecordJob: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
+  onRecordStoredReview: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
+  onRecordAppointment: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
+  onAppointmentReply: (input: { appointmentId: string; kind: "confirm" | "reschedule" | "no_show" | "attended"; startsAt?: string }) => { ok: boolean; reason?: string };
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
@@ -366,6 +637,10 @@ export function PackageFulfillmentPanel(props: {
         workspaceKill={workspace?.leadFollowUpKillSwitch === true}
         leadGenKill={workspace?.leadGenerationKillSwitch === true}
         aiKill={workspace?.aiVisibilityKillSwitch === true}
+        reviewsKill={workspace?.reviewsKillSwitch === true}
+        appointmentsKill={workspace?.appointmentRemindersKillSwitch === true}
+        reviews={selectedEnrollment ? reviewsView(props.state, props.tenantId, selectedEnrollment) : null}
+        appointments={selectedEnrollment ? appointmentViews(props.state, props.tenantId, selectedEnrollment) : null}
         onBack={props.onBack}
         onSelectEnrollment={props.onSelectEnrollment}
         onStatus={props.onStatus}
@@ -378,6 +653,12 @@ export function PackageFulfillmentPanel(props: {
         onCaptureGeneratedLead={props.onCaptureGeneratedLead}
         onLeadGenKill={props.onLeadGenKill}
         onAiKill={props.onAiKill}
+        onReviewsKill={props.onReviewsKill}
+        onAppointmentsKill={props.onAppointmentsKill}
+        onRecordJob={props.onRecordJob}
+        onRecordStoredReview={props.onRecordStoredReview}
+        onRecordAppointment={props.onRecordAppointment}
+        onAppointmentReply={props.onAppointmentReply}
         billing={<WorkspaceBilling {...props} />}
       />
     );
@@ -401,6 +682,8 @@ export function PackageFulfillmentPanel(props: {
         {workspace?.leadFollowUpKillSwitch ? " Lead follow-up is stopped for this workspace." : ""}
         {workspace?.leadGenerationKillSwitch ? " Lead generation is stopped for this workspace." : ""}
         {workspace?.aiVisibilityKillSwitch ? " AI visibility is stopped for this workspace." : ""}
+        {workspace?.reviewsKillSwitch ? " Reviews are stopped for this workspace." : ""}
+        {workspace?.appointmentRemindersKillSwitch ? " Appointment reminders are stopped for this workspace." : ""}
       </p>
       {workspace ? (
         <div className="mb-4 flex flex-wrap gap-2">
@@ -412,6 +695,12 @@ export function PackageFulfillmentPanel(props: {
           </button>
           <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onAiKill(!workspace.aiVisibilityKillSwitch)}>
             {workspace.aiVisibilityKillSwitch ? "Clear AI visibility kill switch" : "Stop AI visibility for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onReviewsKill(!workspace.reviewsKillSwitch)}>
+            {workspace.reviewsKillSwitch ? "Clear reviews kill switch" : "Stop reviews for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onAppointmentsKill(!workspace.appointmentRemindersKillSwitch)}>
+            {workspace.appointmentRemindersKillSwitch ? "Clear appointment kill switch" : "Stop appointment reminders for this workspace"}
           </button>
         </div>
       ) : null}
@@ -495,6 +784,16 @@ function DemoSample(props: { state: FulfillmentState; tenantId: string; onTenant
             runs={packageRunViews(props.state, props.tenantId, pipeline.enrollmentId)}
             leadGenKill={workspaceSummary(props.state, props.tenantId)?.leadGenerationKillSwitch === true}
             aiKill={workspaceSummary(props.state, props.tenantId)?.aiVisibilityKillSwitch === true}
+            reviewsKill={workspaceSummary(props.state, props.tenantId)?.reviewsKillSwitch === true}
+          />
+          <ReviewsPanel
+            enrollmentId={pipeline.enrollmentId}
+            reviews={reviewsView(props.state, props.tenantId, pipeline.enrollmentId)}
+          />
+          <AppointmentPanel
+            enrollmentId={pipeline.enrollmentId}
+            appointments={appointmentViews(props.state, props.tenantId, pipeline.enrollmentId)}
+            appointmentsKill={workspaceSummary(props.state, props.tenantId)?.appointmentRemindersKillSwitch === true}
           />
         </div>
       ) : (
@@ -835,6 +1134,10 @@ function PackagePipeline(props: {
   workspaceKill: boolean;
   leadGenKill: boolean;
   aiKill: boolean;
+  reviewsKill: boolean;
+  appointmentsKill: boolean;
+  reviews: ReviewsView | null;
+  appointments: AppointmentItemView[] | null;
   onCaptureLead: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
   onLeadReply: (leadId: string) => void;
   onWorkspaceKill: (on: boolean) => void;
@@ -842,6 +1145,12 @@ function PackagePipeline(props: {
   onCaptureGeneratedLead: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
   onLeadGenKill: (on: boolean) => void;
   onAiKill: (on: boolean) => void;
+  onReviewsKill: (on: boolean) => void;
+  onAppointmentsKill: (on: boolean) => void;
+  onRecordJob: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; jobLabel: string; completedAt: string; completed: boolean }) => { ok: boolean; reason?: string };
+  onRecordStoredReview: (input: { enrollmentId: string; reviewerName: string; body: string }) => { ok: boolean; reason?: string };
+  onRecordAppointment: (input: { enrollmentId: string; customerName: string; customerEmail: string; customerPhone: string; startsAt: string }) => { ok: boolean; reason?: string };
+  onAppointmentReply: (input: { appointmentId: string; kind: "confirm" | "reschedule" | "no_show" | "attended"; startsAt?: string }) => { ok: boolean; reason?: string };
   onBack: () => void;
   onSelectEnrollment: (id: string) => void;
   onStatus: (enrollmentId: string, status: EnrollmentStatus) => void;
@@ -934,10 +1243,26 @@ function PackagePipeline(props: {
         runs={props.runs}
         leadGenKill={props.leadGenKill}
         aiKill={props.aiKill}
+        reviewsKill={props.reviewsKill}
         onSaveIntake={props.onSaveIntake}
         onCaptureGeneratedLead={props.onCaptureGeneratedLead}
         onLeadGenKill={props.onLeadGenKill}
         onAiKill={props.onAiKill}
+        onReviewsKill={props.onReviewsKill}
+      />
+      <ReviewsPanel
+        enrollmentId={pipeline.enrollmentId}
+        reviews={props.reviews}
+        onRecordJob={props.onRecordJob}
+        onRecordStoredReview={props.onRecordStoredReview}
+      />
+      <AppointmentPanel
+        enrollmentId={pipeline.enrollmentId}
+        appointments={props.appointments}
+        appointmentsKill={props.appointmentsKill}
+        onRecord={props.onRecordAppointment}
+        onReply={props.onAppointmentReply}
+        onKill={props.onAppointmentsKill}
       />
     </section>
   );

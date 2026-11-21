@@ -29,6 +29,10 @@ export type Workspace = {
   leadGenerationKillSwitch: boolean;
   /** Stops every AI Visibility run in this workspace. Other workspaces are untouched. */
   aiVisibilityKillSwitch: boolean;
+  /** Stops every review request and Google Business Profile draft in this workspace. */
+  reviewsKillSwitch: boolean;
+  /** Stops every appointment reminder in this workspace. Other workspaces are untouched. */
+  appointmentRemindersKillSwitch: boolean;
 };
 
 export type ServiceClient = {
@@ -201,7 +205,7 @@ export type ClientIntake = {
   updatedAt: string;
 };
 
-export type PackageRunId = "lead-generation" | "ai-visibility";
+export type PackageRunId = "lead-generation" | "ai-visibility" | "reviews-gbp";
 export type PackageRunStatus = "active" | "needs_human" | "stopped";
 
 /** One Lead Generation or AI Visibility run on a client's package. */
@@ -251,6 +255,103 @@ export type GeneratedLead = {
   handoffNote: string;
 };
 
+/**
+ * A job that actually finished for one client.
+ * Review requests are created only from rows whose status is completed.
+ * There is no star rating and no filter.
+ */
+export type CompletedJob = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  jobLabel: string;
+  completedAt: string;
+  recordedAt: string;
+  status: "completed";
+};
+
+/** One dry-run review request tied to one completed job. Nothing is sent. */
+export type ReviewRequestStep = {
+  id: string;
+  tenantId: string;
+  jobId: string;
+  enrollmentId: string;
+  clientId: string;
+  stepId: "review-request";
+  title: string;
+  status: StepStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draftedMessage: string | null;
+  logs: { at: string; message: string }[];
+};
+
+/** A review the marketer already has on file. Not read from Google. No star rating. */
+export type StoredReview = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  reviewerName: string;
+  body: string;
+  recordedAt: string;
+};
+
+export type AppointmentStepId = "confirm" | "reminder-24h" | "reminder-2h" | "no-show";
+export type AppointmentResponse = "none" | "confirmed" | "rescheduled";
+export type AppointmentOutcome = "unset" | "attended" | "no_show";
+
+/**
+ * One booking on the client's own booking calendar.
+ * calendar is always the workspace booking-calendar connection.
+ */
+export type ClientAppointment = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  startsAt: string;
+  calendar: "booking_calendar";
+  status: PackageRunStatus;
+  response: AppointmentResponse;
+  outcome: AppointmentOutcome;
+  lastNote: string;
+  recordedAt: string;
+};
+
+/** Confirm, 24h, 2h, and no-show drafts. Nothing is sent. */
+export type AppointmentStep = {
+  id: string;
+  tenantId: string;
+  appointmentId: string;
+  enrollmentId: string;
+  clientId: string;
+  stepId: AppointmentStepId;
+  title: string;
+  status: StepStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draftedMessage: string | null;
+  logs: { at: string; message: string }[];
+};
+
 export type FulfillmentState = {
   workspaces: Workspace[];
   clients: ServiceClient[];
@@ -268,6 +369,11 @@ export type FulfillmentState = {
   packageRuns: PackageRun[];
   packageRunSteps: PackageRunStep[];
   generatedLeads: GeneratedLead[];
+  completedJobs: CompletedJob[];
+  reviewRequestSteps: ReviewRequestStep[];
+  storedReviews: StoredReview[];
+  appointments: ClientAppointment[];
+  appointmentSteps: AppointmentStep[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -287,6 +393,11 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   packageRuns: [],
   packageRunSteps: [],
   generatedLeads: [],
+  completedJobs: [],
+  reviewRequestSteps: [],
+  storedReviews: [],
+  appointments: [],
+  appointmentSteps: [],
 };
 
 export type RecordPurchaseInput = {
