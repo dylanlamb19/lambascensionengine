@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { TenantBrandBar } from "@/components/tenant-brand-bar";
 import { SUBSCRIPTION_EDGES } from "@/lib/packages/billing";
 import { demoSeedAllowed, loadDemoSeed } from "@/lib/packages/demo-seed";
 import { formatUsd, listPackages, type PackageId } from "@/lib/packages/catalog";
@@ -996,6 +997,8 @@ export function PackageFulfillmentPanel(props: {
 
   if (client && pipeline) {
     return (
+      <>
+      <TenantBrandBar state={props.state} tenantId={props.tenantId} />
       <PackagePipeline
         workspaceName={workspace?.name || "Workspace"}
         planName={workspace?.planName || "Test trial"}
@@ -1053,11 +1056,13 @@ export function PackageFulfillmentPanel(props: {
         onMarkOfficeAmbiguous={props.onMarkOfficeAmbiguous}
         billing={<WorkspaceBilling {...props} />}
       />
+      </>
     );
   }
 
   return (
     <section data-fulfillment-root="1" data-tenant-id={props.tenantId}>
+      <TenantBrandBar state={props.state} tenantId={props.tenantId} />
       <p className="la-kicker">Client Package Fulfillment</p>
       <div className="mt-2 mb-2 flex flex-wrap items-center justify-between gap-2">
         <h1 className="font-display text-3xl">Clients and packages</h1>

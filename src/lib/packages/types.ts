@@ -41,6 +41,12 @@ export type Workspace = {
   metaAdsKillSwitch: boolean;
   /** Stops every Office Automation draft in this workspace. Other workspaces are untouched. */
   officeAutomationKillSwitch: boolean;
+  /** Public https URL, or empty when a logo was stored for this workspace only. */
+  logoUrl?: string;
+  brandPrimary?: string;
+  brandAccent?: string;
+  senderDisplayName?: string;
+  timezone?: string;
 };
 
 export type ServiceClient = {
@@ -157,7 +163,7 @@ export type WorkspaceMembership = {
   tenantId: string;
   userId: string;
   email: string;
-  role: "owner" | "marketer";
+  role: "owner" | "admin" | "member" | "marketer";
   status: "accepted";
 };
 
