@@ -105,7 +105,7 @@ test("subscription lifecycle and invoices stay at zero cents", () => {
 
 test("row security policies hide and reject the other tenant", async () => {
   const pg = new PGlite();
-  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql"]) {
+  for (const name of ["0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql", "0022_meta_office_bundle.sql"]) {
     await pg.exec(readFileSync(join(root, "migrations", name), "utf8"));
   }
   await pg.exec(`
@@ -121,7 +121,15 @@ test("row security policies hide and reject the other tenant", async () => {
       values ('run-a', 'ws_a', 'c1', 'enr-a', 'lead-generation', 'active', '2026-11-15T15:00:00Z'),
              ('run-r', 'ws_a', 'c1', 'enr-a', 'reviews-gbp', 'active', '2026-11-15T15:00:00Z'),
              ('run-g', 'ws_a', 'c1', 'enr-a', 'google-ads', 'active', '2026-11-15T15:00:00Z'),
-             ('run-b', 'ws_b', 'c2', 'enr-b', 'ai-visibility', 'active', '2026-11-15T15:00:00Z');
+             ('run-b', 'ws_b', 'c2', 'enr-b', 'ai-visibility', 'active', '2026-11-15T15:00:00Z'),
+             ('run-m', 'ws_a', 'c1', 'enr-a', 'meta-ads', 'active', '2026-11-15T15:00:00Z'),
+             ('run-o', 'ws_b', 'c2', 'enr-b', 'office-automation', 'active', '2026-11-15T15:00:00Z');
+    insert into meta_budget_notes (workspace_id, enrollment_id, client_id, proposed_cents, ambiguous, status, updated_at)
+      values ('ws_a', 'enr-a', 'c1', 40000, false, 'open', '2026-11-15T15:00:00Z'),
+             ('ws_b', 'enr-b', 'c2', 90000, false, 'open', '2026-11-15T15:00:00Z');
+    insert into office_workflows (workspace_id, enrollment_id, client_id, kind, ambiguous, schedule_note, updated_at)
+      values ('ws_a', 'enr-a', 'c1', 'document-collection', false, 'Morning', '2026-11-15T15:00:00Z'),
+             ('ws_b', 'enr-b', 'c2', 'invoice-reminders', false, 'Morning', '2026-11-15T15:00:00Z');
     insert into open_estimates (id, workspace_id, client_id, enrollment_id, customer_name, label, opened_at, recorded_at, outcome, status)
       values ('est-a', 'ws_a', 'c1', 'enr-a', 'Pat', 'Roof', '2026-11-13T15:00:00Z', '2026-11-15T15:00:00Z', 'open', 'active'),
              ('est-b', 'ws_b', 'c2', 'enr-b', 'Casey', 'Barn', '2026-11-13T15:00:00Z', '2026-11-15T15:00:00Z', 'open', 'active');
@@ -159,7 +167,7 @@ test("row security policies hide and reject the other tenant", async () => {
   assert.deepEqual(leads.rows.map((row) => row.id), ["lead-a"]);
   await assert.rejects(() => pg.exec(`insert into follow_up_leads (id, workspace_id, client_id, enrollment_id, contact_name, status, captured_at) values ('lead-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'active', '2026-11-15T15:00:00Z')`));
   const runs = await pg.query<{ id: string }>(`select id from package_runs order by id`);
-  assert.deepEqual(runs.rows.map((row) => row.id), ["run-a", "run-g", "run-r"]);
+  assert.deepEqual(runs.rows.map((row) => row.id), ["run-a", "run-g", "run-m", "run-r"]);
   const generated = await pg.query<{ id: string }>(`select id from generated_leads order by id`);
   assert.deepEqual(generated.rows.map((row) => row.id), ["gen-a"]);
   await assert.rejects(() => pg.exec(`insert into generated_leads (id, workspace_id, client_id, enrollment_id, contact_name, captured_at) values ('gen-c', 'ws_b', 'c2', 'enr-b', 'Hidden', '2026-11-15T15:00:00Z')`));
@@ -175,5 +183,11 @@ test("row security policies hide and reject the other tenant", async () => {
   assert.deepEqual(metrics.rows.map((row) => row.id), ["met-a"]);
   await assert.rejects(() => pg.exec(`insert into open_estimates (id, workspace_id, client_id, enrollment_id, customer_name, label, opened_at, recorded_at, outcome, status) values ('est-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 'Roof', '2026-11-13T15:00:00Z', '2026-11-15T15:00:00Z', 'open', 'active')`));
   await assert.rejects(() => pg.exec(`insert into ads_metric_snapshots (id, workspace_id, client_id, enrollment_id, period_label, impressions, recorded_at, source) values ('met-c', 'ws_b', 'c2', 'enr-b', 'Hidden', 1, '2026-11-15T15:00:00Z', 'stored')`));
+  const budgets = await pg.query<{ enrollment_id: string }>(`select enrollment_id from meta_budget_notes`);
+  assert.deepEqual(budgets.rows.map((row) => row.enrollment_id), ["enr-a"]);
+  const workflows = await pg.query<{ kind: string }>(`select kind from office_workflows`);
+  assert.deepEqual(workflows.rows.map((row) => row.kind), ["document-collection"]);
+  await assert.rejects(() => pg.exec(`insert into meta_budget_notes (workspace_id, enrollment_id, client_id, proposed_cents, ambiguous, status, updated_at) values ('ws_b', 'enr-b', 'c2', 1, false, 'open', '2026-11-15T15:00:00Z')`));
+  await assert.rejects(() => pg.exec(`insert into office_workflows (workspace_id, enrollment_id, client_id, kind, ambiguous, schedule_note, updated_at) values ('ws_b', 'enr-c', 'c2', 'document-collection', false, 'Hidden', '2026-11-15T15:00:00Z')`));
   await pg.close();
 });

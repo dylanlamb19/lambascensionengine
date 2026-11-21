@@ -1,5 +1,5 @@
 import { formatStepReportLine } from "./cadence.ts";
-import { formatMonthly, formatSetup, formatUsd, getPackage } from "./catalog.ts";
+import { formatMonthly, formatSetup, formatUsd, getPackage, listPackages, type PackageId } from "./catalog.ts";
 import { getTestPlan } from "./plans.ts";
 import { listConnections } from "./connections.ts";
 import { intakeFor } from "./package-runs.ts";
@@ -13,6 +13,119 @@ export const STEP_STATUS_LABEL: Record<StepStatus, string> = {
   failed: "failed",
   needs_human: "needs human",
 };
+
+export type AggregateStatus = "pending" | "running" | "done" | "failed" | "needs_human" | "killed";
+
+export type BundleMemberView = {
+  packageId: PackageId;
+  name: string;
+  status: AggregateStatus;
+  deduped: boolean;
+  enrollmentId: string;
+};
+
+export type BundleRollup = {
+  status: AggregateStatus;
+  members: BundleMemberView[];
+};
+
+export type PackageOverviewRow = {
+  packageId: PackageId;
+  name: string;
+  purchased: boolean;
+  enrollmentId: string | null;
+  status: EnrollmentStatus | "not_purchased";
+  viaBundle: boolean;
+  killSwitch: boolean;
+  detail: AggregateStatus | null;
+};
+
+function workspacePipelineKilled(state: FulfillmentState, tenantId: string, packageId: PackageId): boolean {
+  const workspace = workspaceFor(state, tenantId);
+  if (!workspace) return false;
+  if (packageId === "lead-follow-up") return workspace.leadFollowUpKillSwitch === true;
+  if (packageId === "lead-generation") return workspace.leadGenerationKillSwitch === true;
+  if (packageId === "ai-visibility") return workspace.aiVisibilityKillSwitch === true;
+  if (packageId === "reviews-gbp") return workspace.reviewsKillSwitch === true;
+  if (packageId === "appointment-reminders") return workspace.appointmentRemindersKillSwitch === true;
+  if (packageId === "estimate-follow-ups") return workspace.estimateFollowUpsKillSwitch === true;
+  if (packageId === "google-ads") return workspace.googleAdsKillSwitch === true;
+  if (packageId === "meta-ads") return workspace.metaAdsKillSwitch === true;
+  if (packageId === "office-automation") return workspace.officeAutomationKillSwitch === true;
+  return false;
+}
+
+function aggregateSteps(steps: { status: StepStatus }[], killed: boolean): AggregateStatus {
+  if (killed) return "killed";
+  if (steps.length === 0) return "pending";
+  if (steps.some((step) => step.status === "failed")) return "failed";
+  if (steps.some((step) => step.status === "needs_human")) return "needs_human";
+  if (steps.some((step) => step.status === "running")) return "running";
+  if (steps.some((step) => step.status === "pending")) return steps.some((step) => step.status === "done") ? "running" : "pending";
+  if (steps.every((step) => step.status === "done")) return "done";
+  return "pending";
+}
+
+function worse(current: AggregateStatus, next: AggregateStatus): AggregateStatus {
+  const rank: Record<AggregateStatus, number> = { killed: 5, failed: 4, needs_human: 3, running: 2, pending: 1, done: 0 };
+  return rank[next] > rank[current] ? next : current;
+}
+
+/** One status for a bundle purchase, including a member that was bought on its own. */
+export function bundleRollup(state: FulfillmentState, tenantId: string, enrollmentId: string): BundleRollup | null {
+  const enrollment = state.enrollments.find((row) => row.id === enrollmentId && row.tenantId === tenantId);
+  if (!enrollment || enrollment.packageId !== "google-meta-ai") return null;
+  const members = enrollment.includedPackageIds.map((packageId) => {
+    const standalone = state.enrollments.find((row) =>
+      row.tenantId === tenantId
+      && row.clientId === enrollment.clientId
+      && row.packageId === packageId
+      && row.status !== "cancelled",
+    );
+    const owner = standalone || enrollment;
+    const steps = [
+      ...state.steps.filter((step) => step.tenantId === tenantId && step.enrollmentId === owner.id && step.sourcePackageId === packageId),
+      ...(state.packageRunSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === owner.id && step.packageId === packageId),
+    ];
+    const killed = enrollment.killSwitch || owner.killSwitch || workspacePipelineKilled(state, tenantId, packageId);
+    return {
+      packageId,
+      name: getPackage(packageId).name,
+      status: aggregateSteps(steps, killed),
+      deduped: Boolean(standalone),
+      enrollmentId: owner.id,
+    };
+  });
+  const status = enrollment.killSwitch
+    ? "killed"
+    : members.reduce<AggregateStatus>((current, member) => worse(current, member.status), "done");
+  return { status: members.length === 0 ? "pending" : status, members };
+}
+
+/** Every catalog package for one client, including ones that were not purchased. */
+export function clientPackageOverview(state: FulfillmentState, tenantId: string, clientId: string): PackageOverviewRow[] | null {
+  const client = state.clients.find((row) => row.id === clientId && row.tenantId === tenantId);
+  if (!client) return null;
+  const enrollments = state.enrollments.filter((row) => row.tenantId === tenantId && row.clientId === clientId && row.status !== "cancelled");
+  const bundle = enrollments.find((row) => row.packageId === "google-meta-ai");
+  const rollup = bundle ? bundleRollup(state, tenantId, bundle.id) : null;
+  return listPackages().map((pkg) => {
+    const direct = enrollments.find((row) => row.packageId === pkg.id);
+    const viaBundle = !direct && Boolean(bundle && bundle.includedPackageIds.includes(pkg.id));
+    const row = direct || (viaBundle ? bundle : null);
+    const member = rollup?.members.find((item) => item.packageId === pkg.id) || null;
+    return {
+      packageId: pkg.id,
+      name: pkg.name,
+      purchased: Boolean(row),
+      enrollmentId: direct?.id || (viaBundle ? bundle?.id || null : null),
+      status: row ? row.status : "not_purchased",
+      viaBundle,
+      killSwitch: direct?.killSwitch === true || (viaBundle && bundle?.killSwitch === true) || false,
+      detail: pkg.id === "google-meta-ai" ? rollup?.status || null : member?.status || null,
+    };
+  });
+}
 
 export function deliverableStatus(status: StepStatus): DeliverableStatus {
   if (status === "pending") return "not_started";
@@ -84,6 +197,7 @@ export type PipelineView = {
   nextRunAt: string | null;
   steps: StepView[];
   deliverables: { id: string; title: string; status: DeliverableStatus }[];
+  bundle: BundleRollup | null;
 };
 
 export function pipelineView(state: FulfillmentState, tenantId: string, enrollmentId: string): PipelineView | null {
@@ -126,6 +240,7 @@ export function pipelineView(state: FulfillmentState, tenantId: string, enrollme
       title: step.title,
       status: deliverableStatus(step.status),
     })),
+    bundle: bundleRollup(state, tenantId, enrollment.id),
   };
 }
 
@@ -142,6 +257,9 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
   appointmentRemindersKillSwitch: boolean;
   estimateFollowUpsKillSwitch: boolean;
   googleAdsKillSwitch: boolean;
+  metaAdsKillSwitch: boolean;
+  officeAutomationKillSwitch: boolean;
+  adBudgetCapCents: number | null;
   clientLimit: number | null;
   connections: { kind: string; label: string; status: "missing" | "stub_connected" }[];
 } | null {
@@ -160,6 +278,9 @@ export function workspaceSummary(state: FulfillmentState, tenantId: string): {
     appointmentRemindersKillSwitch: workspace.appointmentRemindersKillSwitch === true,
     estimateFollowUpsKillSwitch: workspace.estimateFollowUpsKillSwitch === true,
     googleAdsKillSwitch: workspace.googleAdsKillSwitch === true,
+    metaAdsKillSwitch: workspace.metaAdsKillSwitch === true,
+    officeAutomationKillSwitch: workspace.officeAutomationKillSwitch === true,
+    adBudgetCapCents: getTestPlan(workspace.planId).adBudgetCapCents,
     clientLimit: getTestPlan(workspace.planId).clientLimit,
     connections: listConnections(state, tenantId).map((row) => ({ kind: row.kind, label: row.label, status: row.status })),
   };
@@ -250,7 +371,11 @@ export type PackageRunView = {
   steps: PackageRunStepView[];
   leads: GeneratedLeadView[];
   metrics: { id: string; periodLabel: string; line: string }[];
+  enrollmentId: string;
+  deduped: boolean;
   changeNote: { summary: string; ambiguous: boolean; status: string } | null;
+  budget: { proposedCents: number | null; capCents: number | null; ambiguous: boolean; status: string; line: string } | null;
+  office: { kind: string; ambiguous: boolean; scheduleNote: string } | null;
   intake: {
     businessName: string;
     phone: string;
@@ -267,66 +392,106 @@ export function packageRunViews(state: FulfillmentState, tenantId: string, enrol
   if (!enrollment) return null;
   const owned = state.clients.some((row) => row.id === enrollment.clientId && row.tenantId === tenantId);
   if (!owned) return null;
-  const runs = (state.packageRuns || []).filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id);
+  const own = (state.packageRuns || []).filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id);
+  const extras = enrollment.packageId === "google-meta-ai"
+    ? enrollment.includedPackageIds.flatMap((part) => {
+        if (own.some((run) => run.packageId === part)) return [];
+        const standalone = state.enrollments.find((row) =>
+          row.tenantId === tenantId && row.clientId === enrollment.clientId && row.packageId === part && row.status !== "cancelled",
+        );
+        if (!standalone) return [];
+        const run = (state.packageRuns || []).find((row) => row.tenantId === tenantId && row.enrollmentId === standalone.id && row.packageId === part);
+        return run ? [{ run, deduped: true }] : [];
+      })
+    : [];
+  const runs = [...own.map((run) => ({ run, deduped: false })), ...extras];
   if (runs.length === 0) return [];
   const intake = intakeFor(state, tenantId, enrollment.clientId);
-  return runs.map((run) => ({
-    runId: run.id,
-    packageId: run.packageId,
-    packageName: getPackage(run.packageId).name,
-    status: run.status,
-    intake: intake
-      ? {
-          businessName: intake.businessName,
-          phone: intake.phone,
-          address: intake.address,
-          website: intake.website,
-          offer: intake.offer,
-          serviceArea: intake.serviceArea,
-        }
-      : null,
-    leads: run.packageId === "lead-generation"
-      ? (state.generatedLeads || [])
-          .filter((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id)
-          .map((row) => ({
-            id: row.id,
-            contactName: row.contactName,
-            contactEmail: row.contactEmail,
-            capturedAt: row.capturedAt,
-            followUpLeadId: row.followUpLeadId,
-            handoffNote: row.handoffNote,
-          }))
-      : [],
-    metrics: run.packageId === "google-ads"
-      ? (state.adsMetrics || [])
-          .filter((row) => row.tenantId === tenantId && row.clientId === enrollment.clientId && row.source === "stored")
-          .map((row) => ({
-            id: row.id,
-            periodLabel: row.periodLabel,
-            line: `Impressions ${row.impressions ?? "UNKNOWN"} · clicks ${row.clicks ?? "UNKNOWN"} · conversions ${row.conversions ?? "UNKNOWN"} · spend ${row.spendCents == null ? "UNKNOWN" : row.spendCents}`,
-          }))
-      : [],
-    changeNote: run.packageId === "google-ads"
-      ? (() => {
-          const note = (state.adsChangeNotes || []).find((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id);
-          return note ? { summary: note.summary, ambiguous: note.ambiguous, status: note.status } : null;
-        })()
-      : null,
-    steps: (state.packageRunSteps || [])
-      .filter((step) => step.tenantId === tenantId && step.runId === run.id)
-      .map((step) => ({
-        id: step.id,
-        title: step.title,
-        status: step.status,
-        statusLabel: STEP_STATUS_LABEL[step.status],
-        attempts: step.attempts,
-        lastError: step.lastError,
-        nextRunAt: step.nextRunAt,
-        output: step.output,
-        draft: step.draft,
-        logs: step.logs,
-      })),
-  }));
+  const cap = workspaceFor(state, tenantId) ? getTestPlan(workspaceFor(state, tenantId)!.planId).adBudgetCapCents : null;
+  return runs.map(({ run, deduped }) => {
+    const meta = run.packageId === "meta-ads"
+      ? (state.metaBudgetNotes || []).find((row) => row.tenantId === tenantId && row.enrollmentId === run.enrollmentId) || null
+      : null;
+    const office = run.packageId === "office-automation"
+      ? (state.officeWorkflows || []).find((row) => row.tenantId === tenantId && row.enrollmentId === run.enrollmentId) || null
+      : null;
+    const budgetLine = !meta
+      ? "No budget proposal on file. Nothing was spent."
+      : meta.ambiguous
+        ? "The budget proposal is ambiguous. Nothing was spent."
+        : meta.proposedCents == null
+          ? "A budget proposal is not on file. Nothing was spent."
+          : cap != null && meta.proposedCents > cap
+            ? `Proposed ${meta.proposedCents} cents is over the test plan cap of ${cap} cents. Nothing was spent.`
+            : `Proposed ${meta.proposedCents} cents. Cap ${cap == null ? "none" : `${cap} cents`}. Nothing was spent.`;
+    return {
+      runId: run.id,
+      packageId: run.packageId,
+      packageName: getPackage(run.packageId).name,
+      status: run.status,
+      enrollmentId: run.enrollmentId,
+      deduped,
+      intake: intake
+        ? {
+            businessName: intake.businessName,
+            phone: intake.phone,
+            address: intake.address,
+            website: intake.website,
+            offer: intake.offer,
+            serviceArea: intake.serviceArea,
+          }
+        : null,
+      leads: run.packageId === "lead-generation"
+        ? (state.generatedLeads || [])
+            .filter((row) => row.tenantId === tenantId && row.enrollmentId === run.enrollmentId)
+            .map((row) => ({
+              id: row.id,
+              contactName: row.contactName,
+              contactEmail: row.contactEmail,
+              capturedAt: row.capturedAt,
+              followUpLeadId: row.followUpLeadId,
+              handoffNote: row.handoffNote,
+            }))
+        : [],
+      metrics: run.packageId === "google-ads"
+        ? (state.adsMetrics || [])
+            .filter((row) => row.tenantId === tenantId && row.clientId === enrollment.clientId && row.source === "stored")
+            .map((row) => ({
+              id: row.id,
+              periodLabel: row.periodLabel,
+              line: `Impressions ${row.impressions ?? "UNKNOWN"} · clicks ${row.clicks ?? "UNKNOWN"} · conversions ${row.conversions ?? "UNKNOWN"} · spend ${row.spendCents == null ? "UNKNOWN" : row.spendCents}`,
+            }))
+        : [],
+      changeNote: run.packageId === "google-ads"
+        ? (() => {
+            const note = (state.adsChangeNotes || []).find((row) => row.tenantId === tenantId && row.enrollmentId === run.enrollmentId);
+            return note ? { summary: note.summary, ambiguous: note.ambiguous, status: note.status } : null;
+          })()
+        : meta
+          ? { summary: budgetLine, ambiguous: meta.ambiguous, status: meta.status }
+          : null,
+      budget: meta
+        ? { proposedCents: meta.proposedCents, capCents: cap, ambiguous: meta.ambiguous, status: meta.status, line: budgetLine }
+        : null,
+      office: office
+        ? { kind: office.kind, ambiguous: office.ambiguous, scheduleNote: office.scheduleNote }
+        : null,
+      steps: (state.packageRunSteps || [])
+        .filter((step) => step.tenantId === tenantId && step.runId === run.id)
+        .map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+          statusLabel: STEP_STATUS_LABEL[step.status],
+          attempts: step.attempts,
+          lastError: step.lastError,
+          nextRunAt: step.nextRunAt,
+          output: step.output,
+          draft: step.draft,
+          logs: step.logs,
+        })),
+    };
+  });
 }
 
 export type ReviewJobView = {
@@ -470,7 +635,7 @@ export function appointmentViews(state: FulfillmentState, tenantId: string, enro
 export function formatFulfillmentStepReport(state: FulfillmentState, tenantId: string): string {
   const summary = workspaceSummary(state, tenantId);
   const lines: string[] = [];
-  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"} · reviews kill switch ${summary?.reviewsKillSwitch ? "on" : "off"} · appointment reminders kill switch ${summary?.appointmentRemindersKillSwitch ? "on" : "off"} · estimate follow-ups kill switch ${summary?.estimateFollowUpsKillSwitch ? "on" : "off"} · google ads kill switch ${summary?.googleAdsKillSwitch ? "on" : "off"}`);
+  lines.push(`${summary?.name || "Workspace"} · lead follow-up kill switch ${summary?.leadFollowUpKillSwitch ? "on" : "off"} · lead generation kill switch ${summary?.leadGenerationKillSwitch ? "on" : "off"} · ai visibility kill switch ${summary?.aiVisibilityKillSwitch ? "on" : "off"} · reviews kill switch ${summary?.reviewsKillSwitch ? "on" : "off"} · appointment reminders kill switch ${summary?.appointmentRemindersKillSwitch ? "on" : "off"} · estimate follow-ups kill switch ${summary?.estimateFollowUpsKillSwitch ? "on" : "off"} · google ads kill switch ${summary?.googleAdsKillSwitch ? "on" : "off"} · meta ads kill switch ${summary?.metaAdsKillSwitch ? "on" : "off"} · office automation kill switch ${summary?.officeAutomationKillSwitch ? "on" : "off"}`);
   for (const client of clientList(state, tenantId)) {
     lines.push(`Client: ${client.name}`);
     for (const pkg of client.packages) {

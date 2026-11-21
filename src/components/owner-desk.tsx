@@ -97,6 +97,8 @@ import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
 import { handleAppointmentReply, recordAppointment, setAppointmentRemindersKillSwitch } from "@/lib/packages/appointment-reminders";
 import { decideEstimate, recordOpenEstimate, setEstimateFollowUpsKillSwitch } from "@/lib/packages/estimate-follow-ups";
 import { approveAdsChange, recordAdsMetrics, saveAdsChangeNote, setGoogleAdsKillSwitch } from "@/lib/packages/google-ads";
+import { approveMetaPlan, saveMetaBudget, setMetaAdsKillSwitch } from "@/lib/packages/meta-ads";
+import { saveOfficeWorkflow, setOfficeAutomationKillSwitch } from "@/lib/packages/office-automation";
 import { setAiVisibilityKillSwitch } from "@/lib/packages/ai-visibility";
 import { captureGeneratedLead, saveClientIntake, setLeadGenerationKillSwitch } from "@/lib/packages/lead-generation";
 import { recordCompletedJob, recordStoredReview, setReviewsKillSwitch } from "@/lib/packages/reviews-gbp";
@@ -2693,6 +2695,8 @@ export function OwnerDesk() {
             onAppointmentsKill={(on) => mutatePackage(setAppointmentRemindersKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onEstimatesKill={(on) => mutatePackage(setEstimateFollowUpsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onAdsKill={(on) => mutatePackage(setGoogleAdsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onMetaKill={(on) => mutatePackage(setMetaAdsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onOfficeKill={(on) => mutatePackage(setOfficeAutomationKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onRecordJob={(input) => {
               const now = new Date().toISOString();
               const recorded = recordCompletedJob(pkgRef.current, packageTenantId, input, now);
@@ -2773,6 +2777,47 @@ export function OwnerDesk() {
             onMarkAdsAmbiguous={(enrollmentId) => {
               const now = new Date().toISOString();
               const noted = saveAdsChangeNote(pkgRef.current, packageTenantId, { enrollmentId, ambiguous: true }, now);
+              if (!noted.ok) return { ok: false, reason: noted.reason };
+              mutatePackage(noted.state);
+              return { ok: true };
+            }}
+            onSaveMetaBudget={(input) => {
+              const now = new Date().toISOString();
+              const saved = saveMetaBudget(pkgRef.current, packageTenantId, input, now);
+              if (!saved.ok) return { ok: false, reason: saved.reason };
+              const ticked = tickPackagePipelines(saved.state, packageTenantId, now, {
+                credentials: credentialsFor(saved.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onApproveMeta={(enrollmentId) => {
+              const now = new Date().toISOString();
+              const approved = approveMetaPlan(pkgRef.current, packageTenantId, enrollmentId, now);
+              if (!approved.ok) return { ok: false, reason: approved.reason };
+              mutatePackage(approved.state);
+              return { ok: true };
+            }}
+            onMarkMetaAmbiguous={(enrollmentId) => {
+              const now = new Date().toISOString();
+              const noted = saveMetaBudget(pkgRef.current, packageTenantId, { enrollmentId, ambiguous: true, proposedCents: null }, now);
+              if (!noted.ok) return { ok: false, reason: noted.reason };
+              mutatePackage(noted.state);
+              return { ok: true };
+            }}
+            onSaveOfficeWorkflow={(input) => {
+              const now = new Date().toISOString();
+              const saved = saveOfficeWorkflow(pkgRef.current, packageTenantId, input, now);
+              if (!saved.ok) return { ok: false, reason: saved.reason };
+              const ticked = tickPackagePipelines(saved.state, packageTenantId, now, {
+                credentials: credentialsFor(saved.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onMarkOfficeAmbiguous={(enrollmentId) => {
+              const now = new Date().toISOString();
+              const noted = saveOfficeWorkflow(pkgRef.current, packageTenantId, { enrollmentId, ambiguous: true }, now);
               if (!noted.ok) return { ok: false, reason: noted.reason };
               mutatePackage(noted.state);
               return { ok: true };

@@ -65,7 +65,7 @@ test("this app's migrations are all pending against a fresh database, and the au
   // source" below) and the enrichment daily-cap fix added its own table.
   const migrationsDir = join(projectRoot(), "migrations");
   const pending = pendingMigrations(readdirSync(migrationsDir), []).map((m) => m.name);
-  assert.deepEqual(pending, ["0001_auth.sql", "0002_enrichment_usage.sql", "0003_prospects.sql", "0004_outreach.sql", "0005_outreach_reliability.sql", "0006_test_mode.sql", "0007_worker_heartbeat.sql", "0008_ara_research.sql", "0009_industry_attack.sql", "0010_visual_theme.sql", "0011_visual_assets.sql", "0012_image_gallery.sql", "0013_image_generation.sql", "0014_design_director.sql", "0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql"]);
+  assert.deepEqual(pending, ["0001_auth.sql", "0002_enrichment_usage.sql", "0003_prospects.sql", "0004_outreach.sql", "0005_outreach_reliability.sql", "0006_test_mode.sql", "0007_worker_heartbeat.sql", "0008_ara_research.sql", "0009_industry_attack.sql", "0010_visual_theme.sql", "0011_visual_assets.sql", "0012_image_gallery.sql", "0013_image_generation.sql", "0014_design_director.sql", "0015_client_packages.sql", "0016_workspace_connections.sql", "0017_tenant_rls.sql", "0018_lead_follow_up.sql", "0019_lead_gen_ai_visibility.sql", "0020_reviews_appointments.sql", "0021_estimate_google_ads.sql", "0022_meta_office_bundle.sql"]);
   assert.ok(readdirSync(join(migrationsDir, "auth")).includes("0001_auth.sql"));
 });
 

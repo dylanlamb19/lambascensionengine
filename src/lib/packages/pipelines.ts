@@ -3,6 +3,8 @@ import { tickAiVisibility } from "./ai-visibility.ts";
 import { packagePipelineEnabled } from "./cadence.ts";
 import { tickEstimates } from "./estimate-follow-ups.ts";
 import { tickGoogleAds } from "./google-ads.ts";
+import { tickMetaAds } from "./meta-ads.ts";
+import { tickOfficeAutomation } from "./office-automation.ts";
 import { tickLeadFollowUp, type LeadFlag } from "./lead-follow-up.ts";
 import { tickLeadGeneration } from "./lead-generation.ts";
 import { tickReviews } from "./reviews-gbp.ts";
@@ -28,6 +30,8 @@ export function tickPackagePipelines(
     runAppointmentStep?: (step: AppointmentStep) => void;
     runEstimateStep?: (step: EstimateStep) => void;
     runAdsStep?: (step: PackageRunStep) => void;
+    runMetaStep?: (step: PackageRunStep) => void;
+    runOfficeStep?: (step: PackageRunStep) => void;
   } = {},
 ): { state: FulfillmentState; advanced: number } {
   if (!packagePipelineEnabled(opts.enabled)) return { state, advanced: 0 };
@@ -64,8 +68,16 @@ export function tickPackagePipelines(
     enabled: true,
     runStep: opts.runAdsStep,
   });
+  const metaTick = tickMetaAds(adsTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runMetaStep,
+  });
+  const officeTick = tickOfficeAutomation(metaTick.state, tenantId, now, {
+    enabled: true,
+    runStep: opts.runOfficeStep,
+  });
   return {
-    state: adsTick.state,
-    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced + reviewsTick.advanced + appointmentTick.advanced + estimateTick.advanced + adsTick.advanced,
+    state: officeTick.state,
+    advanced: packageTick.advanced + leadTick.advanced + generationTick.advanced + visibilityTick.advanced + reviewsTick.advanced + appointmentTick.advanced + estimateTick.advanced + adsTick.advanced + metaTick.advanced + officeTick.advanced,
   };
 }

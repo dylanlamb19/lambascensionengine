@@ -50,7 +50,7 @@ test("the demo seed is two isolated workspaces and refuses production", () => {
   const day3 = harborLeads.leadSteps.find((row) => row.stepId === "day-3");
   assert.equal(day3?.status, "pending");
   assert.equal(day3?.nextRunAt, "2026-11-16T15:00:00.000Z");
-  assert.equal(harborLeads.packageRuns.map((row) => row.packageId).sort().join(), "ai-visibility,google-ads,lead-generation,reviews-gbp");
+  assert.equal(harborLeads.packageRuns.map((row) => row.packageId).sort().join(), "ai-visibility,google-ads,lead-generation,meta-ads,office-automation,reviews-gbp");
   assert.equal(harborLeads.packageRunSteps.find((row) => row.stepId === "launch")?.status, "needs_human");
   assert.match(harborLeads.packageRunSteps.find((row) => row.stepId === "ad-copy")?.draft || "", /Google/);
   assert.match(harborLeads.packageRunSteps.find((row) => row.stepId === "ad-copy")?.draft || "", /Meta/);

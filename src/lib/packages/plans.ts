@@ -16,6 +16,11 @@ export type TestPlan = {
   clientLimit: number | null;
   enrollmentLimit: number | null;
   pipelineRunLimit: number | null;
+  /**
+   * Recorded ceiling for a Meta budget recommendation, in cents.
+   * Null means the test plan has no ceiling. This is not spend and not a charge.
+   */
+  adBudgetCapCents: number | null;
 };
 
 export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
@@ -27,6 +32,7 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     clientLimit: 3,
     enrollmentLimit: 5,
     pipelineRunLimit: 40,
+    adBudgetCapCents: 50000,
   },
   test_operator: {
     id: "test_operator",
@@ -36,6 +42,7 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     clientLimit: 25,
     enrollmentLimit: 100,
     pipelineRunLimit: 500,
+    adBudgetCapCents: 250000,
   },
   test_agency: {
     id: "test_agency",
@@ -45,6 +52,7 @@ export const TEST_PLANS: Record<TestPlanId, TestPlan> = {
     clientLimit: null,
     enrollmentLimit: null,
     pipelineRunLimit: null,
+    adBudgetCapCents: null,
   },
 };
 

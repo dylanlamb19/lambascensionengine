@@ -1,6 +1,6 @@
-import type { PackageId } from "./catalog.ts";
+import { PACKAGE_IDS, type PackageId } from "./catalog.ts";
 import { workspaceFor } from "./tenancy.ts";
-import type { FulfillmentState } from "./types.ts";
+import type { FulfillmentState, StepStatus, Workspace } from "./types.ts";
 
 export type SentinelPipelineHealth = "disabled" | "idle" | "healthy" | "degraded" | "stopped";
 
@@ -21,7 +21,100 @@ export type SentinelPackageReport = {
     lastFinishedAt: string | null;
     nextRunAt: string | null;
   }>;
+  /** Counts per pipeline for this workspace. Calling this does not start or stop anything. */
+  summary: SentinelPipelineCounts[];
 };
+
+export type SentinelPipelineCounts = {
+  packageId: PackageId;
+  running: number;
+  failed: number;
+  needsHuman: number;
+  killed: number;
+};
+
+function emptyCounts(): Map<PackageId, SentinelPipelineCounts> {
+  const map = new Map<PackageId, SentinelPipelineCounts>();
+  for (const packageId of PACKAGE_IDS) {
+    map.set(packageId, { packageId, running: 0, failed: 0, needsHuman: 0, killed: 0 });
+  }
+  return map;
+}
+
+function tally(map: Map<PackageId, SentinelPipelineCounts>, packageId: string, status: StepStatus) {
+  const row = map.get(packageId as PackageId);
+  if (!row) return;
+  if (status === "running") row.running += 1;
+  else if (status === "failed") row.failed += 1;
+  else if (status === "needs_human") row.needsHuman += 1;
+}
+
+function workspaceKilled(workspace: Workspace, packageId: PackageId): boolean {
+  if (packageId === "lead-follow-up") return workspace.leadFollowUpKillSwitch === true;
+  if (packageId === "lead-generation") return workspace.leadGenerationKillSwitch === true;
+  if (packageId === "ai-visibility") return workspace.aiVisibilityKillSwitch === true;
+  if (packageId === "reviews-gbp") return workspace.reviewsKillSwitch === true;
+  if (packageId === "appointment-reminders") return workspace.appointmentRemindersKillSwitch === true;
+  if (packageId === "estimate-follow-ups") return workspace.estimateFollowUpsKillSwitch === true;
+  if (packageId === "google-ads") return workspace.googleAdsKillSwitch === true;
+  if (packageId === "meta-ads") return workspace.metaAdsKillSwitch === true;
+  if (packageId === "office-automation") return workspace.officeAutomationKillSwitch === true;
+  return false;
+}
+
+/**
+ * Counts of running, failed, needs-human, and killed work per pipeline.
+ * Scoped to one workspace. Does not start pipelines and does not disable Sentinel.
+ */
+export function fulfillmentHealthSummary(state: FulfillmentState, tenantId: string): SentinelPipelineCounts[] {
+  const map = emptyCounts();
+  const workspace = workspaceFor(state, tenantId);
+  if (!workspace) return PACKAGE_IDS.map((id) => map.get(id)!);
+  const enrollments = state.enrollments.filter((row) => row.tenantId === tenantId);
+  for (const step of state.steps) {
+    if (step.tenantId === tenantId) tally(map, step.sourcePackageId, step.status);
+  }
+  for (const step of state.packageRunSteps || []) {
+    if (step.tenantId === tenantId) tally(map, step.packageId, step.status);
+  }
+  for (const step of state.leadSteps || []) {
+    if (step.tenantId === tenantId) tally(map, "lead-follow-up", step.status);
+  }
+  for (const step of state.reviewRequestSteps || []) {
+    if (step.tenantId === tenantId) tally(map, "reviews-gbp", step.status);
+  }
+  for (const step of state.appointmentSteps || []) {
+    if (step.tenantId === tenantId) tally(map, "appointment-reminders", step.status);
+  }
+  for (const step of state.estimateSteps || []) {
+    if (step.tenantId === tenantId) tally(map, "estimate-follow-ups", step.status);
+  }
+  const separate = (clientId: string, packageId: PackageId, exceptId: string) => enrollments.some((row) =>
+    row.clientId === clientId && row.id !== exceptId && row.packageId === packageId && row.status !== "cancelled",
+  );
+  for (const enrollment of enrollments) {
+    if (enrollment.status === "cancelled") continue;
+    if (enrollment.packageId === "google-meta-ai") {
+      if (enrollment.killSwitch) {
+        const bundle = map.get("google-meta-ai");
+        if (bundle) bundle.killed += 1;
+      }
+      for (const part of enrollment.includedPackageIds) {
+        if (separate(enrollment.clientId, part, enrollment.id)) continue;
+        if (enrollment.killSwitch || workspaceKilled(workspace, part)) {
+          const row = map.get(part);
+          if (row) row.killed += 1;
+        }
+      }
+      continue;
+    }
+    if (enrollment.killSwitch || workspaceKilled(workspace, enrollment.packageId)) {
+      const row = map.get(enrollment.packageId);
+      if (row) row.killed += 1;
+    }
+  }
+  return PACKAGE_IDS.map((id) => map.get(id)!);
+}
 
 function nextStamp(steps: { nextRunAt: string | null }[]): string | null {
   const due = steps.map((step) => step.nextRunAt).filter((value): value is string => Boolean(value));
@@ -74,7 +167,9 @@ export function sentinelPackageHealth(
         || (enrollment.packageId === "reviews-gbp" && workspace?.reviewsKillSwitch === true)
         || (enrollment.packageId === "appointment-reminders" && workspace?.appointmentRemindersKillSwitch === true)
         || (enrollment.packageId === "estimate-follow-ups" && workspace?.estimateFollowUpsKillSwitch === true)
-        || (enrollment.packageId === "google-ads" && workspace?.googleAdsKillSwitch === true);
+        || (enrollment.packageId === "google-ads" && workspace?.googleAdsKillSwitch === true)
+        || (enrollment.packageId === "meta-ads" && workspace?.metaAdsKillSwitch === true)
+        || (enrollment.packageId === "office-automation" && workspace?.officeAutomationKillSwitch === true);
       let health: SentinelPipelineHealth = "idle";
       if (!enabled) health = "disabled";
       else if (enrollment.killSwitch || enrollment.status !== "active" || workspaceStopped) health = "stopped";
@@ -93,5 +188,6 @@ export function sentinelPackageHealth(
         nextRunAt: nextStamp(watched),
       };
     }),
+    summary: fulfillmentHealthSummary(state, tenantId),
   };
 }
