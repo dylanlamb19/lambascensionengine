@@ -11,11 +11,12 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 - Request path that sets `app.tenant_id` from the verified session for one transaction (`scopePackageTenantFn`). It does not run while the flag is off.
 - Test plans, $0 checkout, and $0 invoices through `fakeBilling`.
 - Connection stubs. They store a status and do not call Google, Meta, or a mailbox.
-- Public signup is still disabled (`disableSignUp` remains true).
+- Public Better Auth registration is still disabled (`disableSignUp` remains true).
+- Marketer self-serve signup, verification, password reset, and workspace branding (`SELF_SERVE_SIGNUP: false`). While it is off, `/signup`, `/workspace`, and `/api/account/*` refuse the request and do not create a user, a session, or a mail row. Verification and reset notes, when the flag is on, are dry-run log rows only. They do not use the sales outreach sender.
 
 ## Owner actions before the first real customer
 
-**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows. Do not apply them from a laptop against production by accident.
+**Owner action.** Apply the database files on the production database, in order, and only when you mean to: `migrations/0015_client_packages.sql` through `migrations/0023_self_serve_signup.sql`. Confirm row-level security is forced and that a query without `app.tenant_id` returns no fulfillment rows, including `workspace_branding`, `workspace_logos`, and `account_sessions`. Do not apply them from a laptop against production by accident.
 
 **Owner action.** Confirm production sets `app.tenant_id` from the verified session inside each fulfillment transaction (`set_config` with the local flag). A tenant id typed by the browser must not be trusted. This stays scoped to the package request, not to sales outreach.
 
@@ -23,7 +24,7 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 
 **Owner action.** Create the OAuth apps and store refresh tokens server-side, per workspace, for the mailbox, Google Ads, Meta, Google Business Profile, CMS, and the booking calendar. Job and estimate feeds need their own credentials. Do not reuse the owner's sales Gmail or sales calendar tokens for a client's mailbox or booking calendar.
 
-**Owner action.** Decide when public marketer signup should exist. It is off. Turning it on means changing `disableSignUp` in the auth config on purpose, with email verification and password reset. Invites today only attach an already signed-in user. Do not flip signup as part of a fulfillment tweak.
+**Owner action.** Leave `disableSignUp` true. Do not turn on Better Auth's public registration. Self-serve signup is the separate `SELF_SERVE_SIGNUP` flag, and it ships off. Leave it off for a real customer while verification is still a dry-run log, because the marketer will not receive the code. Before turning it on: apply `migrations/0023_self_serve_signup.sql` yourself, confirm a workspace A session cannot read or write workspace B through `/api/account/*`, and wire a transactional sender that is not the sales outreach sender. Plan checkout on that path is still `fakeBilling` at $0. Do not add a live payment key to turn the flag on. The owner membership cannot be removed or demoted. Session cookies on this path are `__Host-lae.session` (HttpOnly, Secure, SameSite=Lax, Path=/, no Domain) and rotate on login and when that person's role changes. State-changing account routes require the CSRF token.
 
 **Owner action.** Turn `PACKAGE_FULFILLMENT` on for one internal workspace first. Watch pipeline health, the $0 billing panel, and that one workspace cannot see another. Then turn it on for real marketers. Leave it off if any owner action above is unfinished.
 
@@ -44,5 +45,6 @@ Checklist before Lamb Ascension Engine is sold to a marketer who is not you. The
 - A fulfillment query runs without the session tenant set.
 - Sample workspace names (Harbor Marketing, Prairie Studio) appear in production data.
 - A live Stripe key is in the repo, the browser bundle, or a `VITE_` variable.
-- Public signup is on before you have verified email and a way to close a workspace.
+- `SELF_SERVE_SIGNUP` is on while verification mail is still dry-run, or `disableSignUp` was flipped off.
+- A live payment key was added in order to open signup.
 - Client follow-ups start going out through the sales outreach sender.

@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, `migrations/0020_reviews_appointments.sql`, `migrations/0021_estimate_google_ads.sql`, and `migrations/0022_meta_office_bundle.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql` through `migrations/0023_self_serve_signup.sql` is a file only. It was not applied to a hosted database from this change. `SELF_SERVE_SIGNUP` is a separate switch and stays off. It does not turn on Better Auth public registration.
 
 ## Two products, one engine
 
@@ -288,6 +288,14 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `estimate_follow_ups_kill_switch` and `google_ads_kill_switch` on the workspace
 - `package_runs.package_id` also allows `google-ads`
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
+
+`migrations/0023_self_serve_signup.sql` (file only, not applied):
+
+- `workspace_branding` and `workspace_logos` for one workspace's name colors, sender, timezone, and a small logo
+- `account_sessions` keyed by `workspace_id`
+- pending signup, password reset, attempt, and dry-run mail tables. The mail mode is constrained to `dry_run`
+- membership roles also allow `admin` and `member`. `owner` and `marketer` stay valid
+- Forced row-level security on the branding, logo, and session tables
 
 `migrations/0022_meta_office_bundle.sql` (file only, not applied):
 

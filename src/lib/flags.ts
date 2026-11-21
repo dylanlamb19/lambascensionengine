@@ -12,6 +12,11 @@ export const FLAGS = {
   DESIGN_DIRECTOR: false,
   /** Client package tracker, fulfillment tab, and pipelines. Off until explicitly enabled. */
   PACKAGE_FULFILLMENT: false,
+  /**
+   * Marketer self-serve signup, verification, password reset, and workspace settings.
+   * Off until explicitly enabled. Better Auth public registration stays disabled.
+   */
+  SELF_SERVE_SIGNUP: false,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;
