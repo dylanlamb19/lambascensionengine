@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, `migrations/0020_reviews_appointments.sql`, and `migrations/0021_estimate_google_ads.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, `migrations/0019_lead_gen_ai_visibility.sql`, `migrations/0020_reviews_appointments.sql`, `migrations/0021_estimate_google_ads.sql`, and `migrations/0022_meta_office_bundle.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -37,11 +37,11 @@ The desk passes `user.id` from the session into `startMarketerOnboarding`. That 
 
 `src/lib/packages/plans.ts` is scaffolding only.
 
-| Plan | Clients | Packages | Pipeline runs | Checkout |
-| --- | --- | --- | --- | --- |
-| Test trial | 3 | 5 | 40 | $0 test checkout |
-| Test operator | 25 | 100 | 500 | $0 test checkout |
-| Test agency | No cap | No cap | No cap | $0 test checkout |
+| Plan | Clients | Packages | Pipeline runs | Ad budget ceiling | Checkout |
+| --- | --- | --- | --- | --- | --- | --- |
+| Test trial | 3 | 5 | 40 | $500 recorded ad-budget ceiling | $0 test checkout |
+| Test operator | 25 | 100 | 500 | $2,500 recorded ad-budget ceiling | $0 test checkout |
+| Test agency | No cap | No cap | No cap | No ad-budget ceiling | $0 test checkout |
 
 `fakeBilling` implements `BillingProvider`. `selectPlan`, `assertCanAddClient`, `handleWebhook`, `transitionSubscription`, `issueInvoice`, and `payInvoice` record notices with `amountCents: 0` and `billingMode: "test"`. The lifecycle is `trial`, then `active`, then `past_due`, then `canceled`. Skipping a step is rejected. Moving to past due opens a $0 invoice. Recording that $0 payment returns the subscription to active. Canceling voids an open invoice. A payment for another workspace's invoice is rejected. The provider does not read environment variables or keys.
 
@@ -110,7 +110,7 @@ The desk tab is named exactly **Client Package Fulfillment**. It is hidden while
 
 1. The landing view lists that workspace's clients and the packages each one purchased.
 2. A client opens their page, with one tab per purchased package under their name.
-3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. A Lead Follow-Up tab also lists each captured lead and that lead's cadence. A Reviews tab lists each completed job and its review request. An Appointment Reminders tab lists each booking and the 24-hour, 2-hour, and no-show steps. An Estimate Follow-Ups tab lists each open estimate and the day 2, day 5, day 10, and close-out drafts. A Google Ads tab lists the campaign plan, the weekly report, and the change proposal.
+3. A package tab lists each step with status (`pending`, `running`, `done`, `failed`, `needs human`), attempts, last error, timestamps, log lines, output, and the next scheduled run. Above the package tabs, All packages lists every catalog package for that client, purchased or not. A Lead Follow-Up tab also lists each captured lead and that lead's cadence. A Reviews tab lists each completed job and its review request. An Appointment Reminders tab lists each booking and the 24-hour, 2-hour, and no-show steps. An Estimate Follow-Ups tab lists each open estimate and the day 2, day 5, day 10, and close-out drafts. A Google Ads tab lists the campaign plan, the weekly report, and the change proposal. A Meta Ads tab lists the creative plan, the audience plan, the budget cap check, and the approval gate. An Office Automation tab lists intake, the scheduling task, the reminder, and the invoice reminder. A bundle tab shows one aggregated status for the four included pipelines.
 4. The desk ticks every 2 seconds while it is open and the flag is on. A step moves to `running`, then to `done` or `needs human`, without a separate start button.
 
 There is no production cron. A closed browser does not keep ticking. Registering a cron is leftover work, and it must stay disabled until the flag is on and the send path is a separate, gated client mailbox.
@@ -165,11 +165,15 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 4. Meta Advertising — $650/mo
 
-**Trigger.** Purchase. One Facebook and Instagram ad account.
+**Trigger.** Purchase. One Facebook and Instagram ad account. Ad spend is not set here.
 
-**Steps.** Checklist and copy notes (bookkeeping). Creative variations and monthly adjustments (Meta Marketing API, existing assets only). Report shell with UNKNOWN results.
+**Run.** Creative plan and audience plan from the client's stored intake. Existing assets only. The budget cap check compares a stored proposal with this workspace's test plan ceiling ($500 on Test trial, $2,500 on Test operator, none on Test agency). Over the ceiling stays needs human. The approval gate stays needs human until a person approves it. Approval writes a note on the step. It does not call Meta and it does not spend.
 
-**Autonomy.** Needs the Meta Marketing API.
+**Connection.** The Meta row in this workspace's connection registry. Another workspace's stub does not count. A missing stub becomes needs human and names Meta. A Connected (test) stub still does not call the API. Live keys are refused and are not stored.
+
+**Older checklist.** Setup checklist and audience notes still run as bookkeeping. Creative variations and monthly adjustments still need a person because no API adapter is wired. The monthly report shell still says results are UNKNOWN.
+
+**Autonomy.** Needs a person before any account change. No Meta API call is made.
 
 ### 5. Lead Generation — $500/mo + $500 setup
 
@@ -215,15 +219,21 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 **Trigger.** Purchase of one workflow slot.
 
-**Steps.** Agree the workflow (document collection, or handing a sold job to the office, are examples). Run it.
+**Run.** Intake records one agreed workflow: document collection, handing a sold job to the office, or invoice reminders. Scheduling and the reminder are dry runs. The invoice reminder reads this workspace's fakeBilling test invoices only. An open invoice is named and stays at $0. The invoice is not paid. A missing workflow, or an ambiguous one, stays needs human and the later tasks do not run.
 
-**Autonomy.** Needs a person to name the one workflow. The slot opens by itself.
+**Older checklist.** Agree the workflow, then run it. Both still need a person before an office system changes.
+
+**Autonomy.** Needs a person to name the one workflow. Nothing is sent and nothing is charged.
 
 ### 10. Google, Meta and AI Package — $2,500/mo, no setup
 
 **Trigger.** One purchase. It includes packages 2, 3, 4, and 5. The monthly total matches the sum of those four. Their $500 lead-generation setup fee is waived.
 
-**UI.** One package tab. Steps are grouped under the four included names.
+**Fan-out.** The purchase opens the four included pipelines on that enrollment. If this client already has an active enrollment for one of those four, that pipeline is not opened a second time. Buying one of the four while the bundle is active returns the bundle enrollment and does not add another row.
+
+**UI.** One package tab. Steps are grouped under the four included names. The live step view shows one aggregated status (`pending`, `running`, `done`, `failed`, `needs human`, or `killed`) and a line per member. A member bought separately is marked that way. All packages, above the tabs, lists the whole catalog for this client.
+
+**Kill switch.** Turning it on for this purchase stops the four included pipelines for this client, including a member that was purchased separately. Turning it off releases only the pipelines this switch stopped. Another client's packages keep running. Another workspace is untouched.
 
 **Autonomy.** Same integrations as the four parts.
 
@@ -279,6 +289,15 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `package_runs.package_id` also allows `google-ads`
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
 
+`migrations/0022_meta_office_bundle.sql` (file only, not applied):
+
+- `meta_budget_notes` — proposed cents, whether the proposal is ambiguous, and whether a person approved it. There is no token column and no spend column
+- `office_workflows` — one kind (`document-collection`, `sold-job-handoff`, or `invoice-reminders`), whether it is ambiguous, and a schedule note
+- `meta_ads_kill_switch` and `office_automation_kill_switch` on the workspace
+- `cascade_from_enrollment_id` on `package_enrollments`, set when a bundle kill switch stopped a member
+- `package_runs.package_id` also allows `meta-ads` and `office-automation`
+- Forced row-level security, same `app.tenant_id` rule, and no secret column
+
 `migrations/0016_workspace_connections.sql`:
 
 - `workspace_connections` — `(workspace_id, kind)`, status `missing` or `stub_connected`, no secret column
@@ -305,10 +324,10 @@ The running desk uses the in-memory and browser store above. It does not query t
 3. **Apply the migrations on purpose.** These files are not applied here. Production should apply them only when the flag is about to be turned on.
 4. **Real subscription billing.** `BillingProvider` and `fakeBilling` record plan choices and webhook notices at zero cents. Invoices, tax, proration, card retry, and dunning are not built. A live provider still must not put keys in the browser or in this flag.
 5. **Seats and invites.** A workspace has one owner user id. There is no staff seat, role, or invite.
-6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. Estimate follow-ups draft from a recorded open estimate. Google Ads drafts a plan from stored intake and a weekly report from stored figures. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
+6. **Live connections.** The registry can mark a stub connected. Reviews and appointment reminders draft from stored jobs, stored reviews, and stored bookings. Estimate follow-ups draft from a recorded open estimate. Google Ads drafts a plan from stored intake and a weekly report from stored figures. Meta Ads drafts creative, audience, a plan-cap check, and an approval gate from stored intake. Office Automation drafts intake, a schedule, a reminder, and a fakeBilling invoice reminder. OAuth and API adapters for Google Ads, Meta, Business Profile, mailbox, CMS, booking calendar, and the job and estimate feeds are still absent, and they must stay per workspace rather than on the owner's sales OAuth row.
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
-9. **Sentinel.** The health report is ready for one tenant. Sentinel itself is not in this branch, and nothing here disables it.
+9. **Sentinel.** `sentinelPackageHealth` is the per-tenant report, including `summary`: running, failed, needs-human, and killed counts for each of the ten pipelines. Sentinel itself is not in this branch, and nothing here disables it. Calling the report does not start or stop a pipeline.
 10. **Client-facing report delivery, landing-page hosting, and structured-data edits.** Lead Generation and AI Visibility now draft the brief, page, ad copy, schema, and reports. Launch and the recommendation check stay needs human. Publishing does not.
 11. **Custom domains, audit export, and tenant offboarding.** Not started. Cancelling an enrollment stops its pipeline. It does not export or delete a workspace.
 12. **Legal and packaging.** Plan names in the scaffold are test labels, not the public price page. The ten service prices live in the catalog so a future plan can include them without inventing a fee at runtime.

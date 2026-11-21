@@ -36,6 +36,8 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
       appointmentRemindersKillSwitch: row.appointmentRemindersKillSwitch === true,
       estimateFollowUpsKillSwitch: row.estimateFollowUpsKillSwitch === true,
       googleAdsKillSwitch: row.googleAdsKillSwitch === true,
+      metaAdsKillSwitch: row.metaAdsKillSwitch === true,
+      officeAutomationKillSwitch: row.officeAutomationKillSwitch === true,
     })),
     clients: (state.clients || []).filter((row) => row.tenantId === tenantId),
     enrollments: (state.enrollments || []).filter((row) => row.tenantId === tenantId),
@@ -61,6 +63,8 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     estimateSteps: (state.estimateSteps || []).filter((row) => row.tenantId === tenantId),
     adsMetrics: (state.adsMetrics || []).filter((row) => row.tenantId === tenantId),
     adsChangeNotes: (state.adsChangeNotes || []).filter((row) => row.tenantId === tenantId),
+    metaBudgetNotes: (state.metaBudgetNotes || []).filter((row) => row.tenantId === tenantId),
+    officeWorkflows: (state.officeWorkflows || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -96,6 +100,8 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     estimateSteps: [...(state.estimateSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.estimateSteps],
     adsMetrics: [...(state.adsMetrics || []).filter((row) => row.tenantId !== tenantId), ...safe.adsMetrics],
     adsChangeNotes: [...(state.adsChangeNotes || []).filter((row) => row.tenantId !== tenantId), ...safe.adsChangeNotes],
+    metaBudgetNotes: [...(state.metaBudgetNotes || []).filter((row) => row.tenantId !== tenantId), ...safe.metaBudgetNotes],
+    officeWorkflows: [...(state.officeWorkflows || []).filter((row) => row.tenantId !== tenantId), ...safe.officeWorkflows],
   };
 }
 
@@ -143,6 +149,8 @@ export function startMarketerOnboarding(state: FulfillmentState, input: Onboardi
     appointmentRemindersKillSwitch: false,
     estimateFollowUpsKillSwitch: false,
     googleAdsKillSwitch: false,
+    metaAdsKillSwitch: false,
+    officeAutomationKillSwitch: false,
   };
   return {
     ok: true,

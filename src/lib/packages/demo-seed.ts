@@ -4,6 +4,8 @@ import { fakeBilling } from "./billing.ts";
 import { stubConnect } from "./connections.ts";
 import { recordOpenEstimate, tickEstimates } from "./estimate-follow-ups.ts";
 import { recordAdsMetrics, tickGoogleAds } from "./google-ads.ts";
+import { saveMetaBudget, tickMetaAds } from "./meta-ads.ts";
+import { saveOfficeWorkflow, tickOfficeAutomation } from "./office-automation.ts";
 import { saveClientIntake, tickLeadGeneration } from "./lead-generation.ts";
 import { captureLead, tickLeadFollowUp } from "./lead-follow-up.ts";
 import { recordCompletedJob, recordStoredReview, tickReviews } from "./reviews-gbp.ts";
@@ -142,6 +144,7 @@ export function buildDemoSeed(now = DEMO_NOW): FulfillmentState {
     }
     state = seedServiceCare(state, tenantId, now, factory);
     state = seedEstimatesAndAds(state, tenantId, now, factory);
+    if (marketer.userId === "demo-harbor") state = seedMetaAndOffice(state, tenantId, now, factory);
   }
   return {
     ...state,
@@ -290,6 +293,51 @@ function seedEstimatesAndAds(state: FulfillmentState, tenantId: string, now: str
       for (let i = 0; i < 6; i += 1) state = tickGoogleAds(state, tenantId, now, { enabled: true }).state;
       const week = addDays(now, 7);
       for (let i = 0; i < 4; i += 1) state = tickGoogleAds(state, tenantId, week, { enabled: true }).state;
+    }
+  }
+  return state;
+}
+
+/** Meta and office drafts for the Harbor sample. Prairie is left alone. Nothing is spent or charged. */
+function seedMetaAndOffice(state: FulfillmentState, tenantId: string, now: string, factory: () => string): FulfillmentState {
+  const metaConnected = stubConnect(state, tenantId, "meta", now);
+  if (metaConnected.ok) state = metaConnected.state;
+  const hvac = state.clients.find((row) => row.tenantId === tenantId && row.name === "Lakeside HVAC");
+  if (hvac) {
+    const bought = recordPurchase(state, tenantId, {
+      clientName: "Lakeside HVAC",
+      packageId: "meta-ads",
+      setupPayment: "waived",
+      monthlyPayment: "recorded",
+      startedOn: "2026-11-01",
+    }, now, factory);
+    if (bought.ok) {
+      state = bought.state;
+      const budget = saveMetaBudget(state, tenantId, { enrollmentId: bought.enrollmentId, proposedCents: 40000 }, now, { enabled: true });
+      if (budget.ok) state = budget.state;
+      for (let i = 0; i < 8; i += 1) state = tickMetaAds(state, tenantId, now, { enabled: true }).state;
+    }
+  }
+  const roofing = state.clients.find((row) => row.tenantId === tenantId && row.name === "North Roofing");
+  if (roofing) {
+    const bought = recordPurchase(state, tenantId, {
+      clientName: "North Roofing",
+      packageId: "office-automation",
+      setupPayment: "recorded",
+      monthlyPayment: "recorded",
+      startedOn: "2026-11-01",
+    }, now, factory);
+    if (bought.ok) {
+      state = bought.state;
+      const issued = fakeBilling.issueInvoice(state, tenantId, now, `demo-office-inv-${tenantId}`);
+      if (issued.ok) state = issued.state;
+      const workflow = saveOfficeWorkflow(state, tenantId, {
+        enrollmentId: bought.enrollmentId,
+        kind: "invoice-reminders",
+        scheduleNote: "Next business morning.",
+      }, now, { enabled: true });
+      if (workflow.ok) state = workflow.state;
+      for (let i = 0; i < 8; i += 1) state = tickOfficeAutomation(state, tenantId, now, { enabled: true }).state;
     }
   }
   return state;

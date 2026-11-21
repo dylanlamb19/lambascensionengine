@@ -29,7 +29,7 @@ export type PackageRunOutcome = { outcome: CadenceOutcome; patch?: Partial<Packa
 export type PackageRunSpec = {
   packageId: PackageRunId;
   steps: readonly PackageStepDef[];
-  killField: "leadGenerationKillSwitch" | "aiVisibilityKillSwitch" | "reviewsKillSwitch" | "googleAdsKillSwitch";
+  killField: "leadGenerationKillSwitch" | "aiVisibilityKillSwitch" | "reviewsKillSwitch" | "googleAdsKillSwitch" | "metaAdsKillSwitch" | "officeAutomationKillSwitch";
   quietLine: string;
   stopReason: string;
   killMessage: string;
@@ -82,6 +82,30 @@ function covers(enrollment: Enrollment, packageId: PackageRunId): boolean {
   return enrollment.packageId === packageId || enrollment.includedPackageIds.includes(packageId);
 }
 
+/** A separate purchase already owns this pipeline, so the bundle must not open a second run. */
+function standaloneOwns(state: FulfillmentState, enrollment: Enrollment, packageId: PackageRunId): boolean {
+  if (enrollment.packageId === packageId) return false;
+  return state.enrollments.some((row) =>
+    row.tenantId === enrollment.tenantId
+    && row.clientId === enrollment.clientId
+    && row.id !== enrollment.id
+    && row.status !== "cancelled"
+    && row.packageId === packageId,
+  );
+}
+
+function bundleHoldsKill(state: FulfillmentState, enrollment: Enrollment, packageId: PackageRunId): boolean {
+  return state.enrollments.some((row) =>
+    row.tenantId === enrollment.tenantId
+    && row.clientId === enrollment.clientId
+    && row.id !== enrollment.id
+    && row.packageId === "google-meta-ai"
+    && row.status !== "cancelled"
+    && row.killSwitch
+    && row.includedPackageIds.includes(packageId),
+  );
+}
+
 function nextAt(now: string, step: PackageStepDef): string {
   if (step.delayMonths > 0) return addMonthsIso(now, step.delayMonths);
   return addDays(now, step.delayDays);
@@ -132,6 +156,7 @@ function ensureRuns(state: FulfillmentState, tenantId: string, now: string, spec
   for (const enrollment of state.enrollments) {
     if (enrollment.tenantId !== tenantId || enrollment.status === "cancelled") continue;
     if (!covers(enrollment, spec.packageId)) continue;
+    if (standaloneOwns(state, enrollment, spec.packageId)) continue;
     if (existing.some((row) => row.tenantId === tenantId && row.enrollmentId === enrollment.id && row.packageId === spec.packageId)) continue;
     const run: PackageRun = {
       id: `${tenantId}:${spec.packageId}:${enrollment.id}`,
@@ -204,6 +229,7 @@ export function tickPackageRun(
         skip: false,
         runnable: !workspace[spec.killField]
           && !enrollment.killSwitch
+          && !bundleHoldsKill(opened, enrollment, spec.packageId)
           && enrollment.status === "active"
           && run.status === "active",
       };
