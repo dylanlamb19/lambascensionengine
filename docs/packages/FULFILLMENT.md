@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, and `migrations/0018_lead_follow_up.sql` is a file only. It was not applied to a hosted database from this change.
+The SQL in `migrations/0015_client_packages.sql`, `migrations/0016_workspace_connections.sql`, `migrations/0017_tenant_rls.sql`, `migrations/0018_lead_follow_up.sql`, and `migrations/0019_lead_gen_ai_visibility.sql` is a file only. It was not applied to a hosted database from this change.
 
 ## Two products, one engine
 
@@ -143,11 +143,13 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 ### 2. AI Visibility Optimization — $600/mo
 
-**Trigger.** Purchase, then a monthly cycle.
+**Trigger.** Purchase, then the run: profile audit, schema and FAQ draft, AI recommendation check, monthly visibility report.
 
-**Steps.** Monthly check of service info, FAQs, and structured data (needs the client's site; nothing is fetched today). Draft budget of 2 page updates (bookkeeping, unpublished). Publish (needs CMS).
+**Steps.** The profile audit compares the client's stored name, address, phone, and site. It does not read a third-party page. The schema and FAQ draft stays unpublished. The recommendation check is a dry run and needs a person: no live model and no search API. The monthly report is a draft. The older enrollment checklist (site check, two page updates, publish) still runs and still needs the site or CMS before anything is published.
 
-**Autonomy.** Needs integration.
+**Needs.** Stored intake. Publishing still needs the CMS.
+
+**Autonomy.** Needs integration. The recommendation check does not call a model.
 
 ### 3. Google Advertising — $750/mo
 
@@ -169,9 +171,11 @@ There is no production cron. A closed browser does not keep ticking. Registering
 
 **Trigger.** Purchase. One landing page. No guaranteed lead count. Ad spend stays separate.
 
-**Steps.** Draft slot (bookkeeping, unpublished). Form and routing (needs a host). Tracking check (needs access; no tag is installed). Monthly test log.
+**Steps.** Campaign brief from the client's stored intake, then a landing-page draft, then Google and Meta ad-copy drafts. Launch always needs a person: no live ad account is used and no spend is set. The weekly lead report summarizes captured leads for that workspace and client. It is not emailed. A new captured lead is handed to Lead Follow-Up when that same client, in that same workspace, has an active Lead Follow-Up package. The older enrollment checklist (page slot, form, tracking, test log) still runs and still does not publish.
 
-**Autonomy.** Needs a page host and tracking access.
+**Needs.** Stored intake. A host before a page can go live. That host is not connected here.
+
+**Autonomy.** Needs integration. Launch stays needs human.
 
 ### 6. Estimate Follow-Ups — $200/mo + $250 setup
 
@@ -238,6 +242,15 @@ Not sent today. When a report step finishes, the output is a shell: platform num
 - `follow_up_lead_steps` — status, attempts, last error, next run, and the unsent draft
 - `follow_up_lead_step_logs` — append-only notes
 - `lead_follow_up_kill_switch` on the workspace
+
+`migrations/0019_lead_gen_ai_visibility.sql` (file only, not applied):
+
+- `client_intakes` — stored name, address, phone, site, offer, and service area
+- `package_runs` and `package_run_steps` — Lead Generation and AI Visibility, with the draft on the step
+- `package_run_step_logs` — append-only notes
+- `generated_leads` — a captured lead and, when handed off, the Lead Follow-Up id
+- `lead_generation_kill_switch` and `ai_visibility_kill_switch` on the workspace
+- Forced row-level security, same `app.tenant_id` rule, and no secret column
 - Forced row-level security, same `app.tenant_id` rule, and no secret column
 
 `migrations/0016_workspace_connections.sql`:
@@ -270,7 +283,7 @@ The running desk uses the in-memory and browser store above. It does not query t
 7. **A gated send path.** Client acknowledgements, reminders, and review requests need their own caps and suppression. They must not call `canSend` in a way that changes the sales gates, and they must not send through the sales outreach worker.
 8. **Unattended schedule.** The 2-second tick runs only while the signed-in desk is open and the flag is on. A cron must be added later, and it must no-op while the flag is off. Do not revive `.github/workflows/outreach-worker.yml`.
 9. **Sentinel.** The health report is ready for one tenant. Sentinel itself is not in this branch, and nothing here disables it.
-10. **Client-facing report delivery, landing-page hosting, and structured-data edits.** Draft slots exist. Publishing does not.
+10. **Client-facing report delivery, landing-page hosting, and structured-data edits.** Lead Generation and AI Visibility now draft the brief, page, ad copy, schema, and reports. Launch and the recommendation check stay needs human. Publishing does not.
 11. **Custom domains, audit export, and tenant offboarding.** Not started. Cancelling an enrollment stops its pipeline. It does not export or delete a workspace.
 12. **Legal and packaging.** Plan names in the scaffold are test labels, not the public price page. The ten service prices live in the catalog so a future plan can include them without inventing a fee at runtime.
 

@@ -6,7 +6,7 @@ import { getTestPlan, listTestPlans } from "@/lib/packages/plans";
 import { usageFor } from "@/lib/packages/usage";
 import { workspaceFor } from "@/lib/packages/tenancy";
 import type { EnrollmentStatus, FulfillmentState, PaymentRecord, RecordPurchaseInput, StepStatus, SubscriptionLifecycle } from "@/lib/packages/types";
-import { clientList, leadFollowUpView, packageTabs, pipelineView, workspaceSummary, type LeadView } from "@/lib/packages/view";
+import { clientList, leadFollowUpView, packageRunViews, packageTabs, pipelineView, workspaceSummary, type LeadView, type PackageRunView } from "@/lib/packages/view";
 
 const ONBOARDING_STEPS = [
   ["workspace", "Workspace"],
@@ -108,6 +108,161 @@ function LeadCadence(props: {
   );
 }
 
+function IntakeForm(props: {
+  clientId: string;
+  intake: PackageRunView["intake"];
+  onSave?: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
+}) {
+  const [businessName, setBusinessName] = useState(props.intake?.businessName || "");
+  const [phone, setPhone] = useState(props.intake?.phone || "");
+  const [address, setAddress] = useState(props.intake?.address || "");
+  const [website, setWebsite] = useState(props.intake?.website || "");
+  const [offer, setOffer] = useState(props.intake?.offer || "");
+  const [serviceArea, setServiceArea] = useState(props.intake?.serviceArea || "");
+  const [message, setMessage] = useState("");
+  if (!props.onSave) {
+    if (!props.intake) return <p className="mb-3 text-sm text-muted">No intake is stored for this client.</p>;
+    return (
+      <p className="mb-3 text-sm text-muted">
+        Intake on file: {props.intake.businessName || "name missing"} · {props.intake.phone || "phone missing"} · {props.intake.address || "address missing"} · {props.intake.website || "site missing"}
+      </p>
+    );
+  }
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onSave?.({ clientId: props.clientId, businessName, phone, address, website, offer, serviceArea });
+        setMessage(result?.ok ? "Intake saved for this client. Nothing was published." : result?.reason || "Intake was not saved.");
+      }}
+    >
+      <p className="la-kicker">Client intake</p>
+      <p className="mt-2 mb-3 text-sm text-muted">Stored on this workspace. Briefs and profile audits read only this. No outside page is read.</p>
+      <label className="la-label" htmlFor="intake-business">Business name</label>
+      <input id="intake-business" className="la-field mb-3" value={businessName} onChange={(event) => setBusinessName(event.target.value)} />
+      <label className="la-label" htmlFor="intake-phone">Phone</label>
+      <input id="intake-phone" className="la-field mb-3" value={phone} onChange={(event) => setPhone(event.target.value)} />
+      <label className="la-label" htmlFor="intake-address">Address</label>
+      <input id="intake-address" className="la-field mb-3" value={address} onChange={(event) => setAddress(event.target.value)} />
+      <label className="la-label" htmlFor="intake-site">Website</label>
+      <input id="intake-site" className="la-field mb-3" value={website} onChange={(event) => setWebsite(event.target.value)} />
+      <label className="la-label" htmlFor="intake-offer">Offer</label>
+      <input id="intake-offer" className="la-field mb-3" value={offer} onChange={(event) => setOffer(event.target.value)} />
+      <label className="la-label" htmlFor="intake-area">Service area</label>
+      <input id="intake-area" className="la-field mb-3" value={serviceArea} onChange={(event) => setServiceArea(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Save intake</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function GeneratedLeadForm(props: {
+  enrollmentId: string;
+  onCapture: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [message, setMessage] = useState("");
+  return (
+    <form
+      className="la-card mb-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const result = props.onCapture({ enrollmentId: props.enrollmentId, contactName: name, contactEmail: email, contactPhone: phone });
+        if (!result.ok) {
+          setMessage(result.reason || "That lead was not captured.");
+          return;
+        }
+        setName("");
+        setEmail("");
+        setPhone("");
+        setMessage("Lead captured for this client. If Lead Follow-Up is active, it was handed there. Nothing was sent.");
+      }}
+    >
+      <p className="la-kicker">Captured lead</p>
+      <label className="la-label mt-3" htmlFor="gen-lead-name">Name</label>
+      <input id="gen-lead-name" className="la-field mb-3" value={name} onChange={(event) => setName(event.target.value)} />
+      <label className="la-label" htmlFor="gen-lead-email">Email</label>
+      <input id="gen-lead-email" className="la-field mb-3" value={email} onChange={(event) => setEmail(event.target.value)} />
+      <label className="la-label" htmlFor="gen-lead-phone">Phone</label>
+      <input id="gen-lead-phone" className="la-field mb-3" value={phone} onChange={(event) => setPhone(event.target.value)} />
+      <button className="la-btn la-btn-primary" type="submit">Capture lead</button>
+      {message ? <p className="mt-3 text-sm text-muted">{message}</p> : null}
+    </form>
+  );
+}
+
+function PackageRunPanel(props: {
+  clientId: string;
+  enrollmentId: string;
+  runs: PackageRunView[] | null;
+  leadGenKill: boolean;
+  aiKill: boolean;
+  onSaveIntake?: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
+  onCaptureGeneratedLead?: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
+  onLeadGenKill?: (on: boolean) => void;
+  onAiKill?: (on: boolean) => void;
+}) {
+  if (!props.runs || props.runs.length === 0) return null;
+  const intake = props.runs.find((run) => run.intake)?.intake || props.runs[0]?.intake || null;
+  return (
+    <div data-package-runs="1">
+      <IntakeForm key={props.clientId} clientId={props.clientId} intake={intake} onSave={props.onSaveIntake} />
+      {props.runs.map((run) => {
+        const stopped = run.packageId === "lead-generation" ? props.leadGenKill : props.aiKill;
+        return (
+          <section key={run.runId} data-package-run={run.packageId} className="mb-4">
+            <h2 className="font-display mt-4 mb-2 text-2xl">{run.packageName}</h2>
+            <p className="mb-3 text-sm text-muted">
+              {run.packageId === "lead-generation"
+                ? "Brief, landing page, Google and Meta copy, then a launch that waits for a person. No ad account is used and no spend is set."
+                : "Profile audit and schema draft from stored data, then a recommendation check that waits for a person. No live model or search call is made."}
+              {stopped ? " The workspace kill switch is on." : ""}
+            </p>
+            {run.packageId === "lead-generation" && props.onLeadGenKill ? (
+              <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onLeadGenKill?.(!props.leadGenKill)}>
+                {props.leadGenKill ? "Clear lead generation kill switch" : "Stop lead generation for this workspace"}
+              </button>
+            ) : null}
+            {run.packageId === "ai-visibility" && props.onAiKill ? (
+              <button type="button" className="la-btn la-btn-ghost mb-4" onClick={() => props.onAiKill?.(!props.aiKill)}>
+                {props.aiKill ? "Clear AI visibility kill switch" : "Stop AI visibility for this workspace"}
+              </button>
+            ) : null}
+            {run.packageId === "lead-generation" && props.onCaptureGeneratedLead ? (
+              <GeneratedLeadForm key={props.enrollmentId} enrollmentId={props.enrollmentId} onCapture={props.onCaptureGeneratedLead} />
+            ) : null}
+            {run.steps.map((step) => (
+              <article key={step.id} className="la-card" data-package-step={step.id} data-step-status={step.status}>
+                <h3 className="text-lg font-display">{step.title}</h3>
+                <StepFacts statusLabel={step.statusLabel} attempts={step.attempts} lastError={step.lastError} nextRunAt={step.nextRunAt} />
+                {step.draft ? <p className="mt-2 text-sm">{step.draft}</p> : null}
+                {step.output && step.output !== step.draft ? <p className="mt-2 text-sm">{step.output}</p> : null}
+                {step.logs.length ? (
+                  <ul className="mt-2 text-sm text-muted">
+                    {step.logs.map((log, index) => (
+                      <li key={`${log.at}-${index}`}>{log.at} — {log.message}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </article>
+            ))}
+            {run.packageId === "lead-generation" ? (
+              run.leads.length === 0 ? <p className="mt-2 text-sm text-muted">No leads captured on this package yet.</p> : run.leads.map((lead) => (
+                <p key={lead.id} className="mt-2 text-sm" data-generated-lead={lead.id}>
+                  {lead.contactName} · {lead.handoffNote}
+                </p>
+              ))
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function dotClass(status: StepStatus): string {
   if (status === "done") return "la-dot la-dot-good";
   if (status === "failed") return "la-dot la-dot-bad";
@@ -145,6 +300,10 @@ export function PackageFulfillmentPanel(props: {
   onCaptureLead: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
   onLeadReply: (leadId: string) => void;
   onWorkspaceKill: (on: boolean) => void;
+  onSaveIntake: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
+  onCaptureGeneratedLead: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
+  onLeadGenKill: (on: boolean) => void;
+  onAiKill: (on: boolean) => void;
 }) {
   const workspace = workspaceSummary(props.state, props.tenantId);
   const rows = clientList(props.state, props.tenantId);
@@ -190,18 +349,23 @@ export function PackageFulfillmentPanel(props: {
   const selectedEnrollment = props.selectedEnrollmentId || tabs[0]?.enrollmentId || null;
   const pipeline = selectedEnrollment ? pipelineView(props.state, props.tenantId, selectedEnrollment) : null;
   const leads = selectedEnrollment ? leadFollowUpView(props.state, props.tenantId, selectedEnrollment) : null;
+  const runs = selectedEnrollment ? packageRunViews(props.state, props.tenantId, selectedEnrollment) : null;
 
   if (client && pipeline) {
     return (
       <PackagePipeline
         workspaceName={workspace?.name || "Workspace"}
         planName={workspace?.planName || "Test trial"}
+        clientId={client.id}
         clientName={client.name}
         tabs={tabs}
         selectedEnrollmentId={pipeline.enrollmentId}
         pipeline={pipeline}
         leads={leads}
+        runs={runs}
         workspaceKill={workspace?.leadFollowUpKillSwitch === true}
+        leadGenKill={workspace?.leadGenerationKillSwitch === true}
+        aiKill={workspace?.aiVisibilityKillSwitch === true}
         onBack={props.onBack}
         onSelectEnrollment={props.onSelectEnrollment}
         onStatus={props.onStatus}
@@ -210,6 +374,10 @@ export function PackageFulfillmentPanel(props: {
         onCaptureLead={props.onCaptureLead}
         onLeadReply={props.onLeadReply}
         onWorkspaceKill={props.onWorkspaceKill}
+        onSaveIntake={props.onSaveIntake}
+        onCaptureGeneratedLead={props.onCaptureGeneratedLead}
+        onLeadGenKill={props.onLeadGenKill}
+        onAiKill={props.onAiKill}
         billing={<WorkspaceBilling {...props} />}
       />
     );
@@ -231,11 +399,19 @@ export function PackageFulfillmentPanel(props: {
           ? `${workspace.name} · ${workspace.planName} · test mode. This workspace only. No card and no charge.`
           : "This workspace is not open yet."}
         {workspace?.leadFollowUpKillSwitch ? " Lead follow-up is stopped for this workspace." : ""}
+        {workspace?.leadGenerationKillSwitch ? " Lead generation is stopped for this workspace." : ""}
+        {workspace?.aiVisibilityKillSwitch ? " AI visibility is stopped for this workspace." : ""}
       </p>
       {workspace ? (
-        <div className="mb-4">
+        <div className="mb-4 flex flex-wrap gap-2">
           <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onWorkspaceKill(!workspace.leadFollowUpKillSwitch)}>
-            {workspace.leadFollowUpKillSwitch ? "Clear workspace kill switch" : "Stop lead follow-up for this workspace"}
+            {workspace.leadFollowUpKillSwitch ? "Clear lead follow-up kill switch" : "Stop lead follow-up for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onLeadGenKill(!workspace.leadGenerationKillSwitch)}>
+            {workspace.leadGenerationKillSwitch ? "Clear lead generation kill switch" : "Stop lead generation for this workspace"}
+          </button>
+          <button type="button" className="la-btn la-btn-ghost" onClick={() => props.onAiKill(!workspace.aiVisibilityKillSwitch)}>
+            {workspace.aiVisibilityKillSwitch ? "Clear AI visibility kill switch" : "Stop AI visibility for this workspace"}
           </button>
         </div>
       ) : null}
@@ -312,6 +488,13 @@ function DemoSample(props: { state: FulfillmentState; tenantId: string; onTenant
             leads={leadFollowUpView(props.state, props.tenantId, pipeline.enrollmentId)}
             workspaceKill={workspaceSummary(props.state, props.tenantId)?.leadFollowUpKillSwitch === true}
             enrollmentId={pipeline.enrollmentId}
+          />
+          <PackageRunPanel
+            clientId={client.id}
+            enrollmentId={pipeline.enrollmentId}
+            runs={packageRunViews(props.state, props.tenantId, pipeline.enrollmentId)}
+            leadGenKill={workspaceSummary(props.state, props.tenantId)?.leadGenerationKillSwitch === true}
+            aiKill={workspaceSummary(props.state, props.tenantId)?.aiVisibilityKillSwitch === true}
           />
         </div>
       ) : (
@@ -642,15 +825,23 @@ function RecordForm(props: { onRecord: (input: RecordPurchaseInput) => { ok: boo
 function PackagePipeline(props: {
   workspaceName: string;
   planName: string;
+  clientId: string;
   clientName: string;
   tabs: { enrollmentId: string; name: string; status: EnrollmentStatus }[];
   selectedEnrollmentId: string;
   pipeline: NonNullable<ReturnType<typeof pipelineView>>;
   leads: LeadView[] | null;
+  runs: PackageRunView[] | null;
   workspaceKill: boolean;
+  leadGenKill: boolean;
+  aiKill: boolean;
   onCaptureLead: (input: { enrollmentId: string; contactName: string; contactEmail: string }) => { ok: boolean; reason?: string };
   onLeadReply: (leadId: string) => void;
   onWorkspaceKill: (on: boolean) => void;
+  onSaveIntake: (input: { clientId: string; businessName: string; phone: string; address: string; website: string; offer: string; serviceArea: string }) => { ok: boolean; reason?: string };
+  onCaptureGeneratedLead: (input: { enrollmentId: string; contactName: string; contactEmail: string; contactPhone: string }) => { ok: boolean; reason?: string };
+  onLeadGenKill: (on: boolean) => void;
+  onAiKill: (on: boolean) => void;
   onBack: () => void;
   onSelectEnrollment: (id: string) => void;
   onStatus: (enrollmentId: string, status: EnrollmentStatus) => void;
@@ -736,6 +927,17 @@ function PackagePipeline(props: {
         onCaptureLead={props.onCaptureLead}
         onLeadReply={props.onLeadReply}
         onWorkspaceKill={props.onWorkspaceKill}
+      />
+      <PackageRunPanel
+        clientId={props.clientId}
+        enrollmentId={pipeline.enrollmentId}
+        runs={props.runs}
+        leadGenKill={props.leadGenKill}
+        aiKill={props.aiKill}
+        onSaveIntake={props.onSaveIntake}
+        onCaptureGeneratedLead={props.onCaptureGeneratedLead}
+        onLeadGenKill={props.onLeadGenKill}
+        onAiKill={props.onAiKill}
       />
     </section>
   );

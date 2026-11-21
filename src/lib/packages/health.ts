@@ -50,17 +50,23 @@ export function sentinelPackageHealth(
     pipelines: enrollments.map((enrollment) => {
       const steps = state.steps.filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
       const leadSteps = (state.leadSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
+      const packageSteps = (state.packageRunSteps || []).filter((step) => step.tenantId === tenantId && step.enrollmentId === enrollment.id);
       const needsHuman = steps.filter((step) => step.status === "needs_human").length
-        + leadSteps.filter((step) => step.status === "needs_human").length;
+        + leadSteps.filter((step) => step.status === "needs_human").length
+        + packageSteps.filter((step) => step.status === "needs_human").length;
       const failed = steps.filter((step) => step.status === "failed").length
-        + leadSteps.filter((step) => step.status === "failed").length;
-      const finished = [...steps, ...leadSteps].map((step) => step.finishedAt).filter((value): value is string => Boolean(value)).sort();
-      const workspaceStopped = enrollment.packageId === "lead-follow-up" && workspace?.leadFollowUpKillSwitch === true;
+        + leadSteps.filter((step) => step.status === "failed").length
+        + packageSteps.filter((step) => step.status === "failed").length;
+      const watched = [...steps, ...leadSteps, ...packageSteps];
+      const finished = watched.map((step) => step.finishedAt).filter((value): value is string => Boolean(value)).sort();
+      const workspaceStopped = (enrollment.packageId === "lead-follow-up" && workspace?.leadFollowUpKillSwitch === true)
+        || (enrollment.packageId === "lead-generation" && workspace?.leadGenerationKillSwitch === true)
+        || (enrollment.packageId === "ai-visibility" && workspace?.aiVisibilityKillSwitch === true);
       let health: SentinelPipelineHealth = "idle";
       if (!enabled) health = "disabled";
       else if (enrollment.killSwitch || enrollment.status !== "active" || workspaceStopped) health = "stopped";
       else if (failed > 0 || needsHuman > 0) health = "degraded";
-      else if (steps.some((step) => step.status === "running" || step.status === "done")) health = "healthy";
+      else if (watched.some((step) => step.status === "running" || step.status === "done")) health = "healthy";
       return {
         enrollmentId: enrollment.id,
         clientId: enrollment.clientId,
@@ -71,7 +77,7 @@ export function sentinelPackageHealth(
         needsHuman,
         failed,
         lastFinishedAt: finished.at(-1) || null,
-        nextRunAt: nextStamp([...steps, ...leadSteps]),
+        nextRunAt: nextStamp(watched),
       };
     }),
   };

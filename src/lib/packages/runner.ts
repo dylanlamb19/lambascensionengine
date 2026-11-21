@@ -1,4 +1,5 @@
 import { fakeBilling } from "./billing.ts";
+import { withPipelineCapNotice } from "./cadence.ts";
 import { getPackage, isPackageId, type PackageId } from "./catalog.ts";
 import { connectionForIntegration, connectionLabel, missingConnectionLine } from "./connections.ts";
 import { stepTemplates } from "./steps.ts";
@@ -325,22 +326,13 @@ export function tickFulfillment(
     return next;
   });
   if (advanced === 0 && !blocked) return { state, advanced: 0 };
-  let next = writeUsage({ ...state, steps }, { ...usageFor(state, tenantId), pipelineRuns: runs });
-  const blockType = workspace.subscriptionStatus === "canceled" ? "subscription_canceled" : "pipeline_limit";
-  if (blocked && !(next.billingEvents || []).some((row) => row.tenantId === tenantId && row.type === blockType)) {
-    next = {
-      ...next,
-      billingEvents: [...(next.billingEvents || []), {
-        id: `run_${now}`,
-        tenantId,
-        type: blockType,
-        planId: workspace.planId,
-        amountCents: 0 as const,
-        billingMode: "test" as const,
-        at: now,
-      }],
-    };
-  }
+  const next = withPipelineCapNotice(
+    writeUsage({ ...state, steps }, { ...usageFor(state, tenantId), pipelineRuns: runs }),
+    tenantId,
+    now,
+    blocked,
+    `run_${now}`,
+  );
   return { state: next, advanced };
 }
 
@@ -356,6 +348,14 @@ export function setKillSwitch(state: FulfillmentState, tenantId: string, enrollm
     steps: state.steps.map((step) =>
       step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
         ? appendLog(step, now, "Kill switch is on. This pipeline is stopped. Sales outreach was not changed.")
+        : step,
+    ),
+    packageRunSteps: (state.packageRunSteps || []).map((step) =>
+      step.enrollmentId === enrollmentId && step.tenantId === tenantId && on
+        ? {
+            ...step,
+            logs: [...step.logs, { at: now, message: "Kill switch is on. This client's pipeline is stopped. Nothing was sent. Sales outreach was not changed." }].slice(-30),
+          }
         : step,
     ),
   };
@@ -405,6 +405,10 @@ export function emptyFulfillment(): FulfillmentState {
     usage: [],
     leads: [],
     leadSteps: [],
+    intakes: [],
+    packageRuns: [],
+    packageRunSteps: [],
+    generatedLeads: [],
   };
 }
 

@@ -1,15 +1,20 @@
-import { FLAGS } from "../flags.ts";
+import {
+  appendCadenceLog,
+  cadenceRetryDelayMs,
+  packagePipelineEnabled,
+  stampWorkspaceKill,
+  tickCadenceSteps,
+  withPipelineCapNotice,
+} from "./cadence.ts";
 import { listConnections } from "./connections.ts";
 import { draftFollowUp } from "./dry-run-sender.ts";
-import { addDays, addMs, tickFulfillment, type IdFactory, type TickOptions } from "./runner.ts";
+import { addDays, type IdFactory } from "./runner.ts";
 import { workspaceFor } from "./tenancy.ts";
-import type { CredentialPort, Enrollment, FollowUpLead, FulfillmentState, LeadStepId, LeadStepRun } from "./types.ts";
+import type { Enrollment, FollowUpLead, FulfillmentState, LeadStepId, LeadStepRun } from "./types.ts";
 import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
 
 export const LEAD_MAX_ATTEMPTS = 3;
 export const LEAD_BACKOFF_MS = 60_000;
-const LOG_CAP = 30;
-
 export const LEAD_CADENCE: { id: LeadStepId; title: string; delayDays: number; sends: boolean }[] = [
   { id: "captured", title: "New lead captured", delayDays: 0, sends: false },
   { id: "speed-to-lead", title: "Speed-to-lead reply", delayDays: 0, sends: true },
@@ -38,11 +43,9 @@ type LeadTickOptions = LeadFlag & {
 
 type DraftStep = "speed-to-lead" | "day-1" | "day-3" | "day-7";
 
-function pipelineEnabled(override?: boolean): boolean {
-  if (override === false) return false;
-  if (override === true) return true;
-  return FLAGS.PACKAGE_FULFILLMENT;
-}
+const LEAD_ORDER = LEAD_CADENCE.map((step) => step.id);
+const LEAD_QUIET = "Nothing was sent.";
+const LEAD_STOP = "Stopped because an earlier step failed. Needs a person. Nothing was sent.";
 
 function defaultIds(): IdFactory {
   let n = 0;
@@ -51,15 +54,11 @@ function defaultIds(): IdFactory {
 }
 
 export function leadRetryDelayMs(attempt: number): number {
-  return LEAD_BACKOFF_MS * 2 ** Math.max(0, attempt - 1);
+  return cadenceRetryDelayMs(attempt, LEAD_BACKOFF_MS);
 }
 
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function appendLog(step: LeadStepRun, at: string, message: string): LeadStepRun {
-  return { ...step, logs: [...step.logs, { at, message }].slice(-LOG_CAP) };
 }
 
 function leadsOf(state: FulfillmentState): FollowUpLead[] {
@@ -103,7 +102,7 @@ export function captureLead(
   now: string,
   options: LeadFlag & { ids?: IdFactory } = {},
 ): CaptureLeadResult {
-  if (!pipelineEnabled(options.enabled)) {
+  if (!packagePipelineEnabled(options.enabled)) {
     return { ok: false, state, reason: "Package fulfillment is off." };
   }
   const workspace = workspaceFor(state, tenantId);
@@ -172,15 +171,6 @@ export function captureLead(
   };
 }
 
-function predecessorSettled(steps: LeadStepRun[], step: LeadStepRun): boolean {
-  const index = LEAD_CADENCE.findIndex((row) => row.id === step.stepId);
-  if (index <= 0) return true;
-  const previousId = LEAD_CADENCE[index - 1]?.id;
-  const previous = steps.find((row) => row.leadId === step.leadId && row.stepId === previousId);
-  if (!previous) return false;
-  return previous.status === "done" || previous.status === "needs_human" || previous.status === "failed";
-}
-
 function dryRunOutcome(state: FulfillmentState, step: LeadStepRun, lead: FollowUpLead): {
   status: "done" | "needs_human";
   output: string;
@@ -214,109 +204,6 @@ function dryRunOutcome(state: FulfillmentState, step: LeadStepRun, lead: FollowU
   };
 }
 
-type AdvanceResult = { step: LeadStepRun; escalate: boolean };
-
-function advanceLeadStep(
-  steps: LeadStepRun[],
-  step: LeadStepRun,
-  lead: FollowUpLead,
-  enrollment: Enrollment,
-  state: FulfillmentState,
-  now: string,
-  opts: LeadTickOptions,
-): AdvanceResult | null {
-  const workspace = workspaceFor(state, step.tenantId);
-  if (!workspace || workspace.leadFollowUpKillSwitch) return null;
-  if (enrollment.killSwitch || enrollment.status !== "active") return null;
-  if (lead.status !== "active" || lead.repliedAt) return null;
-  if (step.status === "pending") {
-    if (!predecessorSettled(steps, step)) return null;
-    if (step.nextRunAt && step.nextRunAt > now) return null;
-    return { escalate: false, step: appendLog({ ...step, status: "running", startedAt: step.startedAt || now }, now, "Started.") };
-  }
-  if (step.status !== "running") return null;
-  try {
-    opts.runStep?.(step, lead);
-    const outcome = dryRunOutcome(state, step, lead);
-    return {
-      escalate: false,
-      step: appendLog(
-        {
-          ...step,
-          status: outcome.status,
-          attempts: step.attempts + 1,
-          finishedAt: now,
-          nextRunAt: null,
-          output: outcome.output,
-          lastError: outcome.lastError,
-          draftedMessage: outcome.draftedMessage,
-        },
-        now,
-        outcome.log,
-      ),
-    };
-  } catch (err) {
-    const attempts = step.attempts + 1;
-    const message = err instanceof Error ? err.message : "Step failed.";
-    if (attempts >= LEAD_MAX_ATTEMPTS) {
-      return {
-        escalate: true,
-        step: appendLog(
-          {
-            ...step,
-            status: "needs_human",
-            attempts,
-            finishedAt: now,
-            nextRunAt: null,
-            lastError: message,
-            output: `Failed after retries. Needs a person. ${message} Nothing was sent.`,
-          },
-          now,
-          message,
-        ),
-      };
-    }
-    const delay = leadRetryDelayMs(attempts);
-    return {
-      escalate: false,
-      step: appendLog(
-        {
-          ...step,
-          status: "pending",
-          attempts,
-          finishedAt: null,
-          nextRunAt: addMs(now, delay),
-          lastError: message,
-        },
-        now,
-        `Retry ${attempts} of ${LEAD_MAX_ATTEMPTS - 1} scheduled in ${delay}ms. ${message} Nothing was sent.`,
-      ),
-    };
-  }
-}
-
-function stopLaterSteps(steps: LeadStepRun[], tenantId: string, leadId: string, failedStepId: string, now: string, reason: string): LeadStepRun[] {
-  const failedIndex = LEAD_CADENCE.findIndex((row) => row.id === failedStepId);
-  return steps.map((step) => {
-    if (step.leadId !== leadId || step.tenantId !== tenantId) return step;
-    const index = LEAD_CADENCE.findIndex((row) => row.id === step.stepId);
-    if (index <= failedIndex) return step;
-    if (step.status === "done" || step.status === "needs_human" || step.status === "failed") return step;
-    return appendLog(
-      {
-        ...step,
-        status: "needs_human",
-        finishedAt: now,
-        nextRunAt: null,
-        lastError: reason,
-        output: reason,
-      },
-      now,
-      reason,
-    );
-  });
-}
-
 /** Advance due Lead Follow-Up steps for one workspace. A no-op while the flag is off. */
 export function tickLeadFollowUp(
   state: FulfillmentState,
@@ -324,62 +211,65 @@ export function tickLeadFollowUp(
   now: string,
   opts: LeadTickOptions = {},
 ): { state: FulfillmentState; advanced: number } {
-  if (!pipelineEnabled(opts.enabled)) return { state, advanced: 0 };
+  if (!packagePipelineEnabled(opts.enabled)) return { state, advanced: 0 };
   const workspace = workspaceFor(state, tenantId);
   if (!workspace) return { state, advanced: 0 };
-  let runs = usageFor(state, tenantId).pipelineRuns;
-  let advanced = 0;
-  let blocked: string | null = null;
-  const failedLeads = new Map<string, string>();
-  const original = stepsOf(state);
-  let leadSteps = original.map((step) => {
-    if (step.tenantId !== tenantId) return step;
-    const lead = leadsOf(state).find((row) => row.id === step.leadId && row.tenantId === tenantId);
-    const enrollment = lead ? enrollmentFor(state, tenantId, lead.enrollmentId) : null;
-    if (!lead || !enrollment) return step;
-    const gate = assertPipelineRunAllowed(state, tenantId, runs);
-    if (!gate.ok) {
-      blocked = gate.reason;
-      return step;
-    }
-    const next = advanceLeadStep(original, step, lead, enrollment, state, now, opts);
-    if (!next) return step;
-    runs += 1;
-    advanced += 1;
-    if (next.escalate) failedLeads.set(step.leadId, step.stepId);
-    return next.step;
+  const leads = leadsOf(state);
+  const tick = tickCadenceSteps({
+    state,
+    tenantId,
+    now,
+    steps: stepsOf(state),
+    order: LEAD_ORDER,
+    groupId: (step) => step.leadId,
+    inGroup: (row, step) => row.leadId === step.leadId,
+    prepare: (step) => {
+      const lead = leads.find((row) => row.id === step.leadId && row.tenantId === tenantId);
+      const enrollment = lead ? enrollmentFor(state, tenantId, lead.enrollmentId) : null;
+      if (!lead || !enrollment) return { skip: true };
+      return {
+        skip: false,
+        runnable: !workspace.leadFollowUpKillSwitch
+          && !enrollment.killSwitch
+          && enrollment.status === "active"
+          && lead.status === "active"
+          && !lead.repliedAt,
+      };
+    },
+    execute: (step) => {
+      const lead = leads.find((row) => row.id === step.leadId && row.tenantId === tenantId);
+      if (!lead) throw new Error("Lead is missing.");
+      opts.runStep?.(step, lead);
+      const outcome = dryRunOutcome(state, step, lead);
+      return {
+        outcome: {
+          status: outcome.status,
+          output: outcome.output,
+          lastError: outcome.lastError,
+          log: outcome.log,
+        },
+        patch: { draftedMessage: outcome.draftedMessage },
+      };
+    },
+    quietLine: LEAD_QUIET,
+    stopReason: LEAD_STOP,
+    runs: usageFor(state, tenantId).pipelineRuns,
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs),
   });
-  if (failedLeads.size > 0) {
-    const reason = "Stopped because an earlier step failed. Needs a person. Nothing was sent.";
-    for (const [leadId, stepId] of failedLeads) {
-      leadSteps = stopLaterSteps(leadSteps, tenantId, leadId, stepId, now, reason);
-    }
-  }
-  if (advanced === 0 && !blocked) return { state, advanced: 0 };
-  let next = writeUsage({ ...state, leadSteps }, { ...usageFor(state, tenantId), pipelineRuns: runs });
-  if (failedLeads.size > 0) {
+  if (tick.unchanged) return { state, advanced: 0 };
+  let next = writeUsage({ ...state, leadSteps: tick.steps }, { ...usageFor(state, tenantId), pipelineRuns: tick.runs });
+  if (tick.escalations.length > 0) {
+    const failed = new Set(tick.escalations.map((row) => row.groupId));
     next = {
       ...next,
-      leads: leadsOf(next).map((lead) => failedLeads.has(lead.id) && lead.tenantId === tenantId ? { ...lead, status: "needs_human" as const } : lead),
+      leads: leadsOf(next).map((lead) => failed.has(lead.id) && lead.tenantId === tenantId ? { ...lead, status: "needs_human" as const } : lead),
     };
   }
-  const blockType = workspace.subscriptionStatus === "canceled" ? "subscription_canceled" : "pipeline_limit";
-  if (blocked && !(next.billingEvents || []).some((row) => row.tenantId === tenantId && row.type === blockType)) {
-    next = {
-      ...next,
-      billingEvents: [...(next.billingEvents || []), {
-        id: `lead_run_${now}`,
-        tenantId,
-        type: blockType,
-        planId: workspace.planId,
-        amountCents: 0 as const,
-        billingMode: "test" as const,
-        at: now,
-      }],
-    };
-  }
-  return { state: next, advanced };
+  next = withPipelineCapNotice(next, tenantId, now, tick.blocked, `lead_run_${now}`);
+  return { state: next, advanced: tick.advanced };
 }
+
+const WORKSPACE_KILL = "Workspace kill switch is on. Lead follow-up is stopped. Nothing was sent. Sales outreach was not changed.";
 
 export function setLeadFollowUpKillSwitch(
   state: FulfillmentState,
@@ -388,17 +278,13 @@ export function setLeadFollowUpKillSwitch(
   now: string,
   options: LeadFlag = {},
 ): FulfillmentState {
-  if (!pipelineEnabled(options.enabled)) return state;
+  if (!packagePipelineEnabled(options.enabled)) return state;
   const workspace = workspaceFor(state, tenantId);
   if (!workspace || workspace.leadFollowUpKillSwitch === on) return state;
   return {
     ...state,
     workspaces: state.workspaces.map((row) => row.id === tenantId ? { ...row, leadFollowUpKillSwitch: on } : row),
-    leadSteps: stepsOf(state).map((step) =>
-      step.tenantId === tenantId && on
-        ? appendLog(step, now, "Workspace kill switch is on. Lead follow-up is stopped. Nothing was sent. Sales outreach was not changed.")
-        : step,
-    ),
+    leadSteps: on ? stampWorkspaceKill(stepsOf(state), tenantId, now, WORKSPACE_KILL, () => true) : stepsOf(state),
   };
 }
 
@@ -412,7 +298,7 @@ export function recordLeadReply(
   now: string,
   options: LeadFlag = {},
 ): FulfillmentState {
-  if (!pipelineEnabled(options.enabled)) return state;
+  if (!packagePipelineEnabled(options.enabled)) return state;
   const lead = leadsOf(state).find((row) => row.id === leadId && row.tenantId === tenantId);
   if (!lead || lead.repliedAt) return state;
   return {
@@ -420,7 +306,7 @@ export function recordLeadReply(
     leads: leadsOf(state).map((row) => row.id === lead.id ? { ...row, status: "needs_human" as const, repliedAt: now } : row),
     leadSteps: stepsOf(state).map((step) => {
       if (step.leadId !== lead.id || step.tenantId !== tenantId || step.status === "done") return step;
-      return appendLog(
+      return appendCadenceLog(
         {
           ...step,
           status: "needs_human",
@@ -434,27 +320,4 @@ export function recordLeadReply(
       );
     }),
   };
-}
-
-/**
- * Tick package steps and Lead Follow-Up together.
- * Returns the same state while PACKAGE_FULFILLMENT is off, unless a test passes enabled.
- * This is not a cron. No mailbox, text message, or sales outreach sender is called.
- */
-export function tickPackagePipelines(
-  state: FulfillmentState,
-  tenantId: string,
-  now: string,
-  opts: LeadFlag & { credentials?: CredentialPort; runLeadStep?: LeadTickOptions["runStep"] } = {},
-): { state: FulfillmentState; advanced: number } {
-  if (!pipelineEnabled(opts.enabled)) return { state, advanced: 0 };
-  const packageTick = tickFulfillment(state, tenantId, now, {
-    enabled: true,
-    credentials: opts.credentials,
-  } satisfies TickOptions);
-  const leadTick = tickLeadFollowUp(packageTick.state, tenantId, now, {
-    enabled: true,
-    runStep: opts.runLeadStep,
-  });
-  return { state: leadTick.state, advanced: packageTick.advanced + leadTick.advanced };
 }

@@ -65,7 +65,7 @@ const AI_VISIBILITY: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "The monthly check is scheduled automatically. Reading and publishing pages needs site or CMS access.",
+  autonomyNote: "The profile audit and schema draft use stored intake only. The recommendation check is a dry run and needs a person. No live model or search call is made, and nothing is published.",
 };
 
 const GOOGLE_ADS: ServicePackage = {
@@ -125,7 +125,7 @@ const LEAD_GENERATION: ServicePackage = {
   includes: [],
   addonOf: null,
   autonomy: "needs_integration",
-  autonomyNote: "A page draft and test log can be opened locally. Publishing the page and verifying tracking need a host.",
+  autonomyNote: "The brief, landing page, and Google and Meta copy are drafts. Launch always needs a person. No live ad account is used and no spend is set. A captured lead can be handed to Lead Follow-Up for the same client.",
 };
 
 const ESTIMATE_FOLLOW_UPS: ServicePackage = {
