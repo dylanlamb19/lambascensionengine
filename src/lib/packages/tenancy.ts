@@ -34,6 +34,8 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
       aiVisibilityKillSwitch: row.aiVisibilityKillSwitch === true,
       reviewsKillSwitch: row.reviewsKillSwitch === true,
       appointmentRemindersKillSwitch: row.appointmentRemindersKillSwitch === true,
+      estimateFollowUpsKillSwitch: row.estimateFollowUpsKillSwitch === true,
+      googleAdsKillSwitch: row.googleAdsKillSwitch === true,
     })),
     clients: (state.clients || []).filter((row) => row.tenantId === tenantId),
     enrollments: (state.enrollments || []).filter((row) => row.tenantId === tenantId),
@@ -55,6 +57,10 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     storedReviews: (state.storedReviews || []).filter((row) => row.tenantId === tenantId),
     appointments: (state.appointments || []).filter((row) => row.tenantId === tenantId),
     appointmentSteps: (state.appointmentSteps || []).filter((row) => row.tenantId === tenantId),
+    estimates: (state.estimates || []).filter((row) => row.tenantId === tenantId),
+    estimateSteps: (state.estimateSteps || []).filter((row) => row.tenantId === tenantId),
+    adsMetrics: (state.adsMetrics || []).filter((row) => row.tenantId === tenantId),
+    adsChangeNotes: (state.adsChangeNotes || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -86,6 +92,10 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     storedReviews: [...(state.storedReviews || []).filter((row) => row.tenantId !== tenantId), ...safe.storedReviews],
     appointments: [...(state.appointments || []).filter((row) => row.tenantId !== tenantId), ...safe.appointments],
     appointmentSteps: [...(state.appointmentSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.appointmentSteps],
+    estimates: [...(state.estimates || []).filter((row) => row.tenantId !== tenantId), ...safe.estimates],
+    estimateSteps: [...(state.estimateSteps || []).filter((row) => row.tenantId !== tenantId), ...safe.estimateSteps],
+    adsMetrics: [...(state.adsMetrics || []).filter((row) => row.tenantId !== tenantId), ...safe.adsMetrics],
+    adsChangeNotes: [...(state.adsChangeNotes || []).filter((row) => row.tenantId !== tenantId), ...safe.adsChangeNotes],
   };
 }
 
@@ -131,6 +141,8 @@ export function startMarketerOnboarding(state: FulfillmentState, input: Onboardi
     aiVisibilityKillSwitch: false,
     reviewsKillSwitch: false,
     appointmentRemindersKillSwitch: false,
+    estimateFollowUpsKillSwitch: false,
+    googleAdsKillSwitch: false,
   };
   return {
     ok: true,

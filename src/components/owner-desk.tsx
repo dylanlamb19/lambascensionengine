@@ -95,6 +95,8 @@ import { fakeBilling } from "@/lib/packages/billing";
 import { credentialsFor, stubConnect, stubDisconnect } from "@/lib/packages/connections";
 import { acceptInvite, inviteMarketer } from "@/lib/packages/invites";
 import { handleAppointmentReply, recordAppointment, setAppointmentRemindersKillSwitch } from "@/lib/packages/appointment-reminders";
+import { decideEstimate, recordOpenEstimate, setEstimateFollowUpsKillSwitch } from "@/lib/packages/estimate-follow-ups";
+import { approveAdsChange, recordAdsMetrics, saveAdsChangeNote, setGoogleAdsKillSwitch } from "@/lib/packages/google-ads";
 import { setAiVisibilityKillSwitch } from "@/lib/packages/ai-visibility";
 import { captureGeneratedLead, saveClientIntake, setLeadGenerationKillSwitch } from "@/lib/packages/lead-generation";
 import { recordCompletedJob, recordStoredReview, setReviewsKillSwitch } from "@/lib/packages/reviews-gbp";
@@ -2689,6 +2691,8 @@ export function OwnerDesk() {
             onAiKill={(on) => mutatePackage(setAiVisibilityKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onReviewsKill={(on) => mutatePackage(setReviewsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onAppointmentsKill={(on) => mutatePackage(setAppointmentRemindersKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onEstimatesKill={(on) => mutatePackage(setEstimateFollowUpsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
+            onAdsKill={(on) => mutatePackage(setGoogleAdsKillSwitch(pkgRef.current, packageTenantId, on, new Date().toISOString()))}
             onRecordJob={(input) => {
               const now = new Date().toISOString();
               const recorded = recordCompletedJob(pkgRef.current, packageTenantId, input, now);
@@ -2727,6 +2731,50 @@ export function OwnerDesk() {
                 credentials: credentialsFor(noted.state, packageTenantId),
               });
               mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onRecordEstimate={(input) => {
+              const now = new Date().toISOString();
+              const recorded = recordOpenEstimate(pkgRef.current, packageTenantId, input, now);
+              if (!recorded.ok) return { ok: false, reason: recorded.reason };
+              const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, {
+                credentials: credentialsFor(recorded.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onDecideEstimate={(input) => {
+              const now = new Date().toISOString();
+              const decided = decideEstimate(pkgRef.current, packageTenantId, input.estimateId, input.decision, now);
+              if (!decided.ok) return { ok: false, reason: decided.reason };
+              const ticked = tickPackagePipelines(decided.state, packageTenantId, now, {
+                credentials: credentialsFor(decided.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onRecordAdsMetrics={(input) => {
+              const now = new Date().toISOString();
+              const recorded = recordAdsMetrics(pkgRef.current, packageTenantId, input, now);
+              if (!recorded.ok) return { ok: false, reason: recorded.reason };
+              const ticked = tickPackagePipelines(recorded.state, packageTenantId, now, {
+                credentials: credentialsFor(recorded.state, packageTenantId),
+              });
+              mutatePackage(ticked.state);
+              return { ok: true };
+            }}
+            onApproveAdsChange={(enrollmentId) => {
+              const now = new Date().toISOString();
+              const approved = approveAdsChange(pkgRef.current, packageTenantId, enrollmentId, now);
+              if (!approved.ok) return { ok: false, reason: approved.reason };
+              mutatePackage(approved.state);
+              return { ok: true };
+            }}
+            onMarkAdsAmbiguous={(enrollmentId) => {
+              const now = new Date().toISOString();
+              const noted = saveAdsChangeNote(pkgRef.current, packageTenantId, { enrollmentId, ambiguous: true }, now);
+              if (!noted.ok) return { ok: false, reason: noted.reason };
+              mutatePackage(noted.state);
               return { ok: true };
             }}
           />

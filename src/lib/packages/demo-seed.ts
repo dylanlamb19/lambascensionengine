@@ -2,10 +2,12 @@ import { tickAiVisibility } from "./ai-visibility.ts";
 import { recordAppointment, tickAppointments } from "./appointment-reminders.ts";
 import { fakeBilling } from "./billing.ts";
 import { stubConnect } from "./connections.ts";
+import { recordOpenEstimate, tickEstimates } from "./estimate-follow-ups.ts";
+import { recordAdsMetrics, tickGoogleAds } from "./google-ads.ts";
 import { saveClientIntake, tickLeadGeneration } from "./lead-generation.ts";
 import { captureLead, tickLeadFollowUp } from "./lead-follow-up.ts";
 import { recordCompletedJob, recordStoredReview, tickReviews } from "./reviews-gbp.ts";
-import { addMonthsIso, recordPurchase, tickFulfillment } from "./runner.ts";
+import { addDays, addMonthsIso, recordPurchase, tickFulfillment } from "./runner.ts";
 import { startMarketerOnboarding, workspaceIdForUser } from "./tenancy.ts";
 import { EMPTY_FULFILLMENT, type FulfillmentState } from "./types.ts";
 import { credentialsFor } from "./connections.ts";
@@ -139,6 +141,7 @@ export function buildDemoSeed(now = DEMO_NOW): FulfillmentState {
       state = tickFulfillment(listed.state, tenantId, now, { enabled: true, credentials: credentialsFor(listed.state, tenantId) }).state;
     }
     state = seedServiceCare(state, tenantId, now, factory);
+    state = seedEstimatesAndAds(state, tenantId, now, factory);
   }
   return {
     ...state,
@@ -200,6 +203,94 @@ function seedServiceCare(state: FulfillmentState, tenantId: string, now: string,
     }, now, { enabled: true, ids: factory });
     if (booked.ok) state = booked.state;
     for (let i = 0; i < 4; i += 1) state = tickAppointments(state, tenantId, now, { enabled: true }).state;
+  }
+  return state;
+}
+
+/** Open estimates and stored Google Ads drafts for the sample workspaces. Nothing is sent or spent. */
+function seedEstimatesAndAds(state: FulfillmentState, tenantId: string, now: string, factory: () => string): FulfillmentState {
+  for (const kind of ["estimate_feed", "google_ads"] as const) {
+    const connected = stubConnect(state, tenantId, kind, now);
+    if (connected.ok) state = connected.state;
+  }
+  const harbor = state.workspaces.find((row) => row.id === tenantId)?.name === "Harbor Marketing";
+  const estimateClient = harbor ? "North Roofing" : "Red Barn Roofing";
+  const adsClient = harbor ? "Lakeside HVAC" : "Main Street Dental";
+  const estimateOwner = state.clients.find((row) => row.tenantId === tenantId && row.name === estimateClient);
+  if (estimateOwner) {
+    const parent = state.enrollments.find((row) => row.tenantId === tenantId && row.clientId === estimateOwner.id && row.packageId === "lead-follow-up" && row.status === "active");
+    if (!parent) {
+      const bought = recordPurchase(state, tenantId, {
+        clientName: estimateClient,
+        packageId: "lead-follow-up",
+        setupPayment: "recorded",
+        monthlyPayment: "recorded",
+        startedOn: "2026-11-01",
+      }, now, factory);
+      if (bought.ok) state = bought.state;
+    }
+    const hasEstimates = state.enrollments.some((row) => row.tenantId === tenantId && row.clientId === estimateOwner.id && row.packageId === "estimate-follow-ups" && row.status === "active");
+    if (!hasEstimates) {
+      const bought = recordPurchase(state, tenantId, {
+        clientName: estimateClient,
+        packageId: "estimate-follow-ups",
+        setupPayment: "recorded",
+        monthlyPayment: "recorded",
+        startedOn: "2026-11-01",
+      }, now, factory);
+      if (bought.ok) state = bought.state;
+    }
+    const enrollment = state.enrollments.find((row) => row.tenantId === tenantId && row.clientId === estimateOwner.id && row.packageId === "estimate-follow-ups" && row.status === "active");
+    if (enrollment) {
+      const recorded = recordOpenEstimate(state, tenantId, {
+        enrollmentId: enrollment.id,
+        customerName: harbor ? "Pat Nguyen" : "Casey Brook",
+        customerEmail: harbor ? "pat@north.example" : "casey@redbarn.example",
+        label: harbor ? "Full roof replacement" : "Barn metal quote",
+        openedAt: "2026-11-13T15:00:00.000Z",
+      }, now, { enabled: true, ids: factory });
+      if (recorded.ok) state = recorded.state;
+      for (let i = 0; i < 4; i += 1) state = tickEstimates(state, tenantId, now, { enabled: true }).state;
+    }
+  }
+  const adsOwner = state.clients.find((row) => row.tenantId === tenantId && row.name === adsClient);
+  if (adsOwner) {
+    let enrollment = state.enrollments.find((row) => row.tenantId === tenantId && row.clientId === adsOwner.id && row.packageId === "google-ads" && row.status === "active");
+    if (!enrollment) {
+      const bought = recordPurchase(state, tenantId, {
+        clientName: adsClient,
+        packageId: "google-ads",
+        setupPayment: "waived",
+        monthlyPayment: "recorded",
+        startedOn: "2026-11-01",
+      }, now, factory);
+      if (bought.ok) state = bought.state;
+      enrollment = state.enrollments.find((row) => row.tenantId === tenantId && row.clientId === adsOwner.id && row.packageId === "google-ads" && row.status === "active");
+    }
+    if (enrollment) {
+      const intake = saveClientIntake(state, tenantId, {
+        clientId: adsOwner.id,
+        businessName: adsClient,
+        phone: harbor ? "555-0190" : "555-0177",
+        address: harbor ? "4 Lake St" : "1 Main St",
+        website: harbor ? "https://lakeside.example" : "https://mainstreet.example",
+        offer: harbor ? "Furnace repair" : "Cleanings",
+        serviceArea: harbor ? "Lakeside" : "Prairie County",
+      }, now, { enabled: true });
+      if (intake.ok) state = intake.state;
+      const metrics = recordAdsMetrics(intake.ok ? intake.state : state, tenantId, {
+        enrollmentId: enrollment.id,
+        periodLabel: harbor ? "Nov 9 to Nov 15" : "Nov 9 to Nov 15 prairie",
+        impressions: harbor ? 120 : 40,
+        clicks: harbor ? 9 : 3,
+        conversions: harbor ? null : 1,
+        spendCents: null,
+      }, now, { enabled: true, ids: factory });
+      if (metrics.ok) state = metrics.state;
+      for (let i = 0; i < 6; i += 1) state = tickGoogleAds(state, tenantId, now, { enabled: true }).state;
+      const week = addDays(now, 7);
+      for (let i = 0; i < 4; i += 1) state = tickGoogleAds(state, tenantId, week, { enabled: true }).state;
+    }
   }
   return state;
 }

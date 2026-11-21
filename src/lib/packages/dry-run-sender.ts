@@ -91,6 +91,41 @@ export function draftReviewRequest(input: ReviewDraftInput): DryRunDraft {
   return { to, subject, body, logLine };
 }
 
+export type EstimateDraftKind = "day-2" | "day-5" | "day-10" | "close-out";
+
+export type EstimateDraftInput = {
+  kind: EstimateDraftKind;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  clientName: string;
+  label: string;
+};
+
+const ESTIMATE_SUBJECTS: Record<EstimateDraftKind, string> = {
+  "day-2": "Your estimate is still open",
+  "day-5": "Checking on your estimate",
+  "day-10": "Your estimate is still here",
+  "close-out": "Closing the loop on your estimate",
+};
+
+/** A follow-up for an open estimate. Nothing is sent, and Lead Follow-Up is not copied. */
+export function draftEstimateFollowUp(input: EstimateDraftInput): DryRunDraft {
+  const name = input.customerName.trim() || "there";
+  const client = input.clientName.trim() || "the team";
+  const label = input.label.trim() || "your estimate";
+  const email = input.customerEmail.trim();
+  const phone = input.customerPhone.trim();
+  const to = email || phone || name;
+  const channel = email ? "Not sent by email." : phone ? "Not sent by text." : "Not sent.";
+  const subject = ESTIMATE_SUBJECTS[input.kind];
+  const body = input.kind === "close-out"
+    ? `Hi ${name}, this is ${client}. This is the last note on the open estimate for ${label}. A person can close it if you reply.`
+    : `Hi ${name}, this is ${client}. The estimate for ${label} is still open. Reply if you want to move ahead or if you have a question.`;
+  const logLine = `Dry run. Intended estimate follow-up was not sent. To ${to}. Subject: ${subject}. ${body} ${channel} Nothing was sent. Lead Follow-Up was not duplicated. Sales outreach was not used.`;
+  return { to, subject, body, logLine };
+}
+
 const APPOINTMENT_SUBJECTS: Record<AppointmentDraftKind, string> = {
   confirm: "Your appointment is booked",
   "reminder-24h": "Appointment tomorrow",

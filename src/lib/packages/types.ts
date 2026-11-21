@@ -33,6 +33,10 @@ export type Workspace = {
   reviewsKillSwitch: boolean;
   /** Stops every appointment reminder in this workspace. Other workspaces are untouched. */
   appointmentRemindersKillSwitch: boolean;
+  /** Stops every estimate follow-up in this workspace. Other workspaces are untouched. */
+  estimateFollowUpsKillSwitch: boolean;
+  /** Stops every Google Ads draft in this workspace. Other workspaces are untouched. */
+  googleAdsKillSwitch: boolean;
 };
 
 export type ServiceClient = {
@@ -205,7 +209,7 @@ export type ClientIntake = {
   updatedAt: string;
 };
 
-export type PackageRunId = "lead-generation" | "ai-visibility" | "reviews-gbp";
+export type PackageRunId = "lead-generation" | "ai-visibility" | "reviews-gbp" | "google-ads";
 export type PackageRunStatus = "active" | "needs_human" | "stopped";
 
 /** One Lead Generation or AI Visibility run on a client's package. */
@@ -331,6 +335,79 @@ export type ClientAppointment = {
   recordedAt: string;
 };
 
+export type EstimateStepId = "day-2" | "day-5" | "day-10" | "close-out";
+export type EstimateOutcome = "open" | "won" | "lost" | "replied" | "ambiguous";
+
+/**
+ * One open estimate for a client's customer.
+ * Follow-up drafts are written only while outcome is open.
+ */
+export type OpenEstimate = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  label: string;
+  openedAt: string;
+  recordedAt: string;
+  outcome: EstimateOutcome;
+  status: PackageRunStatus;
+  lastNote: string;
+};
+
+/** Day 2, day 5, day 10, and close-out drafts. Nothing is sent. */
+export type EstimateStep = {
+  id: string;
+  tenantId: string;
+  estimateId: string;
+  enrollmentId: string;
+  clientId: string;
+  stepId: EstimateStepId;
+  title: string;
+  status: StepStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  nextRunAt: string | null;
+  output: string;
+  draftedMessage: string | null;
+  logs: { at: string; message: string }[];
+};
+
+/**
+ * Figures a person stored for this workspace.
+ * They are not read from Google Ads, and they are not a charge.
+ */
+export type AdsMetricSnapshot = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  periodLabel: string;
+  impressions: number | null;
+  clicks: number | null;
+  conversions: number | null;
+  spendCents: number | null;
+  recordedAt: string;
+  source: "stored";
+};
+
+/** A change that stays with a person until they approve it. Nothing is pushed. */
+export type AdsChangeNote = {
+  tenantId: string;
+  clientId: string;
+  enrollmentId: string;
+  summary: string;
+  ambiguous: boolean;
+  status: "open" | "approved";
+  updatedAt: string;
+};
+
 /** Confirm, 24h, 2h, and no-show drafts. Nothing is sent. */
 export type AppointmentStep = {
   id: string;
@@ -374,6 +451,10 @@ export type FulfillmentState = {
   storedReviews: StoredReview[];
   appointments: ClientAppointment[];
   appointmentSteps: AppointmentStep[];
+  estimates: OpenEstimate[];
+  estimateSteps: EstimateStep[];
+  adsMetrics: AdsMetricSnapshot[];
+  adsChangeNotes: AdsChangeNote[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -398,6 +479,10 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   storedReviews: [],
   appointments: [],
   appointmentSteps: [],
+  estimates: [],
+  estimateSteps: [],
+  adsMetrics: [],
+  adsChangeNotes: [],
 };
 
 export type RecordPurchaseInput = {
