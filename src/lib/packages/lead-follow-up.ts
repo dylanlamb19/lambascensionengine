@@ -11,7 +11,7 @@ import { draftFollowUp } from "./dry-run-sender.ts";
 import { addDays, type IdFactory } from "./runner.ts";
 import { workspaceFor } from "./tenancy.ts";
 import type { Enrollment, FollowUpLead, FulfillmentState, LeadStepId, LeadStepRun } from "./types.ts";
-import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 
 export const LEAD_MAX_ATTEMPTS = 3;
 export const LEAD_BACKOFF_MS = 60_000;
@@ -23,7 +23,7 @@ export const LEAD_CADENCE: { id: LeadStepId; title: string; delayDays: number; s
   { id: "day-7", title: "Day 7 follow-up", delayDays: 7, sends: true },
 ];
 
-export type LeadFlag = { enabled?: boolean };
+export type LeadFlag = { enabled?: boolean; entitlements?: boolean };
 
 export type CaptureLeadInput = {
   enrollmentId: string;
@@ -254,7 +254,7 @@ export function tickLeadFollowUp(
     quietLine: LEAD_QUIET,
     stopReason: LEAD_STOP,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now, opts.entitlements),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   let next = writeUsage({ ...state, leadSteps: tick.steps }, { ...usageFor(state, tenantId), pipelineRuns: tick.runs });
@@ -266,7 +266,7 @@ export function tickLeadFollowUp(
     };
   }
   next = withPipelineCapNotice(next, tenantId, now, tick.blocked, `lead_run_${now}`);
-  return { state: next, advanced: tick.advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, tick.advanced, opts.entitlements), advanced: tick.advanced };
 }
 
 const WORKSPACE_KILL = "Workspace kill switch is on. Lead follow-up is stopped. Nothing was sent. Sales outreach was not changed.";

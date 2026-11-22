@@ -15,7 +15,7 @@ import type {
   PackageRunId,
   PackageRunStep,
 } from "./types.ts";
-import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 
 export type PackageStepDef = {
   id: string;
@@ -37,7 +37,7 @@ export type PackageRunSpec = {
   outcome: (state: FulfillmentState, step: PackageRunStep) => PackageRunOutcome;
 };
 
-export type PackageFlag = { enabled?: boolean };
+export type PackageFlag = { enabled?: boolean; entitlements?: boolean };
 
 type TickOpts = PackageFlag & {
   ids?: IdFactory;
@@ -241,7 +241,7 @@ export function tickPackageRun(
     quietLine: spec.quietLine,
     stopReason: spec.stopReason,
     runs: usageFor(opened, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(opened, tenantId, runs, now),
+    allow: (runs) => assertPipelineRunAllowed(opened, tenantId, runs, now, opts.entitlements),
   });
   const openedChanged = opened !== state;
   if (tick.unchanged && !openedChanged) return { state, advanced: 0 };
@@ -257,7 +257,7 @@ export function tickPackageRun(
     }
     next = withPipelineCapNotice(next, tenantId, now, tick.blocked, `${spec.noticePrefix}_${now}`);
   }
-  return { state: next, advanced: tick.advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, tick.advanced, opts.entitlements), advanced: tick.advanced };
 }
 
 export function setPackageWorkspaceKill(

@@ -13,7 +13,7 @@ import { clientLabel, enrollmentFor, type PackageFlag } from "./package-runs.ts"
 import { addDays, type IdFactory } from "./runner.ts";
 import { workspaceFor } from "./tenancy.ts";
 import type { EstimateOutcome, EstimateStep, EstimateStepId, FulfillmentState, OpenEstimate } from "./types.ts";
-import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 
 /** Same quiet window as appointment reminders: 8:00–21:00 America/Chicago. */
 export { quietHoursShift };
@@ -315,7 +315,7 @@ export function tickEstimates(
     quietLine: QUIET,
     stopReason: STOP,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now, opts.entitlements),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   let steps = tick.steps;
@@ -343,7 +343,7 @@ export function tickEstimates(
     tick.blocked,
     `estimate_run_${now}`,
   );
-  return { state: next, advanced: tick.advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, tick.advanced, opts.entitlements), advanced: tick.advanced };
 }
 
 export type EstimateDecision = "won" | "lost" | "replied" | "ambiguous";

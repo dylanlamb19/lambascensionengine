@@ -14,6 +14,9 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as BillingRouteImport } from './routes/billing'
 import { Route as TeamRouteImport } from './routes/team'
+import { Route as PlanRouteImport } from './routes/plan'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as OperatorRouteImport } from './routes/operator'
 import { Route as BookTokenRouteImport } from './routes/book/$token'
 import { Route as ApiAccountSplatRouteImport } from './routes/api/account/$'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -45,6 +48,21 @@ const BillingRoute = BillingRouteImport.update({
 const TeamRoute = TeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlanRoute = PlanRouteImport.update({
+  id: '/plan',
+  path: '/plan',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperatorRoute = OperatorRouteImport.update({
+  id: '/operator',
+  path: '/operator',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BookTokenRoute = BookTokenRouteImport.update({
@@ -89,6 +107,9 @@ export interface FileRoutesByFullPath {
   '/workspace': typeof WorkspaceRoute
   '/billing': typeof BillingRoute
   '/team': typeof TeamRoute
+  '/plan': typeof PlanRoute
+  '/onboarding': typeof OnboardingRoute
+  '/operator': typeof OperatorRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -103,6 +124,9 @@ export interface FileRoutesByTo {
   '/workspace': typeof WorkspaceRoute
   '/billing': typeof BillingRoute
   '/team': typeof TeamRoute
+  '/plan': typeof PlanRoute
+  '/onboarding': typeof OnboardingRoute
+  '/operator': typeof OperatorRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -118,6 +142,9 @@ export interface FileRoutesById {
   '/workspace': typeof WorkspaceRoute
   '/billing': typeof BillingRoute
   '/team': typeof TeamRoute
+  '/plan': typeof PlanRoute
+  '/onboarding': typeof OnboardingRoute
+  '/operator': typeof OperatorRoute
   '/book/$token': typeof BookTokenRoute
   '/api/account/$': typeof ApiAccountSplatRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -134,6 +161,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/billing'
     | '/team'
+  | '/plan'
+  | '/onboarding'
+  | '/operator'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -148,6 +178,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/billing'
     | '/team'
+  | '/plan'
+  | '/onboarding'
+  | '/operator'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -162,6 +195,9 @@ export interface FileRouteTypes {
     | '/workspace'
     | '/billing'
     | '/team'
+  | '/plan'
+  | '/onboarding'
+  | '/operator'
     | '/book/$token'
     | '/api/account/$'
     | '/api/auth/$'
@@ -177,6 +213,9 @@ export interface RootRouteChildren {
   WorkspaceRoute: typeof WorkspaceRoute
   BillingRoute: typeof BillingRoute
   TeamRoute: typeof TeamRoute
+  PlanRoute: typeof PlanRoute
+  OnboardingRoute: typeof OnboardingRoute
+  OperatorRoute: typeof OperatorRoute
   BookTokenRoute: typeof BookTokenRoute
   ApiAccountSplatRoute: typeof ApiAccountSplatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -221,6 +260,27 @@ declare module '@tanstack/react-router' {
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof TeamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/plan': {
+      id: '/plan'
+      path: '/plan'
+      fullPath: '/plan'
+      preLoaderRoute: typeof PlanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operator': {
+      id: '/operator'
+      path: '/operator'
+      fullPath: '/operator'
+      preLoaderRoute: typeof OperatorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/book/$token': {
@@ -281,6 +341,9 @@ const rootRouteChildren: RootRouteChildren = {
   WorkspaceRoute: WorkspaceRoute,
   BillingRoute: BillingRoute,
   TeamRoute: TeamRoute,
+  PlanRoute: PlanRoute,
+  OnboardingRoute: OnboardingRoute,
+  OperatorRoute: OperatorRoute,
   BookTokenRoute: BookTokenRoute,
   ApiAccountSplatRoute: ApiAccountSplatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

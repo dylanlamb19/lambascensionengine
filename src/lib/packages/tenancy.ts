@@ -71,6 +71,9 @@ export function sliceTenant(state: FulfillmentState, tenantId: string): Fulfillm
     portalSessions: (state.portalSessions || []).filter((row) => row.tenantId === tenantId),
     seatInvites: (state.seatInvites || []).filter((row) => row.tenantId === tenantId),
     closures: (state.closures || []).filter((row) => row.tenantId === tenantId),
+    usageMeters: (state.usageMeters || []).filter((row) => row.tenantId === tenantId),
+    wizardProgress: (state.wizardProgress || []).filter((row) => row.tenantId === tenantId),
+    importedLeads: (state.importedLeads || []).filter((row) => row.tenantId === tenantId),
   };
 }
 
@@ -114,6 +117,9 @@ export function replaceTenant(state: FulfillmentState, tenantId: string, slice: 
     portalSessions: [...(state.portalSessions || []).filter((row) => row.tenantId !== tenantId), ...safe.portalSessions],
     seatInvites: [...(state.seatInvites || []).filter((row) => row.tenantId !== tenantId), ...safe.seatInvites],
     closures: [...(state.closures || []).filter((row) => row.tenantId !== tenantId), ...safe.closures],
+    usageMeters: [...(state.usageMeters || []).filter((row) => row.tenantId !== tenantId), ...safe.usageMeters],
+    wizardProgress: [...(state.wizardProgress || []).filter((row) => row.tenantId !== tenantId), ...safe.wizardProgress],
+    importedLeads: [...(state.importedLeads || []).filter((row) => row.tenantId !== tenantId), ...safe.importedLeads],
   };
 }
 

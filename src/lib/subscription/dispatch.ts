@@ -24,7 +24,14 @@ import { closeWorkspace, exportWorkspace, restoreWorkspace } from "./lifecycle.t
 import { listScaffoldPlans, scaffoldPlan } from "./plans.ts";
 import { acceptSeat, inviteSeat, seatLimitFor, seatsInUse, transferOwnership } from "./team.ts";
 
-export type LayerFlags = { billing: boolean; team: boolean; lifecycle: boolean };
+export type LayerFlags = {
+  billing: boolean;
+  team: boolean;
+  lifecycle: boolean;
+  entitlements?: boolean;
+  wizard?: boolean;
+  operator?: boolean;
+};
 
 export type LayerCall = {
   method: string;
@@ -170,7 +177,7 @@ export function tryLayerRoute(bundle: AccountBundle, call: LayerCall): FlowResul
       email: String(body.email || ""),
       role: String(body.role || "member"),
       now: call.now,
-    });
+    }, { entitlements: call.flags.entitlements === true });
     if (!invited.ok) return fail(invited.bundle, 400, invited.reason);
     return reply({
       bundle: invited.bundle,

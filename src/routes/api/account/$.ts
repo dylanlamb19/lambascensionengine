@@ -9,6 +9,9 @@ async function respond(request: Request): Promise<Response> {
     billing: FLAGS.BILLING_SCAFFOLD,
     team: FLAGS.TEAM_SEATS,
     lifecycle: FLAGS.WORKSPACE_LIFECYCLE,
+    entitlements: FLAGS.PLAN_ENTITLEMENTS,
+    wizard: FLAGS.ONBOARDING_WIZARD,
+    operator: FLAGS.OPERATOR_CONSOLE,
   });
   if (result.bundle !== current) writeAccountBundle(result.bundle);
   return result.response;

@@ -50,6 +50,8 @@ export type Workspace = {
   /** Set while the owner has closed this workspace. Rows stay in place. */
   closedAt?: string | null;
   restoreUntil?: string | null;
+  /** Set by the platform operator. A tenant cannot set this on another workspace. */
+  operatorSuspended?: boolean;
 };
 
 export type ScaffoldPlanId = "starter" | "pro" | "agency";
@@ -65,6 +67,8 @@ export type ScaffoldSubscription = {
   graceUntil: string | null;
   billingMode: "test";
   updatedAt: string;
+  /** Set when a scaffold checkout starts a trial. Not a charge. */
+  trialEndsAt?: string | null;
 };
 
 export type WebhookReceipt = {
@@ -232,6 +236,42 @@ export type TenantUsage = {
   tenantId: string;
   pipelineRuns: number;
   enrollments: number;
+};
+
+export type WizardStepId = "branding" | "plan" | "client" | "packages" | "leads" | "next";
+
+/** Where a marketer is in the first-run wizard. One row per workspace. */
+export type WizardProgress = {
+  tenantId: string;
+  step: WizardStepId;
+  completed: WizardStepId[];
+  skipped: WizardStepId[];
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+/** Counter for one workspace and one billing period. */
+export type UsageMeter = {
+  tenantId: string;
+  periodStart: string;
+  periodEnd: string;
+  clientWorkspaces: number;
+  activePipelines: number;
+  teamSeats: number;
+  monthlyRuns: number;
+};
+
+/** A lead row from a CSV import. Dry-run only. Nothing is sent. */
+export type ImportedLead = {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  source: string;
+  mode: "dry_run";
+  createdAt: string;
 };
 
 export type WorkspaceMembership = {
@@ -577,6 +617,9 @@ export type FulfillmentState = {
   portalSessions: PortalSessionRecord[];
   seatInvites: SeatInvite[];
   closures: ClosureSnapshot[];
+  usageMeters: UsageMeter[];
+  wizardProgress: WizardProgress[];
+  importedLeads: ImportedLead[];
 };
 
 export const EMPTY_FULFILLMENT: FulfillmentState = {
@@ -613,6 +656,9 @@ export const EMPTY_FULFILLMENT: FulfillmentState = {
   portalSessions: [],
   seatInvites: [],
   closures: [],
+  usageMeters: [],
+  wizardProgress: [],
+  importedLeads: [],
 };
 
 export type RecordPurchaseInput = {

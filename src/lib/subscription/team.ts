@@ -1,6 +1,9 @@
 import { deliverTransactional } from "../transactional/send.ts";
 import type { AccountBundle, DeskRole } from "../account/types.ts";
 import { mintToken, sha256 } from "../account/crypto.ts";
+import { entitlementPreface, seatCapBlock } from "../entitlements/access.ts";
+import { syncMeter } from "../entitlements/meter.ts";
+import { entitlementsOn } from "../entitlements/plans.ts";
 import { workspaceFor } from "../packages/tenancy.ts";
 import type { FulfillmentState, SeatInvite } from "../packages/types.ts";
 import { scaffoldAccessBlock } from "../packages/usage.ts";
@@ -51,20 +54,33 @@ function inviteNote(token: string, workspaceName: string, role: string): { subje
 export function inviteSeat(
   bundle: AccountBundle,
   input: { tenantId: string; actorUserId: string; email: string; role: string; now: string },
+  options?: { entitlements?: boolean },
 ): TeamResult {
   const email = normalizeEmail(input.email);
   if (!isEmail(email)) return { ok: false, bundle, reason: "Enter an email address." };
   if (input.role !== "admin" && input.role !== "member") return { ok: false, bundle, reason: "Choose admin or member." };
   const workspace = workspaceFor(bundle.fulfillment, input.tenantId);
   if (!workspace) return { ok: false, bundle, reason: "That workspace is not open." };
-  const blocked = scaffoldAccessBlock(bundle.fulfillment, input.tenantId, input.now);
-  if (blocked) return { ok: false, bundle, reason: blocked };
-  const limit = seatLimitFor(bundle.fulfillment, input.tenantId);
-  if (limit == null) return { ok: false, bundle, reason: "Choose a test plan before inviting someone." };
+  const entitled = entitlementsOn(options?.entitlements);
+  if (entitled) {
+    const preface = entitlementPreface(bundle.fulfillment, input.tenantId, input.now);
+    if (preface) return { ok: false, bundle, reason: preface };
+  } else {
+    const blocked = scaffoldAccessBlock(bundle.fulfillment, input.tenantId, input.now);
+    if (blocked) return { ok: false, bundle, reason: blocked };
+    const limit = seatLimitFor(bundle.fulfillment, input.tenantId);
+    if (limit == null) return { ok: false, bundle, reason: "Choose a test plan before inviting someone." };
+  }
   const existing = (bundle.fulfillment.seatInvites || []).find((row) => row.tenantId === input.tenantId && row.email === email && !row.usedAt && row.expiresAt > input.now);
   if (existing) return { ok: true, bundle, invite: existing };
-  if (seatsInUse(bundle.fulfillment, input.tenantId, input.now) >= limit) {
-    return { ok: false, bundle, reason: `This test plan records up to ${limit} people. No one was invited.` };
+  if (entitled) {
+    const cap = seatCapBlock(bundle.fulfillment, input.tenantId, input.now);
+    if (cap) return { ok: false, bundle, reason: cap };
+  } else {
+    const limit = seatLimitFor(bundle.fulfillment, input.tenantId);
+    if (limit != null && seatsInUse(bundle.fulfillment, input.tenantId, input.now) >= limit) {
+      return { ok: false, bundle, reason: `This test plan records up to ${limit} people. No one was invited.` };
+    }
   }
   const already = (bundle.fulfillment.memberships || []).some((row) => row.tenantId === input.tenantId && row.email === email);
   if (already) return { ok: false, bundle, reason: "That person is already in this workspace." };
@@ -89,7 +105,8 @@ export function inviteSeat(
     tenantId: input.tenantId,
     at: input.now,
   });
-  const fulfillment: FulfillmentState = { ...bundle.fulfillment, seatInvites: [...(bundle.fulfillment.seatInvites || []), invite] };
+  let fulfillment: FulfillmentState = { ...bundle.fulfillment, seatInvites: [...(bundle.fulfillment.seatInvites || []), invite] };
+  if (entitled) fulfillment = syncMeter(fulfillment, input.tenantId, input.now);
   return {
     ok: true,
     invite,

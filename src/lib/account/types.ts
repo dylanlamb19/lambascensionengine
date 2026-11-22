@@ -78,6 +78,23 @@ export type StoredLogo = {
   updatedAt: string;
 };
 
+/** A Lasengine platform operator. This is not a workspace role. */
+export type PlatformOperator = {
+  userId: string;
+  email: string;
+  grantedAt: string;
+};
+
+export type OperatorAuditAction = "list_tenants" | "view_tenant" | "suspend" | "resume" | "kill_pipelines";
+
+export type OperatorAuditEvent = {
+  id: string;
+  actorUserId: string;
+  action: OperatorAuditAction;
+  tenantId: string | null;
+  at: string;
+};
+
 export type AccountState = {
   users: AccountUser[];
   pending: PendingSignup[];
@@ -88,6 +105,8 @@ export type AccountState = {
   mail: AccountMail[];
   transactional: TransactionalMail[];
   logos: StoredLogo[];
+  platformOperators: PlatformOperator[];
+  operatorAudit: OperatorAuditEvent[];
 };
 
 /** In-memory account records plus the fulfillment rows they open. */
@@ -107,6 +126,8 @@ export function emptyAccounts(): AccountState {
     mail: [],
     transactional: [],
     logos: [],
+    platformOperators: [],
+    operatorAudit: [],
   };
 }
 
