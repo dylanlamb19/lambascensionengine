@@ -1,3 +1,6 @@
+import { addMonthlyRuns, capReason, monthlyRunsOf } from "../entitlements/meter.ts";
+import { choosePlanNeeded, entitlementsOn } from "../entitlements/plans.ts";
+import { resolveEntitledPlan, trialBlock } from "../entitlements/resolve.ts";
 import { getTestPlan } from "./plans.ts";
 import { workspaceFor } from "./tenancy.ts";
 import type { FulfillmentState, TenantUsage } from "./types.ts";
@@ -24,6 +27,7 @@ export function writeUsage(state: FulfillmentState, usage: TenantUsage): Fulfill
 export function scaffoldAccessBlock(state: FulfillmentState, tenantId: string, now?: string): string | null {
   const workspace = workspaceFor(state, tenantId);
   if (workspace?.closedAt) return "This workspace is closed. Nothing was changed.";
+  if (workspace?.operatorSuspended) return "This workspace is suspended. Nothing was changed.";
   const sub = (state.scaffoldSubscriptions || []).find((row) => row.tenantId === tenantId);
   if (!sub) return null;
   if (sub.status === "canceled") return "This test subscription is canceled. No charge was attempted.";
@@ -51,7 +55,7 @@ export function assertEnrollmentAllowed(state: FulfillmentState, tenantId: strin
   return { ok: true };
 }
 
-export function assertPipelineRunAllowed(state: FulfillmentState, tenantId: string, runsSoFar: number, now?: string): { ok: true } | { ok: false; reason: string } {
+export function assertPipelineRunAllowed(state: FulfillmentState, tenantId: string, runsSoFar: number, now?: string, entitlements?: boolean): { ok: true } | { ok: false; reason: string } {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace) return { ok: false, reason: "That workspace is not open." };
   const blocked = scaffoldAccessBlock(state, tenantId, now);
@@ -59,9 +63,33 @@ export function assertPipelineRunAllowed(state: FulfillmentState, tenantId: stri
   if (workspace.subscriptionStatus === "canceled") {
     return { ok: false, reason: "This test subscription is canceled. The pipeline did not run and no charge was attempted." };
   }
+  if (entitlementsOn(entitlements)) {
+    const clock = now || workspace.createdAt;
+    const trial = trialBlock(state, tenantId, clock);
+    if (trial) return { ok: false, reason: trial };
+    const plan = resolveEntitledPlan(state, tenantId);
+    if (!plan) return { ok: false, reason: choosePlanNeeded() };
+    const storedLifetime = (state.usage || []).find((row) => row.tenantId === tenantId)?.pipelineRuns || 0;
+    const projected = monthlyRunsOf(state, tenantId, clock) + Math.max(0, runsSoFar - storedLifetime);
+    const reason = capReason(plan, "monthlyRuns", projected);
+    if (reason) return { ok: false, reason };
+    return { ok: true };
+  }
   const limit = getTestPlan(workspace.planId).pipelineRunLimit;
   if (limit != null && runsSoFar >= limit) {
     return { ok: false, reason: `This test plan allows ${limit} pipeline runs. No charge was attempted.` };
   }
   return { ok: true };
+}
+
+/** Persist this period's fulfillment runs. A no-op while plan entitlements are off. */
+export function finishPipelineRuns(
+  state: FulfillmentState,
+  tenantId: string,
+  now: string,
+  advanced: number,
+  entitlements?: boolean,
+): FulfillmentState {
+  if (!entitlementsOn(entitlements) || advanced <= 0) return state;
+  return addMonthlyRuns(state, tenantId, now, advanced);
 }

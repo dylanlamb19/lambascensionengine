@@ -26,6 +26,7 @@ import {
   verifySignup,
 } from "./flow.ts";
 import type { AccountAction } from "./rbac.ts";
+import { tryMarketerProductRoute, tryOperatorRoute } from "../product/routes.ts";
 import { tryLayerRoute, type LayerFlags } from "../subscription/dispatch.ts";
 import type { AccountBundle, AccountSession } from "./types.ts";
 import { emptyBundle } from "./types.ts";
@@ -81,7 +82,21 @@ function isReply(value: { bundle: AccountBundle; session: AccountSession } | Acc
   return "status" in value;
 }
 
+function layerFlags(call: AccountCall): LayerFlags {
+  return {
+    billing: call.flags?.billing === true,
+    team: call.flags?.team === true,
+    lifecycle: call.flags?.lifecycle === true,
+    entitlements: call.flags?.entitlements === true,
+    wizard: call.flags?.wizard === true,
+    operator: call.flags?.operator === true,
+  };
+}
+
 export function dispatchAccountRoute(bundle: AccountBundle, call: AccountCall): AccountReply {
+  const flags = layerFlags(call);
+  const operator = tryOperatorRoute(bundle, { ...call, flags });
+  if (operator) return operator;
   if (!call.enabled) return closed(bundle);
   const [pathOnly, query = ""] = (call.path || "").split("?");
   const path = pathOnly || "";
@@ -137,13 +152,11 @@ export function dispatchAccountRoute(bundle: AccountBundle, call: AccountCall): 
     csrfToken,
     signature: call.signature,
     body,
-    flags: {
-      billing: call.flags?.billing === true,
-      team: call.flags?.team === true,
-      lifecycle: call.flags?.lifecycle === true,
-    },
+    flags,
   });
   if (layered) return layered;
+  const product = tryMarketerProductRoute(bundle, { ...call, flags, csrfToken, body });
+  if (product) return product;
 
   const map: Record<string, { method: "GET" | "POST"; action: AccountAction }> = {
     "/api/account/settings": { method: method === "POST" ? "POST" : "GET", action: method === "POST" ? "settings:write" : "settings:read" },

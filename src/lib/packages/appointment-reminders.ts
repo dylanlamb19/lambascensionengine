@@ -12,7 +12,7 @@ import { clientLabel, enrollmentFor, type PackageFlag } from "./package-runs.ts"
 import type { IdFactory } from "./runner.ts";
 import { workspaceFor } from "./tenancy.ts";
 import type { AppointmentStep, AppointmentStepId, ClientAppointment, FulfillmentState } from "./types.ts";
-import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 
 /** Reminders wait outside 8:00–21:00 America/Chicago. This copy does not read the sales-mail hour gate. */
 export const REMINDER_TIME_ZONE = "America/Chicago";
@@ -328,7 +328,7 @@ export function tickAppointments(
     quietLine: QUIET,
     stopReason: STOP,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now, opts.entitlements),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   let steps = tick.steps;
@@ -356,7 +356,7 @@ export function tickAppointments(
     tick.blocked,
     `appointment_run_${now}`,
   );
-  return { state: next, advanced: tick.advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, tick.advanced, opts.entitlements), advanced: tick.advanced };
 }
 
 export type AppointmentReplyInput = {

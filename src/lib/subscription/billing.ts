@@ -10,6 +10,7 @@ import type {
   ScaffoldSubscription,
   SubscriptionLifecycle,
 } from "../packages/types.ts";
+import { TRIAL_MS } from "../entitlements/plans.ts";
 import { isScaffoldPlanId, scaffoldPlan } from "./plans.ts";
 
 export const GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -262,6 +263,7 @@ function applyCheckout(state: FulfillmentState, event: ScaffoldWebhookEvent, now
     graceUntil: status === "past_due" ? prior?.graceUntil || null : null,
     billingMode: "test",
     updatedAt: now,
+    trialEndsAt: status === "trialing" ? prior?.trialEndsAt || plus(now, TRIAL_MS) : prior?.trialEndsAt ?? null,
   };
   if (looksLive(row.customerId) || looksLive(row.subscriptionId)) {
     return { ok: false, state, reason: "That value is a live payment id. It was refused." };

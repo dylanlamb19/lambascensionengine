@@ -1,11 +1,15 @@
+import { clientCapBlock, entitlementPreface, packageBlock, pipelineCapBlock } from "../entitlements/access.ts";
+import { syncMeter } from "../entitlements/meter.ts";
+import { entitlementsOn } from "../entitlements/plans.ts";
 import { fakeBilling } from "./billing.ts";
 import { withPipelineCapNotice } from "./cadence.ts";
 import { getPackage, isPackageId, type PackageId } from "./catalog.ts";
 import { connectionForIntegration, connectionLabel, missingConnectionLine } from "./connections.ts";
 import { stepTemplates } from "./steps.ts";
 import { workspaceFor } from "./tenancy.ts";
-import { assertEnrollmentAllowed, assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertEnrollmentAllowed, assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 import {
+  EMPTY_FULFILLMENT,
   NO_CREDENTIALS,
   type CredentialPort,
   type Enrollment,
@@ -24,13 +28,16 @@ const LOG_CAP = 30;
 export type IdFactory = () => string;
 
 export type RecordResult =
-  | { ok: true; state: FulfillmentState; clientId: string; enrollmentId: string }
+  | { ok: true; state: FulfillmentState; clientId: string; enrollmentId: string; warnings?: string[] }
   | { ok: false; state: FulfillmentState; reason: string };
+
+export type EntitlementOptions = { entitlements?: boolean };
 
 export type TickOptions = {
   enabled: boolean;
   credentials?: CredentialPort;
   runStep?: (step: StepRun, credentials: CredentialPort) => StepOutcome;
+  entitlements?: boolean;
 };
 
 function defaultIdFactory(): IdFactory {
@@ -106,6 +113,7 @@ export function recordPurchase(
   input: RecordPurchaseInput,
   now: string,
   ids: IdFactory = defaultIdFactory(),
+  options?: EntitlementOptions,
 ): RecordResult {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace || workspace.billingMode !== "test") {
@@ -115,12 +123,22 @@ export function recordPurchase(
   const pkg = getPackage(input.packageId);
   const clientName = input.clientName.trim().replace(/\s+/g, " ");
   if (!clientName) return { ok: false, state, reason: "The client needs a name." };
+  const entitled = entitlementsOn(options?.entitlements);
+  if (entitled) {
+    const preface = entitlementPreface(state, tenantId, now) || packageBlock(state, tenantId, pkg.id);
+    if (preface) return { ok: false, state, reason: preface };
+  }
   const startedOn = input.startedOn && /^\d{4}-\d{2}-\d{2}$/.test(input.startedOn) ? input.startedOn : dateOnly(now);
   let client = sameClient(tenantId, clientName, state);
   if (!client) {
-    const gate = fakeBilling.assertCanAddClient(state, tenantId, now);
-    if (!gate.ok) return { ok: false, state: gate.state, reason: gate.reason };
-    state = gate.state;
+    if (entitled) {
+      const cap = clientCapBlock(state, tenantId);
+      if (cap) return { ok: false, state, reason: cap };
+    } else {
+      const gate = fakeBilling.assertCanAddClient(state, tenantId, now);
+      if (!gate.ok) return { ok: false, state: gate.state, reason: gate.reason };
+      state = gate.state;
+    }
   }
   if (pkg.addonOf) {
     const parent = client
@@ -156,8 +174,13 @@ export function recordPurchase(
       && row.includedPackageIds.includes(pkg.id),
   );
   if (covered) return { ok: true, state, clientId: client.id, enrollmentId: covered.id };
-  const enrollmentGate = assertEnrollmentAllowed(state, tenantId, now);
-  if (!enrollmentGate.ok) return { ok: false, state, reason: enrollmentGate.reason };
+  if (entitled) {
+    const cap = pipelineCapBlock(state, tenantId);
+    if (cap) return { ok: false, state, reason: cap };
+  } else {
+    const enrollmentGate = assertEnrollmentAllowed(state, tenantId, now);
+    if (!enrollmentGate.ok) return { ok: false, state, reason: enrollmentGate.reason };
+  }
 
   const enrollment: Enrollment = {
     id: ids(),
@@ -208,11 +231,13 @@ export function recordPurchase(
     row.id === tenantId && row.onboarding === "packages" ? { ...row, onboarding: "connections" as const } : row,
   );
   const before = usageFor(state, tenantId);
+  let saved = writeUsage({ ...withRows, workspaces: opened }, { tenantId, pipelineRuns: before.pipelineRuns, enrollments: before.enrollments + 1 });
+  if (entitled) saved = syncMeter(saved, tenantId, now);
   return {
     ok: true,
     clientId: client.id,
     enrollmentId: enrollment.id,
-    state: writeUsage({ ...withRows, workspaces: opened }, { tenantId, pipelineRuns: before.pipelineRuns, enrollments: before.enrollments + 1 }),
+    state: saved,
   };
 }
 
@@ -222,6 +247,7 @@ export function addClient(
   clientName: string,
   now: string,
   ids: IdFactory = defaultIdFactory(),
+  options?: EntitlementOptions,
 ): RecordResult {
   const workspace = workspaceFor(state, tenantId);
   if (!workspace || workspace.billingMode !== "test") {
@@ -229,6 +255,7 @@ export function addClient(
   }
   const name = clientName.trim().replace(/\s+/g, " ");
   if (!name) return { ok: false, state, reason: "The client needs a name." };
+  const entitled = entitlementsOn(options?.entitlements);
   const existing = sameClient(tenantId, name, state);
   if (existing) {
     const advanced = state.workspaces.map((row) =>
@@ -236,17 +263,25 @@ export function addClient(
     );
     return { ok: true, state: { ...state, workspaces: advanced }, clientId: existing.id, enrollmentId: "" };
   }
-  const gate = fakeBilling.assertCanAddClient(state, tenantId, now);
+  if (entitled) {
+    const preface = entitlementPreface(state, tenantId, now);
+    if (preface) return { ok: false, state, reason: preface };
+    const cap = clientCapBlock(state, tenantId);
+    if (cap) return { ok: false, state, reason: cap };
+  }
+  const gate = entitled ? { ok: true as const, state } : fakeBilling.assertCanAddClient(state, tenantId, now);
   if (!gate.ok) return { ok: false, state: gate.state, reason: gate.reason };
   const client = { id: ids(), tenantId, name, createdAt: now };
   const workspaces = gate.state.workspaces.map((row) =>
     row.id === tenantId && row.onboarding === "client" ? { ...row, onboarding: "packages" as const } : row,
   );
+  let saved: FulfillmentState = { ...gate.state, workspaces, clients: [...gate.state.clients, client] };
+  if (entitled) saved = syncMeter(saved, tenantId, now);
   return {
     ok: true,
     clientId: client.id,
     enrollmentId: "",
-    state: { ...gate.state, workspaces, clients: [...gate.state.clients, client] },
+    state: saved,
   };
 }
 
@@ -324,7 +359,7 @@ export function tickFulfillment(
     if (step.tenantId !== tenantId) return step;
     const enrollment = state.enrollments.find((row) => row.id === step.enrollmentId && row.tenantId === tenantId);
     if (!enrollment) return step;
-    const gate = assertPipelineRunAllowed(state, tenantId, runs, now);
+    const gate = assertPipelineRunAllowed(state, tenantId, runs, now, opts.entitlements);
     if (!gate.ok) {
       blocked = gate.reason;
       return step;
@@ -343,7 +378,7 @@ export function tickFulfillment(
     blocked,
     `run_${now}`,
   );
-  return { state: next, advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, advanced, opts.entitlements), advanced };
 }
 
 const CLIENT_STOP = "Kill switch is on. This client's pipeline is stopped. Nothing was sent. Sales outreach was not changed.";
@@ -454,41 +489,7 @@ export function setPayment(
 }
 
 export function emptyFulfillment(): FulfillmentState {
-  return {
-    workspaces: [],
-    clients: [],
-    enrollments: [],
-    steps: [],
-    connections: [],
-    billingEvents: [],
-    invoices: [],
-    invites: [],
-    memberships: [],
-    usage: [],
-    leads: [],
-    leadSteps: [],
-    intakes: [],
-    packageRuns: [],
-    packageRunSteps: [],
-    generatedLeads: [],
-    completedJobs: [],
-    reviewRequestSteps: [],
-    storedReviews: [],
-    appointments: [],
-    appointmentSteps: [],
-    estimates: [],
-    estimateSteps: [],
-    adsMetrics: [],
-    adsChangeNotes: [],
-    metaBudgetNotes: [],
-    officeWorkflows: [],
-    scaffoldSubscriptions: [],
-    webhookReceipts: [],
-    checkoutSessions: [],
-    portalSessions: [],
-    seatInvites: [],
-    closures: [],
-  };
+  return { ...EMPTY_FULFILLMENT };
 }
 
 export type { PackageId };

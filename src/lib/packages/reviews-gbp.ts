@@ -14,7 +14,7 @@ import {
 import type { IdFactory } from "./runner.ts";
 import { workspaceFor } from "./tenancy.ts";
 import type { CompletedJob, FulfillmentState, PackageRunStep, ReviewRequestStep, StoredReview } from "./types.ts";
-import { assertPipelineRunAllowed, usageFor, writeUsage } from "./usage.ts";
+import { assertPipelineRunAllowed, finishPipelineRuns, usageFor, writeUsage } from "./usage.ts";
 
 const QUIET = "Nothing was sent and nothing was published. No Google API was called.";
 export const REVIEW_EQUAL_ASK = "Reviews are not purchased, gated, or filtered. Every completed-job customer is asked the same way.";
@@ -410,7 +410,7 @@ function tickReviewRequests(
     quietLine: QUIET,
     stopReason: `Stopped because an earlier step failed. Needs a person. ${QUIET}`,
     runs: usageFor(state, tenantId).pipelineRuns,
-    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now),
+    allow: (runs) => assertPipelineRunAllowed(state, tenantId, runs, now, opts.entitlements),
   });
   if (tick.unchanged) return { state, advanced: 0 };
   const next = withPipelineCapNotice(
@@ -420,7 +420,7 @@ function tickReviewRequests(
     tick.blocked,
     `review_request_${now}`,
   );
-  return { state: next, advanced: tick.advanced };
+  return { state: finishPipelineRuns(next, tenantId, now, tick.advanced, opts.entitlements), advanced: tick.advanced };
 }
 
 export function tickReviews(
@@ -429,7 +429,7 @@ export function tickReviews(
   now: string,
   opts: ReviewsFlag & { ids?: IdFactory; runStep?: (step: ReviewRequestStep) => void; runCareStep?: (step: PackageRunStep) => void } = {},
 ): { state: FulfillmentState; advanced: number } {
-  const care = tickPackageRun(state, tenantId, now, SPEC, { enabled: opts.enabled, ids: opts.ids, runStep: opts.runCareStep });
+  const care = tickPackageRun(state, tenantId, now, SPEC, { enabled: opts.enabled, entitlements: opts.entitlements, ids: opts.ids, runStep: opts.runCareStep });
   const requests = tickReviewRequests(care.state, tenantId, now, opts);
   return { state: requests.state, advanced: care.advanced + requests.advanced };
 }

@@ -32,6 +32,21 @@ export const FLAGS = {
    * Off until explicitly enabled. Closing is limited to the owner.
    */
   WORKSPACE_LIFECYCLE: false,
+  /**
+   * Plan limits and per-period usage meters for Starter, Pro, and Agency.
+   * Off until explicitly enabled. It does not charge and does not touch outreach.
+   */
+  PLAN_ENTITLEMENTS: false,
+  /**
+   * First-run wizard for a new marketer workspace.
+   * Off until explicitly enabled. Plan choice stays on the $0 test checkout.
+   */
+  ONBOARDING_WIZARD: false,
+  /**
+   * Platform console for the Lasengine owner. Tenant roles cannot open it.
+   * Off until explicitly enabled.
+   */
+  OPERATOR_CONSOLE: false,
 } as const;
 
 export type FlagName = keyof typeof FLAGS;

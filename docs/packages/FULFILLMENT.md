@@ -4,7 +4,7 @@ How Lamb Ascension's ten service packages run inside Lamb Ascension Engine, and 
 
 This scaffold is **off**. `FLAGS.PACKAGE_FULFILLMENT` is `false`. While it is off, the Client Package Fulfillment tab is not rendered, workspaces are not opened, and pipelines do not tick. Nothing here sends mail, changes outreach caps, suppression, or autopilot gates, or charges a card.
 
-The SQL in `migrations/0015_client_packages.sql` through `migrations/0024_subscription_team.sql` is a file only. It was not applied to a hosted database from this change. `SELF_SERVE_SIGNUP`, `BILLING_SCAFFOLD`, `TEAM_SEATS`, and `WORKSPACE_LIFECYCLE` stay off. None of them turns on Better Auth public registration.
+The SQL in `migrations/0015_client_packages.sql` through `migrations/0025_plan_entitlements.sql` is a file only. It was not applied to a hosted database from this change. `SELF_SERVE_SIGNUP`, `BILLING_SCAFFOLD`, `TEAM_SEATS`, `WORKSPACE_LIFECYCLE`, `PLAN_ENTITLEMENTS`, `ONBOARDING_WIZARD`, and `OPERATOR_CONSOLE` stay off. None of them turns on Better Auth public registration.
 
 ## Two products, one engine
 

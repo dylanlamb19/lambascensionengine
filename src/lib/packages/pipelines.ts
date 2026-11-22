@@ -22,6 +22,7 @@ export function tickPackagePipelines(
   now: string,
   opts: LeadFlag & {
     credentials?: CredentialPort;
+    entitlements?: boolean;
     runLeadStep?: (step: LeadStepRun, lead: FollowUpLead) => void;
     runLeadGenStep?: (step: PackageRunStep) => void;
     runVisibilityStep?: (step: PackageRunStep) => void;
@@ -38,42 +39,52 @@ export function tickPackagePipelines(
   const packageTick = tickFulfillment(state, tenantId, now, {
     enabled: true,
     credentials: opts.credentials,
+    entitlements: opts.entitlements,
   } satisfies TickOptions);
   const leadTick = tickLeadFollowUp(packageTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runLeadStep,
   });
   const generationTick = tickLeadGeneration(leadTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runLeadGenStep,
   });
   const visibilityTick = tickAiVisibility(generationTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runVisibilityStep,
   });
   const reviewsTick = tickReviews(visibilityTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runReviewStep,
     runCareStep: opts.runReviewsCareStep,
   });
   const appointmentTick = tickAppointments(reviewsTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runAppointmentStep,
   });
   const estimateTick = tickEstimates(appointmentTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runEstimateStep,
   });
   const adsTick = tickGoogleAds(estimateTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runAdsStep,
   });
   const metaTick = tickMetaAds(adsTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runMetaStep,
   });
   const officeTick = tickOfficeAutomation(metaTick.state, tenantId, now, {
     enabled: true,
+    entitlements: opts.entitlements,
     runStep: opts.runOfficeStep,
   });
   return {

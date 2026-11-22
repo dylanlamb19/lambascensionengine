@@ -34,7 +34,7 @@ export async function handleAccountHttp(
   }
   const reply: AccountReply = dispatchAccountRoute(bundle, {
     method,
-    path: url.pathname,
+    path: `${url.pathname}${url.search}`,
     now: new Date().toISOString(),
     ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown",
     enabled,
